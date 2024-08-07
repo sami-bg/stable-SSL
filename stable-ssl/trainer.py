@@ -15,6 +15,7 @@ from torch.cuda.amp import GradScaler
 
 # to handle specific exceptions
 from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
+from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
 
 # for logging/saving
 from tqdm import tqdm
@@ -24,7 +25,6 @@ import tables
 import warnings
 import json
 import time
-from .utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     LinearLR,
