@@ -25,6 +25,7 @@ import tables
 import warnings
 import json
 import time
+
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     LinearLR,
@@ -511,29 +512,6 @@ class Trainer(torch.nn.Module):
         y_a, y_b = y, y[index]
         return mixed_x, y_a, y_b, lam
 
-    @staticmethod
-    def mixup_criterion(criterion, pred, y_a, y_b, lam):
-        return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
-
-    @staticmethod
-    def cutmix_criterion(criterion, pred, y_a, y_b, lam):
-        return Trainer.mixup_criterion(criterion, pred, y_a, y_b, lam)
-
-    @staticmethod
-    def cutmix_data(x, y, alpha=1.0):
-        if alpha > 0:
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1
-        rand_index = torch.randperm(x.size(0)).cuda()
-        y_a = y
-        y_b = y[rand_index]
-        bbx1, bby1, bbx2, bby2 = rand_bbox(x.shape, lam)
-        x[:, :, bbx1:bbx2, bby1:bby2] = x[rand_index, :, bbx1:bbx2, bby1:bby2]
-        # adjust lambda to exactly match pixel ratio
-        lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size(-1) * x.size(-2)))
-        return x, y_a, y_b, lam
-
     def gather(self, x):
         return FullGatherLayer.apply(x)
 
@@ -635,7 +613,7 @@ class Trainer(torch.nn.Module):
                 momentum=self.args.momentum,
             )
         elif self.args.optimizer == "LARS":
-            from .optim import LARS
+            from utils.optim import LARS
 
             optimizer = LARS(
                 self.parameters(),

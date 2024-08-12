@@ -15,6 +15,44 @@ import numpy as np
 from typing import Tuple
 
 
+def load_without_classifier(name: str, **kwargs) -> Tuple[torch.nn.Module, int]:
+    import torchvision
+
+    if name == "resnet9":
+        model = resnet9(**kwargs)
+    elif name == "ConvMixer":
+        model = ConvMixer(**kwargs)
+    else:
+        model = torchvision.models.__dict__[name](**kwargs)
+    if "alexnet" in name:
+        fan_in = model.classifier[6].in_features
+        model.classifier[6] = torch.nn.Identity()
+    elif "convnext" in name:
+        fan_in = model.classifier[2].in_features
+        model.classifier[2] = torch.nn.Identity()
+    elif "convnext" in name:
+        fan_in = model.classifier[2].in_features
+        model.classifier[2] = torch.nn.Identity()
+    elif (
+        "resnet" in name or "resnext" in name or "regnet" in name or name == "ConvMixer"
+    ):
+        fan_in = model.fc.in_features
+        model.fc = torch.nn.Identity()
+    elif "densenet" in name:
+        fan_in = model.classifier.in_features
+        model.classifier = torch.nn.Identity()
+    elif "mobile" in name:
+        fan_in = model.classifier[-1].in_features
+        model.classifier[-1] = torch.nn.Identity()
+    elif "vit" in name:
+        fan_in = model.heads.head.in_features
+        model.heads.head = torch.nn.Identity()
+    elif "swin" in name:
+        fan_in = model.head.in_features
+        model.head = torch.nn.Identity()
+    return model, fan_in
+
+
 class CategoricalConditionalBatchNorm2d(ScriptModule):
     def __init__(self, num_features: int, num_conditions: int):
         super().__init__()
@@ -209,44 +247,6 @@ class LazySmoothReLU(nn.modules.lazy.LazyModuleMixin, SmoothReLU):
                     s[i] = input.size(i)
                 self.smoothness.materialize(s)
                 self.smoothness.copy_(torch.Tensor([0.541323]))
-
-
-def load_without_classifier(name: str, **kwargs) -> Tuple[torch.nn.Module, int]:
-    import torchvision
-
-    if name == "resnet9":
-        model = resnet9(**kwargs)
-    elif name == "ConvMixer":
-        model = ConvMixer(**kwargs)
-    else:
-        model = torchvision.models.__dict__[name](**kwargs)
-    if "alexnet" in name:
-        fan_in = model.classifier[6].in_features
-        model.classifier[6] = torch.nn.Identity()
-    elif "convnext" in name:
-        fan_in = model.classifier[2].in_features
-        model.classifier[2] = torch.nn.Identity()
-    elif "convnext" in name:
-        fan_in = model.classifier[2].in_features
-        model.classifier[2] = torch.nn.Identity()
-    elif (
-        "resnet" in name or "resnext" in name or "regnet" in name or name == "ConvMixer"
-    ):
-        fan_in = model.fc.in_features
-        model.fc = torch.nn.Identity()
-    elif "densenet" in name:
-        fan_in = model.classifier.in_features
-        model.classifier = torch.nn.Identity()
-    elif "mobile" in name:
-        fan_in = model.classifier[-1].in_features
-        model.classifier[-1] = torch.nn.Identity()
-    elif "vit" in name:
-        fan_in = model.heads.head.in_features
-        model.heads.head = torch.nn.Identity()
-    elif "swin" in name:
-        fan_in = model.head.in_features
-        model.head = torch.nn.Identity()
-    return model, fan_in
 
 
 def find_module(model: torch.nn.Module, module: torch.nn.Module):
