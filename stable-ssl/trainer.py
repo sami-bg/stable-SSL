@@ -1,31 +1,27 @@
-"""
-File: trainer.py
-Project: torchstrap
------
-# Copyright (c) Randall Balestriero.
-# All rights reserved.
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-"""
+# -*- coding: utf-8 -*-
+"""Main function for training a SSL model."""
+
+# Author: Randall Balestriero <randallbalestriero@gmail.com>
+#         Hugues Van Assel <vanasselhugues@gmail.com>
+#
+# License: MIT
+
 
 import numpy as np
-
-# for half-precision training
-from torch.cuda.amp import GradScaler
-
-# to handle specific exceptions
-from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
-from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
-
-# for logging/saving
-from tqdm import tqdm
-from pathlib import Path
+import uuid
+import copy
 import logging
-import tables
+
+# import tables
 import warnings
 import json
 import time
+from tqdm import tqdm
+from pathlib import Path
+from pymongo import MongoClient
+from dataclasses import asdict
 
+import torch
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     LinearLR,
@@ -33,26 +29,41 @@ from torch.optim.lr_scheduler import (
     ConstantLR,
 )
 from torch.distributed.optim import ZeroRedundancyOptimizer
+from torch.cuda.amp import GradScaler
+
+from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
+from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
+from utils.optim import LARS
+from config import GlobalConfig
 
 
 class Trainer(torch.nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        import uuid, copy
+    r"""Base class for training a Self-Supervised Learning (SSL) model.
 
-        if args.add_version:
-            folder = (Path(args.folder) / str(str(uuid.uuid4()))).absolute()
+    Parameters:
+    -----------
+    config : GlobalConfig
+        Configuration parameters for the trainer.
+    """
+
+    def __init__(self, config: GlobalConfig):
+        super().__init__()
+
+        self.config = asdict(config)
+        print(f"Config: {self.config}")
+
+        if config.add_version:
+            self.folder = (Path(config.folder) / str(uuid.uuid4())).absolute()
         else:
-            folder = Path(args.folder).absolute()
-        args.folder = folder
-        folder.mkdir(parents=True, exist_ok=True)
-        self.args = copy.deepcopy(args)
-        print(f"Logging in {folder}")
+            self.folder = Path(config.folder).absolute()
+
+        self.folder.mkdir(parents=True, exist_ok=True)
+
+        # Dump hyper-parameters to a JSON file
+        print(f"Logging in {self.folder}")
         print(f"\t=> Dumping hyper-parameters...")
-        data = args.__dict__.copy()
-        for i in data:
-            data[i] = str(data[i])
-        with open(folder / "hparams.json", "w+") as f:
+        data = copy.deepcopy(self.config.__dict__)
+        with open(self.folder / "hparams.json", "w+") as f:
             json.dump(data, f, indent=2)
 
     def __call__(self):
@@ -136,8 +147,6 @@ class Trainer(torch.nn.Module):
         self.execute()
 
     def checkpoint(self):
-        import submitit, copy
-
         # the checkpoint method is called asynchroneously when the slurm manager
         # sends a preemption signal, with the same arguments as the __call__ method
         # "self" is your callable, at its current state.
@@ -421,40 +430,40 @@ class Trainer(torch.nn.Module):
             fd.write(json.dumps(bucket) + "\n")
             fd.flush()
 
-    def log_hdf5(
-        self, filename=None, name="", log_only_rank0=True, **kwargs: dict
-    ) -> None:
-        if (
-            self.args.world_size
-            and log_only_rank0
-            and torch.distributed.get_rank() != 0
-        ):
-            return
-        if filename is None:
-            filename = "log.h5"
-        if filename[-3:] != ".h5":
-            filename += ".h5"
-        filename = self.folder / filename
-        if filename.exists():
-            f = tables.open_file(filename, mode="a")
-        else:
-            f = tables.open_file(filename, mode="w")
+    # def log_hdf5(
+    #     self, filename=None, name="", log_only_rank0=True, **kwargs: dict
+    # ) -> None:
+    #     if (
+    #         self.args.world_size
+    #         and log_only_rank0
+    #         and torch.distributed.get_rank() != 0
+    #     ):
+    #         return
+    #     if filename is None:
+    #         filename = "log.h5"
+    #     if filename[-3:] != ".h5":
+    #         filename += ".h5"
+    #     filename = self.folder / filename
+    #     if filename.exists():
+    #         f = tables.open_file(filename, mode="a")
+    #     else:
+    #         f = tables.open_file(filename, mode="w")
 
-        bucket = {**self.generate_logging_default_bucket(), **kwargs}
+    #     bucket = {**self.generate_logging_default_bucket(), **kwargs}
 
-        for name, data in bucket.items():
-            data = np.asarray(data)
-            # we now retreive the dataset from the existing h5 table
-            try:
-                node = f.get_node(f.root, name=name)
-            except tables.NoSuchNodeError:
-                atom = tables.Float32Atom()
-                node = f.create_earray(f.root, name, atom=atom, shape=(0,) + data.shape)
-            except Exception as e:
-                raise (e)
-            # append row to the existing dataset
-            node.append(data[None])
-        f.close()
+    #     for name, data in bucket.items():
+    #         data = np.asarray(data)
+    #         # we now retreive the dataset from the existing h5 table
+    #         try:
+    #             node = f.get_node(f.root, name=name)
+    #         except tables.NoSuchNodeError:
+    #             atom = tables.Float32Atom()
+    #             node = f.create_earray(f.root, name, atom=atom, shape=(0,) + data.shape)
+    #         except Exception as e:
+    #             raise (e)
+    #         # append row to the existing dataset
+    #         node.append(data[None])
+    #     f.close()
 
     def log_mongodb(
         self,
@@ -469,7 +478,6 @@ class Trainer(torch.nn.Module):
     ):
         if self.distributed and log_only_rank0 and torch.distributed.get_rank() != 0:
             return
-        from pymongo import MongoClient
 
         if not hasattr(self, "mongo_client"):
             self.mongo_client = MongoClient(
@@ -496,21 +504,6 @@ class Trainer(torch.nn.Module):
         return LinearWarmupCosineAnnealing(
             self.optimizer, min_lr, peak_step, total_steps
         )
-
-    @staticmethod
-    def mixup_data(x, y, alpha=1.0):
-        """Returns mixed inputs, pairs of targets, and lambda"""
-        if alpha > 0:
-            lam = np.random.beta(alpha, alpha)
-        else:
-            lam = 1
-
-        batch_size = x.size(0)
-        index = torch.randperm(batch_size).to(x.device, non_blocking=True)
-
-        mixed_x = lam * x + (1 - lam) * x[index, :]
-        y_a, y_b = y, y[index]
-        return mixed_x, y_a, y_b, lam
 
     def gather(self, x):
         return FullGatherLayer.apply(x)
@@ -613,8 +606,6 @@ class Trainer(torch.nn.Module):
                 momentum=self.args.momentum,
             )
         elif self.args.optimizer == "LARS":
-            from utils.optim import LARS
-
             optimizer = LARS(
                 self.parameters(),
                 lr=self.args.learning_rate,
