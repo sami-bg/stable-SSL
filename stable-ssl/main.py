@@ -1,27 +1,34 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from config import GlobalConfig, ArchitectureConfig, TrainingConfig, OptimizerConfig
+from config import (
+    SSLConfig,
+    GeneralConfig,
+    OptimConfig,
+    ModelConfig,
+    HardwareConfig,
+    LogConfig,
+)
 from trainer import Trainer
 
 
 @hydra.main(config_path="inputs", config_name="config")
 def main(cfg: DictConfig):
 
-    # Convert DictConfig to a plain dictionary
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    # Convert hydra config file to dictionary
+    cfg_dict = OmegaConf.to_object(cfg)
 
-    # Efficiently create a Config dataclass instance
-    config = GlobalConfig(
-        architecture=ArchitectureConfig(**cfg_dict.get("architecture", {})),
-        training=TrainingConfig(**cfg_dict.get("training", {})),
-        optimizer=OptimizerConfig(**cfg_dict.get("optimizer", {})),
+    # Create the input for trainer
+    args = SSLConfig(
+        general=GeneralConfig(**cfg_dict.get("general", {})),
+        optim=OptimConfig(**cfg_dict.get("optim", {})),
+        model=ModelConfig(**cfg_dict.get("model", {})),
+        hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
+        log=LogConfig(**cfg_dict.get("log", {})),
     )
 
-    # Access different parts of the configuration
-    print(config.architecture)
-    print(config.training)
-    print(config.optimizer)
+    # Create a trainer object
+    trainer = Trainer(args)
 
 
 if __name__ == "__main__":

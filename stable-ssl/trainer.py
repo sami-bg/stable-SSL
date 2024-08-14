@@ -6,13 +6,11 @@
 #
 # License: MIT
 
-
 import numpy as np
 import uuid
 import copy
 import logging
-
-# import tables
+import torchvision
 import warnings
 import json
 import time
@@ -20,6 +18,9 @@ from tqdm import tqdm
 from pathlib import Path
 from pymongo import MongoClient
 from dataclasses import asdict
+from types import SimpleNamespace
+
+# import tables
 
 import torch
 from torch.optim.lr_scheduler import (
@@ -34,7 +35,8 @@ from torch.cuda.amp import GradScaler
 from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
 from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
 from utils.optim import LARS
-from config import GlobalConfig
+from utils.schedulers import LinearWarmupCosineAnnealing
+from config import SSLConfig
 
 
 class Trainer(torch.nn.Module):
@@ -42,35 +44,51 @@ class Trainer(torch.nn.Module):
 
     Parameters:
     -----------
-    config : GlobalConfig
-        Configuration parameters for the trainer.
+    config : SSLConfig
+        Parameters for Trainer organized in the following groups :
+        'general', 'optim', 'model', 'hardware', 'log'.
+        For details, see the `GlobalConfig` class in `config.py`.
     """
 
-    def __init__(self, config: GlobalConfig):
+    def __init__(self, args: SSLConfig):
         super().__init__()
 
-        self.config = asdict(config)
-        print(f"Config: {self.config}")
+        self._save_flatten_args(args)
 
-        if config.add_version:
-            self.folder = (Path(config.folder) / str(uuid.uuid4())).absolute()
+        if self.args.add_version:
+            self.folder = (Path(self.args.folder) / str(uuid.uuid4())).absolute()
         else:
-            self.folder = Path(config.folder).absolute()
+            self.folder = Path(self.args.folder).absolute()
 
         self.folder.mkdir(parents=True, exist_ok=True)
 
         # Dump hyper-parameters to a JSON file
         print(f"Logging in {self.folder}")
         print(f"\t=> Dumping hyper-parameters...")
-        data = copy.deepcopy(self.config.__dict__)
         with open(self.folder / "hparams.json", "w+") as f:
-            json.dump(data, f, indent=2)
+            json.dump(asdict(args), f, indent=2)
+
+    def _save_flatten_args(self, args):
+        """
+        Recursively flattens hierarchical arguments in args and
+        adds the flattened attributes to self.args.
+        """
+        if not hasattr(self, "args"):
+            self.args = SimpleNamespace()
+        for key, value in vars(args).items():
+            if hasattr(value, "__dict__"):
+                # Recursively flatten nested objects
+                self._save_flatten_args(value)
+            else:
+                # Set the flattened attribute directly in self.args
+                setattr(self.args, key, value)
 
     def __call__(self):
 
         logging.basicConfig(level=self.args.log_level)
-        seed_everything(self.args.seed)
+        seed_everything(self.args.general.seed)
 
+        # QUESTION : why is folder re-instanciated here ?
         self.folder = Path(self.args.folder)
         self.folder.mkdir(parents=True, exist_ok=True)
 
@@ -496,8 +514,6 @@ class Trainer(torch.nn.Module):
             print("Not using distributed... nothing to clean")
 
     def initialize_scheduler(self):
-        from .schedulers import LinearWarmupCosineAnnealing
-
         min_lr = self.args.learning_rate * 0.005
         peak_step = 5 * len(self.train_loader)
         total_steps = self.args.epochs * len(self.train_loader)
@@ -578,8 +594,6 @@ class Trainer(torch.nn.Module):
         raise NotImplementedError
 
     def initialize_modules(self):
-        import torchvision
-
         self.model = torchvision.models.__dict__[self.args.architecture]()
 
     def initialize_optimizer(self):
