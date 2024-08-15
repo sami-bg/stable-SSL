@@ -21,6 +21,10 @@ class GeneralConfig:
         Maximum number of steps per epoch. Default is -1.
     eval_each_epoch : bool, optional
         Whether to evaluate the model at the end of each epoch. Default is False.
+    batch_size : int, optional
+        Batch size for training. Default is 2048.
+    metric : str, optional
+        Metric to use in the embedding space. Default is "cosine
     """
 
     seed: Optional[int] = None
@@ -28,6 +32,8 @@ class GeneralConfig:
     epochs: int = 10
     max_steps: int = -1
     eval_each_epoch: bool = False
+    batch_size: int = 2048
+    metric: str = "cosine"
 
 
 @dataclass
@@ -123,12 +129,15 @@ class HardwareConfig:
         Number of processes participating in distributed training. Default is 1.
     port : int, optional
         Port number for distributed training. Default is None.
+    workers: int, optional
+        Number of workers for data loading. Default is 4.
     """
 
     float16: bool = False
     gpu: int = 0
     world_size: int = 1
     port: Optional[int] = None
+    workers: int = 4
 
 
 @dataclass
@@ -157,7 +166,7 @@ class LogConfig:
 
     folder: str = "."
     add_version: bool = False
-    load_from: Optional[str] = None
+    load_from: str = "ckpt"
     log_level: int = logging.INFO
     checkpoint_frequency: int = 1
     save_final_model: bool = False

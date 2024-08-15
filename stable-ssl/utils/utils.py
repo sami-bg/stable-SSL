@@ -9,6 +9,7 @@ from typing import Tuple
 import torch.distributed as dist
 from torch.utils.data import Sampler
 from typing import Iterable, Iterator, List
+import submitit
 
 
 def augment_argparser(parser):
@@ -16,9 +17,10 @@ def augment_argparser(parser):
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--scheduler", type=str, default="LinearWarmupThreeStepsAnnealing")
+    parser.add_argument(
+        "--scheduler", type=str, default="LinearWarmupThreeStepsAnnealing"
+    )
     parser.add_argument("--optimizer", type=str, default="AdamW")
-
 
 
 class PositiveBatchSampler(Sampler):
@@ -34,16 +36,24 @@ class PositiveBatchSampler(Sampler):
         [[0, 2, 5, 4]]
     """
 
-    def __init__(self, labels_or_len:Iterable[int], views:int, batch_size: int) -> None:
+    def __init__(
+        self, labels_or_len: Iterable[int], views: int, batch_size: int
+    ) -> None:
         # Since collections.abc.Iterable does not check for `__getitem__`, which
         # is one way for an object to be an iterable, we don't do an `isinstance`
         # check here.
-        if not isinstance(batch_size, int) or isinstance(batch_size, bool) or \
-                batch_size <= 0:
-            raise ValueError(f"batch_size should be a positive integer value, but got {batch_size=}")
-        if not isinstance(views, int) or isinstance(views, bool) or \
-                views <= 0:
-            raise ValueError(f"views should be a positive integer value, but got {views=}")
+        if (
+            not isinstance(batch_size, int)
+            or isinstance(batch_size, bool)
+            or batch_size <= 0
+        ):
+            raise ValueError(
+                f"batch_size should be a positive integer value, but got {batch_size=}"
+            )
+        if not isinstance(views, int) or isinstance(views, bool) or views <= 0:
+            raise ValueError(
+                f"views should be a positive integer value, but got {views=}"
+            )
         self.batch_size = batch_size
         self.views = views
         self.count = 0
@@ -57,35 +67,42 @@ class PositiveBatchSampler(Sampler):
         self.labels = np.asarray(labels)
         self.unique_labels = np.unique(labels)
 
-        # due to the current implementation we need to make sure that 
+        # due to the current implementation we need to make sure that
         # there are enough classes to produce a batch_size given views
         assert len(self.unique_labels) * views >= batch_size
-
 
         self.mapper = {}
         for i in self.unique_labels:
             self.mapper[i] = np.flatnonzero(self.labels == i)
             print(f"{i} -> {self.mapper[i]}")
-            
+
     def __iter__(self) -> Iterator[List[int]]:
         # Implemented based on the benchmarking in https://github.com/pytorch/pytorch/pull/76951
         if not self.has_labels:
             sampler_iter = iter(np.random.permutation(self.n_samples // self.views))
             while True:
                 try:
-                    batch = [next(sampler_iter) for _ in range(self.batch_size // self.views)]
+                    batch = [
+                        next(sampler_iter) for _ in range(self.batch_size // self.views)
+                    ]
                     batch = np.repeat(batch, self.views)
                     yield batch
                 except StopIteration:
                     break
         else:
             while self.count < len(self):
-                selected_classes = np.random.choice(self.unique_labels, 
-                        size=self.batch_size // self.views, 
-                        replace=False)
+                selected_classes = np.random.choice(
+                    self.unique_labels,
+                    size=self.batch_size // self.views,
+                    replace=False,
+                )
                 batch = []
                 for c in selected_classes:
-                    batch.extend(np.random.choice(self.mapper[c], size=self.views, replace=False).tolist())
+                    batch.extend(
+                        np.random.choice(
+                            self.mapper[c], size=self.views, replace=False
+                        ).tolist()
+                    )
                 self.count += 1
                 yield batch
             self.count = 0
@@ -219,7 +236,7 @@ def replace_module(model, replacement_mapping):
     if not isinstance(model, ch.nn.Module):
         raise ValueError("Torch.nn.Module expected as input")
     for name, module in model.named_modules():
-        if name == '':
+        if name == "":
             continue
         replacement = replacement_mapping(name, module)
         module_names = name.split(".")

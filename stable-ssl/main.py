@@ -10,6 +10,7 @@ from config import (
     LogConfig,
 )
 from trainer import Trainer
+from simclr import SimCLR
 
 
 @hydra.main(config_path="inputs", config_name="config")
@@ -28,7 +29,8 @@ def main(cfg: DictConfig):
     )
 
     # Create a trainer object
-    trainer = Trainer(args)
+    trainer = SimCLR(args)
+    trainer()
 
 
 if __name__ == "__main__":

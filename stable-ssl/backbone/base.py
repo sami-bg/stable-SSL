@@ -8,6 +8,7 @@ Project: torchstrap
 # LICENSE file in the root directory of this source tree.
 """
 
+import torchvision
 from torch import nn
 import torch
 from torch.jit import ScriptModule
@@ -16,7 +17,6 @@ from typing import Tuple
 
 
 def load_without_classifier(name: str, **kwargs) -> Tuple[torch.nn.Module, int]:
-    import torchvision
 
     if name == "resnet9":
         model = resnet9(**kwargs)
@@ -24,6 +24,7 @@ def load_without_classifier(name: str, **kwargs) -> Tuple[torch.nn.Module, int]:
         model = ConvMixer(**kwargs)
     else:
         model = torchvision.models.__dict__[name](**kwargs)
+
     if "alexnet" in name:
         fan_in = model.classifier[6].in_features
         model.classifier[6] = torch.nn.Identity()

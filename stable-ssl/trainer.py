@@ -4,7 +4,8 @@
 # Author: Randall Balestriero <randallbalestriero@gmail.com>
 #         Hugues Van Assel <vanasselhugues@gmail.com>
 #
-# License: MIT
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
 
 import numpy as np
 import uuid
@@ -63,8 +64,8 @@ class Trainer(torch.nn.Module):
         self.folder.mkdir(parents=True, exist_ok=True)
 
         # Dump hyper-parameters to a JSON file
-        print(f"Logging in {self.folder}")
-        print(f"\t=> Dumping hyper-parameters...")
+        print(f"[stable-SSL] Logging in {self.folder}")
+        print(f"[stable-SSL] \t=> Dumping hyper-parameters...")
         with open(self.folder / "hparams.json", "w+") as f:
             json.dump(asdict(args), f, indent=2)
 
@@ -86,13 +87,21 @@ class Trainer(torch.nn.Module):
     def __call__(self):
 
         logging.basicConfig(level=self.args.log_level)
-        seed_everything(self.args.general.seed)
+        seed_everything(self.args.seed)
 
         # QUESTION : why is folder re-instanciated here ?
         self.folder = Path(self.args.folder)
         self.folder.mkdir(parents=True, exist_ok=True)
 
         self.scaler = GradScaler(enabled=self.args.float16)
+
+        # torch.distributed.init_process_group(
+        #     backend="nccl",
+        #     init_method=self.args.dist_url,
+        #     world_size=self.args.world_size,
+        #     rank=self.args.rank,
+        # )
+
         try:
             self.args = setup_distributed(self.args)
             self._device = f"cuda:{self.args.gpu}"
@@ -164,62 +173,6 @@ class Trainer(torch.nn.Module):
         self.start_time = time.time()
         self.execute()
 
-    def checkpoint(self):
-        # the checkpoint method is called asynchroneously when the slurm manager
-        # sends a preemption signal, with the same arguments as the __call__ method
-        # "self" is your callable, at its current state.
-        # "self" therefore holds the current version of the model:
-        print("Requeuing...")
-        args = copy.deepcopy(self.args)
-        args.add_version = False
-        args.folder = self.folder.absolute().as_posix()
-        model = type(self)(args)
-        return submitit.helpers.DelayedSubmission(model)
-
-    def load_checkpoint(self):
-        """load a model and optionnally a scheduler/optimizer/epoch from a given path to checkpoint
-
-        Args:
-            load_from (str): path to checkpoint
-        """
-        load_from = Path(self.args.load_from)
-        if load_from.is_file():
-            logging.info(f"\t=> file {load_from} exists\n\t=> loading it...")
-            checkpoint = load_from
-        elif (self.folder / "tmp_checkpoint.ckpt").is_file():
-            logging.info(
-                f"\t=> folder {self.folder} contains `tmp_checkpoint.ckpt` file\n\t=> loading it..."
-            )
-            checkpoint = self.folder / "tmp_checkpoint.ckpt"
-        else:
-            logging.info(f"\t=> no checkpoint at `{load_from}`")
-            logging.info(
-                f"\t=> no checkpoint at `{self.folder / 'tmp_checkpoint.ckpt'}`"
-            )
-            logging.info("f\t=> training from scratch...")
-            self.epoch = 0
-            return
-
-        ckpt = torch.load(checkpoint, map_location="cpu")
-
-        for name, model in self.named_children():
-            if name not in ckpt:
-                logging.info(f"\t\t=> {name} not in ckpt, skipping...")
-                continue
-            model.load_state_dict(ckpt[name])
-            logging.info(f"\t\t=> {name} successfully loaded...")
-        if "optimizer" in ckpt:
-            self.optimizer.load_state_dict(ckpt["optimizer"])
-            logging.info(f"\t\t=> optimizer successfully loaded...")
-        if "scheduler" in ckpt:
-            self.scheduler.load_state_dict(ckpt["scheduler"])
-            logging.info(f"\t\t=> scheduler successfully loaded...")
-        if "epoch" in ckpt:
-            self.epoch = ckpt["epoch"]
-            logging.info(f"\t\t=> training will start from epoch {ckpt['epoch']}")
-        else:
-            self.epoch = 0
-
     def execute(self) -> None:
         """Routine that is executed after the class is initialized.
 
@@ -233,18 +186,18 @@ class Trainer(torch.nn.Module):
         else:
             try:
                 self.before_train_all_epochs()
-                self.train_all_epochs()
+                self._train_all_epochs()
                 # after training, we always eval the model even if done per epoch
                 self.eval_epoch()
             except BreakAllEpochs:
                 self.cleanup()
 
-    def train_all_epochs(self):
+    def _train_all_epochs(self):
         while self.epoch < self.args.epochs:
             if hasattr(self, "train_sampler"):
                 self.train_sampler.set_epoch(self.epoch)
             try:
-                self.train_epoch()
+                self._train_epoch()
             except BreakEpoch:
                 print("Train epoch cut by user...")
                 print("Going to the next one...")
@@ -269,7 +222,7 @@ class Trainer(torch.nn.Module):
         # and remove any temporary checkpoint
         (self.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
 
-    def train_epoch(self):
+    def _train_epoch(self):
 
         # hierarchically set up all modules in train mode
         self.before_train_epoch()
@@ -291,6 +244,7 @@ class Trainer(torch.nn.Module):
             max_steps = int(self.args.max_steps * len(self.train_loader))
         else:
             max_steps = self.args.max_steps
+
         for step, data in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
@@ -354,8 +308,7 @@ class Trainer(torch.nn.Module):
                     self.before_eval_step()
 
                     # call the eval step
-
-                    with torch.cuda.amp.autocast(enabled=self.args.float16):
+                    with torch.amp.autocast("cuda", enabled=self.args.float16):
                         self.eval_step()
 
                     # call any user specified post-step function
@@ -373,7 +326,7 @@ class Trainer(torch.nn.Module):
         self.after_eval_epoch()
 
     def train_step(self):
-        with torch.cuda.amp.autocast(enabled=self.args.float16):
+        with torch.amp.autocast("cuda", enabled=self.args.float16):
             loss = self.compute_loss()
         if np.isnan(loss.item()):
             raise NanError
@@ -385,6 +338,112 @@ class Trainer(torch.nn.Module):
             torch.nn.utils.clip_grad_norm_(self.parameters(), self.args.grad_max_norm)
         self.scaler.step(self.optimizer)
         self.scaler.update()
+
+    def checkpoint(self):
+        # the checkpoint method is called asynchroneously when the slurm manager
+        # sends a preemption signal, with the same arguments as the __call__ method
+        # "self" is your callable, at its current state.
+        # "self" therefore holds the current version of the model:
+        print("Requeuing...")
+        args = copy.deepcopy(self.args)
+        args.add_version = False
+        args.folder = self.folder.absolute().as_posix()
+        model = type(self)(args)
+        return submitit.helpers.DelayedSubmission(model)
+
+    def load_checkpoint(self):
+        """load a model and optionnally a scheduler/optimizer/epoch from a given path to checkpoint
+
+        Args:
+            load_from (str): path to checkpoint
+        """
+        load_from = Path(self.args.load_from)
+        if load_from.is_file():
+            logging.info(f"\t=> file {load_from} exists\n\t=> loading it...")
+            checkpoint = load_from
+        elif (self.folder / "tmp_checkpoint.ckpt").is_file():
+            logging.info(
+                f"\t=> folder {self.folder} contains `tmp_checkpoint.ckpt` file\n\t=> loading it..."
+            )
+            checkpoint = self.folder / "tmp_checkpoint.ckpt"
+        else:
+            logging.info(f"\t=> no checkpoint at `{load_from}`")
+            logging.info(
+                f"\t=> no checkpoint at `{self.folder / 'tmp_checkpoint.ckpt'}`"
+            )
+            logging.info("f\t=> training from scratch...")
+            self.epoch = 0
+            return
+
+        ckpt = torch.load(checkpoint, map_location="cpu")
+
+        for name, model in self.named_children():
+            if name not in ckpt:
+                logging.info(f"\t\t=> {name} not in ckpt, skipping...")
+                continue
+            model.load_state_dict(ckpt[name])
+            logging.info(f"\t\t=> {name} successfully loaded...")
+        if "optimizer" in ckpt:
+            self.optimizer.load_state_dict(ckpt["optimizer"])
+            logging.info(f"\t\t=> optimizer successfully loaded...")
+        if "scheduler" in ckpt:
+            self.scheduler.load_state_dict(ckpt["scheduler"])
+            logging.info(f"\t\t=> scheduler successfully loaded...")
+        if "epoch" in ckpt:
+            self.epoch = ckpt["epoch"]
+            logging.info(f"\t\t=> training will start from epoch {ckpt['epoch']}")
+        else:
+            self.epoch = 0
+
+    def initialize_train_loader(self):
+        raise NotImplementedError
+
+    def initialize_val_loader(self):
+        raise NotImplementedError
+
+    def initialize_modules(self):
+        self.model = torchvision.models.__dict__[self.args.architecture]()
+
+    def initialize_optimizer(self):
+        if self.args.optimizer == "AdamW":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.args.learning_rate,
+                weight_decay=self.args.weight_decay,
+                eps=1e-8,
+                betas=(self.args.beta1, self.args.beta2),
+            )
+        elif self.args.optimizer == "RMSprop":
+            optimizer = torch.optim.RMSprop(
+                self.parameters(),
+                lr=self.args.learning_rate,
+                weight_decay=self.args.weight_decay,
+                momentum=self.args.momentum,
+            )
+        elif self.args.optimizer == "SGD":
+            optimizer = torch.optim.SGD(
+                self.parameters(),
+                lr=self.args.learning_rate,
+                weight_decay=self.args.weight_decay,
+                momentum=self.args.momentum,
+            )
+        elif self.args.optimizer == "LARS":
+            optimizer = LARS(
+                self.parameters(),
+                lr=self.args.learning_rate,
+                weight_decay=self.args.weight_decay,
+                momentum=self.args.momentum,
+                epsilon=1e-8,
+            )
+        return optimizer
+
+    def initialize_scheduler(self):
+        min_lr = self.args.learning_rate * 0.005
+        peak_step = 5 * len(self.train_loader)
+        total_steps = self.args.epochs * len(self.train_loader)
+        return LinearWarmupCosineAnnealing(
+            self.optimizer, end_lr=min_lr, peak_step=peak_step, total_steps=total_steps
+        )
 
     def save_checkpoint(self, name, model_only):
         if self.args.world_size > 1:
@@ -422,104 +481,12 @@ class Trainer(torch.nn.Module):
         }
         return bucket
 
-    def log_txt(
-        self,
-        filename=None,
-        log_only_rank0=True,
-        relative_path_filename=True,
-        **kwargs: dict,
-    ) -> None:
-        if (
-            self.args.world_size > 1
-            and log_only_rank0
-            and torch.distributed.get_rank() != 0
-        ):
-            return
-
-        if filename is None:
-            filename = "log.txt"
-        if filename[-4:] != ".txt":
-            filename += ".txt"
-        if relative_path_filename:
-            filename = self.folder / filename
-        logging.info(f"=> Log: {list(kwargs.keys())}")
-        bucket = {**self.generate_logging_default_bucket(), **kwargs}
-        with open(filename, "a+") as fd:
-            fd.write(json.dumps(bucket) + "\n")
-            fd.flush()
-
-    # def log_hdf5(
-    #     self, filename=None, name="", log_only_rank0=True, **kwargs: dict
-    # ) -> None:
-    #     if (
-    #         self.args.world_size
-    #         and log_only_rank0
-    #         and torch.distributed.get_rank() != 0
-    #     ):
-    #         return
-    #     if filename is None:
-    #         filename = "log.h5"
-    #     if filename[-3:] != ".h5":
-    #         filename += ".h5"
-    #     filename = self.folder / filename
-    #     if filename.exists():
-    #         f = tables.open_file(filename, mode="a")
-    #     else:
-    #         f = tables.open_file(filename, mode="w")
-
-    #     bucket = {**self.generate_logging_default_bucket(), **kwargs}
-
-    #     for name, data in bucket.items():
-    #         data = np.asarray(data)
-    #         # we now retreive the dataset from the existing h5 table
-    #         try:
-    #             node = f.get_node(f.root, name=name)
-    #         except tables.NoSuchNodeError:
-    #             atom = tables.Float32Atom()
-    #             node = f.create_earray(f.root, name, atom=atom, shape=(0,) + data.shape)
-    #         except Exception as e:
-    #             raise (e)
-    #         # append row to the existing dataset
-    #         node.append(data[None])
-    #     f.close()
-
-    def log_mongodb(
-        self,
-        db_name,
-        coll_name,
-        host_ip=None,
-        port=None,
-        username=None,
-        password=None,
-        log_only_rank0=True,
-        **kwargs: dict,
-    ):
-        if self.distributed and log_only_rank0 and torch.distributed.get_rank() != 0:
-            return
-
-        if not hasattr(self, "mongo_client"):
-            self.mongo_client = MongoClient(
-                host=host_ip, port=port, username=username, password=password
-            )
-        mydb = self.mongo_client[db_name]
-        mycol = mydb[coll_name]
-        bucket = {**self.generate_logging_default_bucket(), **kwargs}
-        x = mycol.insert_one(bucket)
-
     def cleanup(self):
         if self.args.world_size > 1:
             print("Cleaning distributed processes...")
             torch.distributed.destroy_process_group()
         else:
             print("Not using distributed... nothing to clean")
-
-    def initialize_scheduler(self):
-        min_lr = self.args.learning_rate * 0.005
-        peak_step = 5 * len(self.train_loader)
-        total_steps = self.args.epochs * len(self.train_loader)
-        return LinearWarmupCosineAnnealing(
-            self.optimizer, min_lr, peak_step, total_steps
-        )
 
     def gather(self, x):
         return FullGatherLayer.apply(x)
@@ -591,48 +558,6 @@ class Trainer(torch.nn.Module):
         return
 
     def eval_step(self):
-        raise NotImplementedError
-
-    def initialize_modules(self):
-        self.model = torchvision.models.__dict__[self.args.architecture]()
-
-    def initialize_optimizer(self):
-        if self.args.optimizer == "AdamW":
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                eps=1e-8,
-                betas=(self.args.beta1, self.args.beta2),
-            )
-        elif self.args.optimizer == "RMSprop":
-            optimizer = torch.optim.RMSprop(
-                self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
-            )
-        elif self.args.optimizer == "SGD":
-            optimizer = torch.optim.SGD(
-                self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
-            )
-        elif self.args.optimizer == "LARS":
-            optimizer = LARS(
-                self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
-                epsilon=1e-8,
-            )
-        return optimizer
-
-    def initialize_train_loader(self):
-        raise NotImplementedError
-
-    def initialize_val_loader(self):
         raise NotImplementedError
 
     def compute_loss(self):

@@ -1,18 +1,17 @@
 # config.yaml
+general:
+  seed: 123
+  eval_only: false
+  epochs: 25
+  
 model:
   architecture: "resnet50"
 
 log:
   folder: "./new_logs"
   add_version: false
-  load_from: null
   log_level: 10  # logging.DEBUG
   checkpoint_frequency: 5
-
-general:
-  seed: 123
-  eval_only: false
-  epochs: 25
 
 hardware:
   float16: true
