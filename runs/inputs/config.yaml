@@ -1,6 +1,7 @@
 # config.yaml
 optim:
   epochs: 25
+  batch_size: 64
   
 model:
   architecture: "resnet50"
@@ -14,6 +15,6 @@ log:
 
 hardware:
   seed: 123
-  float16: true
+  float16: false
   gpu: 1
-  world_size: 2
+  world_size: 1

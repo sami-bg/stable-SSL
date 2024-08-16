@@ -14,7 +14,7 @@ class SSLTrainer(Trainer):
     def __init__(self, config: TrainerConfig):
         super().__init__(config)
 
-    def initialize_model(self, arch):
+    def initialize_modules(self):
         model, fan_in = load_model_without_classifier(
             self.config.architecture.model_name
         )
@@ -44,14 +44,17 @@ class SSLTrainer(Trainer):
         # dataset = torchvision.datasets.ImageFolder(
         #     self.config.data / "train", Transform()
         # )
+
         if self.config.hardware.world_size > 1:
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
             assert self.config.optim.batch_size % self.config.hardware.world_size == 0
         else:
             sampler = RandomSampler(dataset)
+
         per_device_batch_size = (
             self.config.optim.batch_size // self.config.hardware.world_size
         )
+
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=per_device_batch_size,
@@ -74,15 +77,17 @@ class SSLTrainer(Trainer):
         # dataset = torchvision.datasets.ImageFolder(
         #     self.config.data / "eval", Transform()
         # )
+
         if self.config.hardware.world_size > 1:
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
             assert self.config.optim.batch_size % self.config.hardware.world_size == 0
         else:
             sampler = RandomSampler(dataset)
-        # sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+
         per_device_batch_size = (
             self.config.optim.batch_size // self.config.hardware.world_size
         )
+
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=per_device_batch_size,

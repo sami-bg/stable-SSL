@@ -226,13 +226,15 @@ class Trainer(torch.nn.Module):
         else:
             max_steps = self.config.optim.max_steps
 
-        for step, data in enumerate(
+        for step, ((view1, view2), _) in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
 
             # set up the data to have easy access throughout the methods
             self.step = step
-            self.data = data
+            view1 = view1.to(self.this_device)
+            view2 = view2.to(self.this_device)
+            self.data = [view1, view2]
 
             try:
                 # call any user specified pre-step function
@@ -387,7 +389,7 @@ class Trainer(torch.nn.Module):
         raise NotImplementedError
 
     def initialize_modules(self):
-        self.model = torchvision.models.__dict__[self.config.architecture.model_name]()
+        raise NotImplementedError
 
     def initialize_optimizer(self):
         if self.config.optim.optimizer == "AdamW":

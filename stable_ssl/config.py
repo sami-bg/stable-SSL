@@ -90,11 +90,11 @@ class OptimConfig:
             if param in self.default_params[self.optimizer].keys():
                 if getattr(self, param) is None:
                     # If a useful parameter is not provided, its default value is used.
-                    new_value = self.default_params[self.optimizer][param]
-                    setattr(self, param, new_value)
+                    default_value = self.default_params[self.optimizer][param]
+                    setattr(self, param, default_value)
                     warnings.warn(
                         f"[stable-SSL] {param} not provided for {self.optimizer} "
-                        f"optimizer. Default value of {new_value} is used."
+                        f"optimizer. Default value of {default_value} is used."
                     )
             else:
                 # If the parameter is useless for the optimizer, it is set to None.
