@@ -36,7 +36,7 @@ class LARS(Optimizer):
     def __init__(
         self,
         params,
-        lr=required,
+        lr=1e0,
         momentum=0,
         eta=1e-3,
         dampening=0,

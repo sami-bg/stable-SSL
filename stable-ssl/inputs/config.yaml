@@ -1,7 +1,5 @@
 # config.yaml
-general:
-  seed: 123
-  eval_only: false
+optim:
   epochs: 25
   
 model:
@@ -9,11 +7,13 @@ model:
 
 log:
   folder: "./new_logs"
+  eval_only: false
   add_version: false
   log_level: 10  # logging.DEBUG
   checkpoint_frequency: 5
 
 hardware:
+  seed: 123
   float16: true
   gpu: 1
   world_size: 2

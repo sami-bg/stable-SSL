@@ -2,10 +2,9 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from config import (
-    SSLConfig,
-    GeneralConfig,
+    TrainerConfig,
     OptimConfig,
-    ModelConfig,
+    ArchitectureConfig,
     HardwareConfig,
     LogConfig,
 )
@@ -20,10 +19,9 @@ def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_object(cfg)
 
     # Create the input for trainer
-    args = SSLConfig(
-        general=GeneralConfig(**cfg_dict.get("general", {})),
+    args = TrainerConfig(
         optim=OptimConfig(**cfg_dict.get("optim", {})),
-        model=ModelConfig(**cfg_dict.get("model", {})),
+        architecture=ArchitectureConfig(**cfg_dict.get("architecture", {})),
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
         log=LogConfig(**cfg_dict.get("log", {})),
     )

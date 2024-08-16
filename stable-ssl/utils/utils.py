@@ -11,6 +11,17 @@ from torch.utils.data import Sampler
 from typing import Iterable, Iterator, List
 import submitit
 
+import torch
+from torch.optim import SGD, RMSprop, AdamW
+from utils.optim import LARS
+
+DEFAULT_PARAMS_OPTIMIZER = {
+    "SGD": SGD([torch.tensor(0)]).defaults,
+    "RMSprop": RMSprop([torch.tensor(0)]).defaults,
+    "AdamW": AdamW([torch.tensor(0)]).defaults,
+    "LARS": LARS([torch.tensor(0)]).defaults,
+}
+
 
 def augment_argparser(parser):
     parser.add_argument("--learning-rate", type=float, default=0.001)

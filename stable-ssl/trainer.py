@@ -13,7 +13,7 @@ import copy
 import logging
 import torchvision
 import warnings
-import json
+import yaml
 import time
 from tqdm import tqdm
 from pathlib import Path
@@ -31,13 +31,12 @@ from torch.optim.lr_scheduler import (
     ConstantLR,
 )
 from torch.distributed.optim import ZeroRedundancyOptimizer
-from torch.cuda.amp import GradScaler
 
 from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
 from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
 from utils.optim import LARS
 from utils.schedulers import LinearWarmupCosineAnnealing
-from config import SSLConfig
+from config import TrainerConfig
 
 
 class Trainer(torch.nn.Module):
@@ -45,88 +44,61 @@ class Trainer(torch.nn.Module):
 
     Parameters:
     -----------
-    config : SSLConfig
+    config : TrainerConfig
         Parameters for Trainer organized in the following groups :
-        'general', 'optim', 'model', 'hardware', 'log'.
-        For details, see the `GlobalConfig` class in `config.py`.
+        'optim', 'architecture', 'hardware', 'log'.
+        For details, see the `TrainerConfig` class in `config.py`.
     """
 
-    def __init__(self, args: SSLConfig):
+    def __init__(self, config: TrainerConfig):
         super().__init__()
 
-        self._save_flatten_args(args)
+        self.config = copy.deepcopy(config)
 
-        if self.args.add_version:
-            self.folder = (Path(self.args.folder) / str(uuid.uuid4())).absolute()
+        if self.config.log.add_version:
+            self.folder = (Path(self.config.log.folder) / str(uuid.uuid4())).absolute()
         else:
-            self.folder = Path(self.args.folder).absolute()
+            self.folder = Path(self.config.log.folder).absolute()
 
         self.folder.mkdir(parents=True, exist_ok=True)
 
-        # Dump hyper-parameters to a JSON file
         print(f"[stable-SSL] Logging in {self.folder}")
         print(f"[stable-SSL] \t=> Dumping hyper-parameters...")
-        with open(self.folder / "hparams.json", "w+") as f:
-            json.dump(asdict(args), f, indent=2)
-
-    def _save_flatten_args(self, args):
-        """
-        Recursively flattens hierarchical arguments in args and
-        adds the flattened attributes to self.args.
-        """
-        if not hasattr(self, "args"):
-            self.args = SimpleNamespace()
-        for key, value in vars(args).items():
-            if hasattr(value, "__dict__"):
-                # Recursively flatten nested objects
-                self._save_flatten_args(value)
-            else:
-                # Set the flattened attribute directly in self.args
-                setattr(self.args, key, value)
+        with open(self.folder / "hparams.yaml", "w+") as f:
+            yaml.dump(asdict(config), f, indent=2)
 
     def __call__(self):
 
-        logging.basicConfig(level=self.args.log_level)
-        seed_everything(self.args.seed)
+        logging.basicConfig(level=self.config.log.log_level)
+        seed_everything(self.config.hardware.seed)
 
-        # QUESTION : why is folder re-instanciated here ?
-        self.folder = Path(self.args.folder)
-        self.folder.mkdir(parents=True, exist_ok=True)
-
-        self.scaler = GradScaler(enabled=self.args.float16)
-
-        # torch.distributed.init_process_group(
-        #     backend="nccl",
-        #     init_method=self.args.dist_url,
-        #     world_size=self.args.world_size,
-        #     rank=self.args.rank,
-        # )
+        self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
 
         try:
-            self.args = setup_distributed(self.args)
-            self._device = f"cuda:{self.args.gpu}"
+            self.config.hardware = setup_distributed(self.config.hardware)
+            self._device = f"cuda:{self.config.hardware.gpu}"
         except RuntimeError as e:
             print(e)
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.args.gpu = 0
-            self.args.world_size = 1
-        torch.cuda.set_device(self.args.gpu)
+            self.config.hardware.gpu = 0
+            self.config.hardware.world_size = 1
+        torch.cuda.set_device(self.config.hardware.gpu)
 
-        if not self.args.eval_only:
+        if not self.config.log.eval_only:
             logging.info("Creating train_loader dataset...")
             self.train_loader = self.initialize_train_loader()
             assert hasattr(self, "train_loader")
-            logging.info(f"\t=>Found training set of length {len(self.train_loader)}")
+            logging.info(f"\t=> Found training set of length {len(self.train_loader)}")
         else:
-            logging.info(f"\t=>No training set loaded since eval_only")
+            logging.info(f"\t=> No training set loaded since eval_only")
 
         logging.info("Creating val_loader dataset...")
         try:
             self.val_loader = self.initialize_val_loader()
-            logging.info(f"\t=>Found validation set of length {len(self.val_loader)}")
+            logging.info(f"\t=> Found validation set of length {len(self.val_loader)}")
         except NotImplementedError:
             logging.info(
-                f"\t=>Found no implementation of initialize_val_loader... skipping"
+                f"\t=> Found no implementation of initialize_val_loader... skipping"
             )
             self.val_loader = None
 
@@ -134,17 +106,17 @@ class Trainer(torch.nn.Module):
         self.initialize_modules()
 
         for name, module in self.named_children():
-            if self.args.memory_format == "channels_last":
+            if self.config.architecture.memory_format == "channels_last":
                 module.to(memory_format=torch.channels_last)
-            if self.args.sync_batchnorm:
+            if self.config.architecture.sync_batchnorm:
                 module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(module)
             module.to(self.this_device)
             has_parameters = False
             if sum(p.numel() for p in module.parameters() if p.requires_grad) > 0:
                 has_parameters = True
-            if self.args.world_size > 1 and has_parameters:
+            if self.config.hardware.world_size > 1 and has_parameters:
                 module = torch.nn.parallel.DistributedDataParallel(
-                    module, device_ids=[self.args.gpu]
+                    module, device_ids=[self.config.hardware.gpu]
                 )
             setattr(self, name, module)
 
@@ -152,10 +124,10 @@ class Trainer(torch.nn.Module):
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(
-                f"\t=>Found module '{name}' with\n\t\t\t- {trainable} trainable parameters"
+                f"\t=> Found module '{name}' with\n\t\t\t- {trainable} trainable parameters"
             )
 
-        if not self.args.eval_only:
+        if not self.config.log.eval_only:
             logging.info("Calling initialize_optimizer() method...")
             self.optimizer = self.initialize_optimizer()
             logging.info("Calling initialize_scheduler() method...")
@@ -181,7 +153,7 @@ class Trainer(torch.nn.Module):
         Args:
             eval_only (bool): whether to only eval the model, or also train
         """
-        if self.args.eval_only:
+        if self.config.log.eval_only:
             self.eval_epoch()
         else:
             try:
@@ -193,7 +165,7 @@ class Trainer(torch.nn.Module):
                 self.cleanup()
 
     def _train_all_epochs(self):
-        while self.epoch < self.args.epochs:
+        while self.epoch < self.config.optim.epochs:
             if hasattr(self, "train_sampler"):
                 self.train_sampler.set_epoch(self.epoch)
             try:
@@ -207,18 +179,20 @@ class Trainer(torch.nn.Module):
             except Exception as e:
                 raise (e)
 
-            if self.args.eval_each_epoch:
+            if self.config.log.eval_each_epoch:
                 self.eval_epoch()
             self.epoch = self.epoch + 1
 
-            freq = self.args.checkpoint_frequency
+            freq = self.config.log.checkpoint_frequency
             if self.epoch % freq == 0:
                 print("checkpointing everything to restart if needed...")
                 self.save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
 
         # at the end of training, we (optionally) save the final model
-        if self.args.save_final_model:
-            self.save_checkpoint(f"{self.args.final_model_name}.ckpt", model_only=True)
+        if self.config.log.save_final_model:
+            self.save_checkpoint(
+                f"{self.config.log.final_model_name}.ckpt", model_only=True
+            )
         # and remove any temporary checkpoint
         (self.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
 
@@ -235,15 +209,16 @@ class Trainer(torch.nn.Module):
                     train mode after call to before_train_epoch()"
             )
 
-        if self.args.max_steps < 0:
+        if self.config.optim.max_steps < 0:
             max_steps = len(self.train_loader)
-        elif 0 < self.args.max_steps < 1:
+        elif 0 < self.config.optim.max_steps < 1:
             logging.info(
-                f"\t=> Training on {self.args.max_steps*100}% of the training dataset"
+                f"\t=> Training on {self.config.optim.max_steps*100}% of "
+                "the training dataset"
             )
-            max_steps = int(self.args.max_steps * len(self.train_loader))
+            max_steps = int(self.config.optim.max_steps * len(self.train_loader))
         else:
-            max_steps = self.args.max_steps
+            max_steps = self.config.optim.max_steps
 
         for step, data in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
@@ -308,7 +283,9 @@ class Trainer(torch.nn.Module):
                     self.before_eval_step()
 
                     # call the eval step
-                    with torch.amp.autocast("cuda", enabled=self.args.float16):
+                    with torch.amp.autocast(
+                        "cuda", enabled=self.config.hardware.float16
+                    ):
                         self.eval_step()
 
                     # call any user specified post-step function
@@ -326,16 +303,18 @@ class Trainer(torch.nn.Module):
         self.after_eval_epoch()
 
     def train_step(self):
-        with torch.amp.autocast("cuda", enabled=self.args.float16):
+        with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
             loss = self.compute_loss()
         if np.isnan(loss.item()):
             raise NanError
         self.scaler.scale(loss).backward()
         # Unscales the gradients of optimizer's assigned params in-place
         self.scaler.unscale_(self.optimizer)
-        if self.args.grad_max_norm is not None:
+        if self.config.optim.grad_max_norm is not None:
             # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), self.args.grad_max_norm)
+            torch.nn.utils.clip_grad_norm_(
+                self.parameters(), self.config.optim.grad_max_norm
+            )
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
@@ -345,10 +324,10 @@ class Trainer(torch.nn.Module):
         # "self" is your callable, at its current state.
         # "self" therefore holds the current version of the model:
         print("Requeuing...")
-        args = copy.deepcopy(self.args)
-        args.add_version = False
-        args.folder = self.folder.absolute().as_posix()
-        model = type(self)(args)
+        config = copy.deepcopy(self.config)
+        config.log.add_version = False
+        config.log.folder = self.folder.absolute().as_posix()
+        model = type(self)(config)
         return submitit.helpers.DelayedSubmission(model)
 
     def load_checkpoint(self):
@@ -357,7 +336,7 @@ class Trainer(torch.nn.Module):
         Args:
             load_from (str): path to checkpoint
         """
-        load_from = Path(self.args.load_from)
+        load_from = Path(self.config.log.load_from)
         if load_from.is_file():
             logging.info(f"\t=> file {load_from} exists\n\t=> loading it...")
             checkpoint = load_from
@@ -402,51 +381,51 @@ class Trainer(torch.nn.Module):
         raise NotImplementedError
 
     def initialize_modules(self):
-        self.model = torchvision.models.__dict__[self.args.architecture]()
+        self.model = torchvision.models.__dict__[self.config.architecture.model_name]()
 
     def initialize_optimizer(self):
-        if self.args.optimizer == "AdamW":
+        if self.config.optim.optimizer == "AdamW":
             optimizer = torch.optim.AdamW(
                 self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
+                lr=self.config.optim.lr,
+                weight_decay=self.config.optim.weight_decay,
                 eps=1e-8,
-                betas=(self.args.beta1, self.args.beta2),
+                betas=self.config.optim.betas,
             )
-        elif self.args.optimizer == "RMSprop":
+        elif self.config.optim.optimizer == "RMSprop":
             optimizer = torch.optim.RMSprop(
                 self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
+                lr=self.config.optim.lr,
+                weight_decay=self.config.optim.weight_decay,
+                momentum=self.config.optim.momentum,
             )
-        elif self.args.optimizer == "SGD":
+        elif self.config.optim.optimizer == "SGD":
             optimizer = torch.optim.SGD(
                 self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
+                lr=self.config.optim.lr,
+                weight_decay=self.config.optim.weight_decay,
+                momentum=self.config.optim.momentum,
             )
-        elif self.args.optimizer == "LARS":
+        elif self.config.optim.optimizer == "LARS":
             optimizer = LARS(
                 self.parameters(),
-                lr=self.args.learning_rate,
-                weight_decay=self.args.weight_decay,
-                momentum=self.args.momentum,
+                lr=self.config.optim.lr,
+                weight_decay=self.config.optim.weight_decay,
+                momentum=self.config.optim.momentum,
                 epsilon=1e-8,
             )
         return optimizer
 
     def initialize_scheduler(self):
-        min_lr = self.args.learning_rate * 0.005
+        min_lr = self.config.optim.lr * 0.005
         peak_step = 5 * len(self.train_loader)
-        total_steps = self.args.epochs * len(self.train_loader)
+        total_steps = self.config.optim.epochs * len(self.train_loader)
         return LinearWarmupCosineAnnealing(
             self.optimizer, end_lr=min_lr, peak_step=peak_step, total_steps=total_steps
         )
 
     def save_checkpoint(self, name, model_only):
-        if self.args.world_size > 1:
+        if self.config.hardware.world_size > 1:
             if torch.distributed.get_rank() != 0:
                 return
         saving_name = self.folder / name
@@ -467,7 +446,7 @@ class Trainer(torch.nn.Module):
     def generate_logging_default_bucket(self):
         cur_time = time.time()
         rel_time = cur_time - self.start_time
-        if self.args.world_size > 1:
+        if self.config.hardware.world_size > 1:
             rank = torch.distributed.get_rank()
         else:
             rank = 0
@@ -482,7 +461,7 @@ class Trainer(torch.nn.Module):
         return bucket
 
     def cleanup(self):
-        if self.args.world_size > 1:
+        if self.config.hardware.world_size > 1:
             print("Cleaning distributed processes...")
             torch.distributed.destroy_process_group()
         else:
@@ -493,7 +472,7 @@ class Trainer(torch.nn.Module):
 
     @property
     def rank(self):
-        if self.args.world_size > 1:
+        if self.config.hardware.world_size > 1:
             return torch.distributed.get_rank()
         return 0
 

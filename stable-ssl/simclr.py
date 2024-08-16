@@ -10,14 +10,14 @@ from trainer import Trainer
 
 
 class SimCLR(Trainer):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, config):
+        super().__init__(config)
 
         self.tau = 0.1
-        self.metric = get_metric(self.args.metric)
+        self.metric = "cosine"
 
     def initialize_model(self, arch):
-        model, fan_in = load_without_classifier(self.args.architecture)
+        model, fan_in = load_without_classifier(self.config.architecture)
 
         # get output shape
         model = model.eval()
@@ -45,15 +45,17 @@ class SimCLR(Trainer):
             download=True,
         )
         # dataset = torchvision.datasets.ImageFolder(
-        #     self.args.data / "train", Transform()
+        #     self.config.data / "train", Transform()
         # )
         # sampler = torch.utils.data.distributed.DistributedSampler(dataset)
-        assert self.args.batch_size % self.args.world_size == 0
-        per_device_batch_size = self.args.batch_size // self.args.world_size
+        assert self.config.optim.batch_size % self.config.hardware.world_size == 0
+        per_device_batch_size = (
+            self.config.optim.batch_size // self.config.hardware.world_size
+        )
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=per_device_batch_size,
-            num_workers=self.args.workers,
+            num_workers=self.config.hardware.workers,
             pin_memory=True,
             sampler=RandomSampler(dataset),
         )
@@ -66,15 +68,17 @@ class SimCLR(Trainer):
             download=True,
         )
         # dataset = torchvision.datasets.ImageFolder(
-        #     self.args.data / "eval", Transform()
+        #     self.config.data / "eval", Transform()
         # )
         # sampler = torch.utils.data.distributed.DistributedSampler(dataset)
-        assert self.args.batch_size % self.args.world_size == 0
-        per_device_batch_size = self.args.batch_size // self.args.world_size
+        assert self.config.optim.batch_size % self.config.hardware.world_size == 0
+        per_device_batch_size = (
+            self.config.optim.batch_size // self.config.hardware.world_size
+        )
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=per_device_batch_size,
-            num_workers=self.args.workers,
+            num_workers=self.config.hardware.workers,
             pin_memory=True,
             sampler=RandomSampler(dataset),
         )
