@@ -1,4 +1,3 @@
-import torch as ch
 import random
 import os
 import numpy as np
@@ -10,28 +9,7 @@ import torch.distributed as dist
 from torch.utils.data import Sampler
 from typing import Iterable, Iterator, List
 import submitit
-
 import torch
-from torch.optim import SGD, RMSprop, AdamW
-from utils.optim import LARS
-
-DEFAULT_PARAMS_OPTIMIZER = {
-    "SGD": SGD([torch.tensor(0)]).defaults,
-    "RMSprop": RMSprop([torch.tensor(0)]).defaults,
-    "AdamW": AdamW([torch.tensor(0)]).defaults,
-    "LARS": LARS([torch.tensor(0)]).defaults,
-}
-
-
-def augment_argparser(parser):
-    parser.add_argument("--learning-rate", type=float, default=0.001)
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--weight-decay", type=float, default=0.0)
-    parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument(
-        "--scheduler", type=str, default="LinearWarmupThreeStepsAnnealing"
-    )
-    parser.add_argument("--optimizer", type=str, default="AdamW")
 
 
 class PositiveBatchSampler(Sampler):
@@ -122,7 +100,7 @@ class PositiveBatchSampler(Sampler):
         return self.n_samples // self.batch_size
 
 
-class FullGatherLayer(ch.autograd.Function):
+class FullGatherLayer(torch.autograd.Function):
     """
     Gather tensors from all process and support backward propagation
     for the gradients across processes.
@@ -130,13 +108,13 @@ class FullGatherLayer(ch.autograd.Function):
 
     @staticmethod
     def forward(ctx, x):
-        output = [ch.zeros_like(x) for _ in range(dist.get_world_size())]
+        output = [torch.zeros_like(x) for _ in range(dist.get_world_size())]
         dist.all_gather(output, x)
         return tuple(output)
 
     @staticmethod
     def backward(ctx, *grads):
-        all_gradients = ch.stack(grads)
+        all_gradients = torch.stack(grads)
         dist.all_reduce(all_gradients)
         return all_gradients[dist.get_rank()]
 
@@ -156,7 +134,7 @@ def setup_distributed(args):
     print(f"\trank: {dist_env.global_rank}")
     print(f"\tworld size: {dist_env.num_nodes*dist_env.num_tasks}")
     print(f"\tlocal rank: {dist_env.local_rank}")
-    ch.distributed.init_process_group(
+    torch.distributed.init_process_group(
         "nccl",
         init_method=dist_url,
         rank=dist_env.global_rank,
@@ -164,8 +142,10 @@ def setup_distributed(args):
     )
     args.world_size = dist_env.num_nodes * dist_env.num_tasks
     args.gpu = dist_env.local_rank
-    assert dist_env.global_rank == ch.distributed.get_rank()
-    assert (dist_env.num_nodes * dist_env.num_tasks) == ch.distributed.get_world_size()
+    assert dist_env.global_rank == torch.distributed.get_rank()
+    assert (
+        dist_env.num_nodes * dist_env.num_tasks
+    ) == torch.distributed.get_world_size()
     return args
 
 
@@ -185,55 +165,22 @@ def count_SLURM_jobs(pending=True, running=True):
     return int(output)
 
 
-def rand_bbox(size, lam):
-    W = size[2]
-    H = size[3]
-    cut_rat = np.sqrt(1.0 - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
-
-    # uniform
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    return bbx1, bby1, bbx2, bby2
-
-
 def seed_everything(seed, fast=True):
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
-    ch.manual_seed(seed)
-    ch.cuda.manual_seed(seed)
-    ch.cuda.manual_seed_all(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     if fast:
-        ch.backends.cudnn.deterministic = False
-        ch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
     else:
-        ch.backends.cudnn.deterministic = True
-        ch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
-class SinkhornAttention(ch.jit.ScriptModule):
-    def __init__(self, dim: int = -1, sinkhorn_iterations: int = 3) -> None:
-        super().__init__()
-        self.dim = dim
-        self.sinkhorn_iterations = sinkhorn_iterations
-
-    def forward(self, Q: ch.Tensor) -> ch.Tensor:
-        Q = ch.softmax(Q, dim=self.dim)
-        for _ in range(self.sinkhorn_iterations):
-            Q = Q.div(ch.sum(Q, dim=-1, keepdim=True))
-            Q = Q.div(ch.sum(Q, dim=-2, keepdim=True))
-        return Q
-
-
-def find_module(model: ch.nn.Module, module: ch.nn.Module):
+def find_module(model: torch.nn.Module, module: torch.nn.Module):
     names = []
     values = []
     for child_name, child in model.named_modules():
@@ -244,7 +191,7 @@ def find_module(model: ch.nn.Module, module: ch.nn.Module):
 
 
 def replace_module(model, replacement_mapping):
-    if not isinstance(model, ch.nn.Module):
+    if not isinstance(model, torch.nn.Module):
         raise ValueError("Torch.nn.Module expected as input")
     for name, module in model.named_modules():
         if name == "":
@@ -257,30 +204,3 @@ def replace_module(model, replacement_mapping):
             parent = getattr(parent, name)
         setattr(parent, module_names[-1], replacement)
     return model
-
-
-def rand_bbox(size, lam):
-    W = size[2]
-    H = size[3]
-    cut_rat = np.sqrt(1.0 - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
-
-    # uniform
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
-
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
-    return bbx1, bby1, bbx2, bby2
-
-
-if __name__ == "__main__":
-    a = ch.rand(4, 4)
-    print(a)
-    module = SinkhornAttention()
-    ds_a = module(a)
-    print(ds_a.sum(0), ds_a.sum(1))

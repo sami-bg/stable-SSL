@@ -1,15 +1,15 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from config import (
+from stable_ssl.config import (
     TrainerConfig,
     OptimConfig,
     ArchitectureConfig,
     HardwareConfig,
     LogConfig,
 )
-from trainer import Trainer
-from simclr import SimCLR
+from stable_ssl.trainer import Trainer
+from stable_ssl.ssl_modules import SimCLR
 
 
 @hydra.main(config_path="inputs", config_name="config")

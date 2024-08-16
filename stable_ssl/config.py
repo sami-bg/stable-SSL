@@ -3,7 +3,10 @@ from typing import Optional, Tuple
 import warnings
 import logging
 
-from utils.utils import DEFAULT_PARAMS_OPTIMIZER
+import torch
+from torch.optim import SGD, RMSprop, AdamW
+
+from stable_ssl.utils import LARS
 
 
 @dataclass
@@ -67,6 +70,13 @@ class OptimConfig:
     betas: Optional[Tuple[float, float]] = None
     grad_max_norm: Optional[float] = None
 
+    default_params = {
+        "SGD": SGD([torch.tensor(0)]).defaults,
+        "RMSprop": RMSprop([torch.tensor(0)]).defaults,
+        "AdamW": AdamW([torch.tensor(0)]).defaults,
+        "LARS": LARS([torch.tensor(0)]).defaults,
+    }
+
     def __post_init__(self):
 
         if self.optimizer not in ["AdamW", "RMSprop", "SGD", "LARS"]:
@@ -77,10 +87,10 @@ class OptimConfig:
 
         # Ensure parameters are provided appropriately based on the optimizer.
         for param in ["lr", "weight_decay", "momentum", "betas", "nesterov"]:
-            if param in DEFAULT_PARAMS_OPTIMIZER[self.optimizer].keys():
+            if param in self.default_params[self.optimizer].keys():
                 if getattr(self, param) is None:
                     # If a useful parameter is not provided, its default value is used.
-                    new_value = DEFAULT_PARAMS_OPTIMIZER[self.optimizer][param]
+                    new_value = self.default_params[self.optimizer][param]
                     setattr(self, param, new_value)
                     warnings.warn(
                         f"[stable-SSL] {param} not provided for {self.optimizer} "

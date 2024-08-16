@@ -1,11 +1,17 @@
 # from https://github.com/facebookresearch/barlowtwins/blob/main/main.py
 
 import random
+import numpy as np
 from PIL import Image, ImageOps, ImageFilter
 from torch import nn, optim
 import torch
 import torchvision
-import torchvision.transforms as transforms
+import torchvision.transforms.v2 as transforms
+
+
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]) * 255
+IMAGENET_STD = np.array([0.229, 0.224, 0.225]) * 255
+DEFAULT_CROP_RATIO = 224 / 256
 
 
 class GaussianBlur(object):
@@ -31,7 +37,7 @@ class Solarization(object):
             return img
 
 
-class Transform:
+class PositivePairSampler:
     def __init__(self, size: int = 224):
         self.transform = transforms.Compose(
             [
@@ -50,13 +56,13 @@ class Transform:
                     p=0.8,
                 ),
                 transforms.RandomGrayscale(p=0.2),
-                # GaussianBlur(p=1.0),
+                GaussianBlur(p=1.0),
                 Solarization(p=0.0),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=(0.4915, 0.4822, 0.4466),  # mean=[0.485, 0.456, 0.406],
-                    std=(0.2470, 0.2435, 0.2616),
-                ),  # std=[0.229, 0.224, 0.225])
+                    mean=IMAGENET_MEAN,
+                    std=IMAGENET_STD,
+                ),
             ]
         )
         self.transform_prime = transforms.Compose(
@@ -74,13 +80,13 @@ class Transform:
                     p=0.8,
                 ),
                 transforms.RandomGrayscale(p=0.2),
-                # GaussianBlur(p=0.1),
+                GaussianBlur(p=0.1),
                 Solarization(p=0.2),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=[0.4915, 0.4822, 0.4466],  # mean=[0.485, 0.456, 0.406],
-                    std=[0.2470, 0.2435, 0.2616],
-                ),  # std=[0.229, 0.224, 0.225])
+                    mean=IMAGENET_MEAN,
+                    std=IMAGENET_STD,
+                ),
             ]
         )
 

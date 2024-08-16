@@ -15,11 +15,10 @@ import torchvision
 import warnings
 import yaml
 import time
+import dataclasses
+
 from tqdm import tqdm
 from pathlib import Path
-from pymongo import MongoClient
-from dataclasses import asdict
-from types import SimpleNamespace
 
 # import tables
 
@@ -32,11 +31,18 @@ from torch.optim.lr_scheduler import (
 )
 from torch.distributed.optim import ZeroRedundancyOptimizer
 
-from utils.exceptions import BreakAllEpochs, BreakEpoch, NanError, BreakStep
-from utils.utils import seed_everything, setup_distributed, rand_bbox, FullGatherLayer
-from utils.optim import LARS
-from utils.schedulers import LinearWarmupCosineAnnealing
-from config import TrainerConfig
+from stable_ssl.utils import (
+    BreakAllEpochs,
+    BreakEpoch,
+    NanError,
+    BreakStep,
+    seed_everything,
+    setup_distributed,
+    FullGatherLayer,
+    LARS,
+    LinearWarmupCosineAnnealing,
+)
+from stable_ssl.config import TrainerConfig
 
 
 class Trainer(torch.nn.Module):
@@ -65,7 +71,7 @@ class Trainer(torch.nn.Module):
         print(f"[stable-SSL] Logging in {self.folder}")
         print(f"[stable-SSL] \t=> Dumping hyper-parameters...")
         with open(self.folder / "hparams.yaml", "w+") as f:
-            yaml.dump(asdict(config), f, indent=2)
+            yaml.dump(dataclasses.asdict(config), f, indent=2)
 
     def __call__(self):
 
