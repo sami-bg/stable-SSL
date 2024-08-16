@@ -20,11 +20,6 @@ class SimCLR(SSLTrainer):
         super().__init__(config)
         self.temperature = 0.15
 
-        # TO DO : better handle device, real device is set during __call__
-        self.mask = self._mask_correlated_samples(
-            self.config.optim.batch_size, self.config.hardware.world_size
-        ).to("cuda")
-        # ).to(f"cuda:{self.config.hardware.gpu}")
         self.criterion = nn.CrossEntropyLoss(reduction="sum")
         self.similarity_f = nn.CosineSimilarity(dim=2)
 
@@ -46,6 +41,10 @@ class SimCLR(SSLTrainer):
         batch_size = z_i.size(0)
         N = 2 * batch_size * self.config.hardware.world_size
 
+        mask = self._mask_correlated_samples(
+            batch_size, self.config.hardware.world_size
+        ).to(self.this_device)
+
         if self.config.hardware.world_size > 1:
             z_i = torch.cat(self.gather(z_i), dim=0)
             z_j = torch.cat(self.gather(z_j), dim=0)
@@ -60,7 +59,7 @@ class SimCLR(SSLTrainer):
 
         # We have 2N samples, but with Distributed training every GPU gets N examples too, resulting in: 2xNxN
         positive_samples = torch.cat((sim_i_j, sim_j_i), dim=0).reshape(N, 1)
-        negative_samples = sim[self.mask].reshape(N, -1)
+        negative_samples = sim[mask].reshape(N, -1)
         logits = torch.cat((positive_samples, negative_samples), dim=1)
         logits_num = logits
         logits_denum = torch.logsumexp(logits, dim=1, keepdim=True)
