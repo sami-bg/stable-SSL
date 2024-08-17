@@ -112,9 +112,9 @@ class Trainer(torch.nn.Module):
         self.initialize_modules()
 
         for name, module in self.named_children():
-            if self.config.architecture.memory_format == "channels_last":
+            if self.config.model.memory_format == "channels_last":
                 module.to(memory_format=torch.channels_last)
-            if self.config.architecture.sync_batchnorm:
+            if self.config.model.sync_batchnorm:
                 module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(module)
             module.to(self.this_device)
             has_parameters = False
@@ -232,8 +232,8 @@ class Trainer(torch.nn.Module):
 
             # set up the data to have easy access throughout the methods
             self.step = step
-            view1 = view1.to(self.this_device)
-            view2 = view2.to(self.this_device)
+            view1 = view1.to(self.this_device, non_blocking=True)
+            view2 = view2.to(self.this_device, non_blocking=True)
             self.data = [view1, view2]
 
             try:
@@ -268,6 +268,11 @@ class Trainer(torch.nn.Module):
         # set-up model in eval mode + reset metrics
         self.before_eval_epoch()
 
+        # TO DO : add config to control this eval optimizer
+        self.optimizer_classifier = optim.SGD(
+            self.classifier.parameters(), lr=self.config.optim.lr
+        )
+
         # we do not ensure that the model is still in eval mode to not
         # override any user desired behavior
         if self.training:
@@ -279,13 +284,16 @@ class Trainer(torch.nn.Module):
         try:
             max_steps = len(self.val_loader)
             with torch.no_grad():
-                for step, data in tqdm(
+                for step, (x, y) in tqdm(
                     enumerate(self.val_loader),
                     total=max_steps,
                     desc=f"Eval: {self.epoch=}",
                 ):
                     self.step = step
-                    self.data = data
+
+                    x = x.to(self.this_device)
+                    y = y.to(self.this_device)
+                    self.data = [x, y]
 
                     # call any user specified pre-step function
                     self.before_eval_step()
@@ -536,6 +544,7 @@ class Trainer(torch.nn.Module):
         self.eval()
 
     def before_eval_step(self):
+        self.optimizer_classifier.zero_grad(set_to_none=True)
         return
 
     def after_eval_step(self):

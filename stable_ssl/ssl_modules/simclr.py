@@ -18,10 +18,6 @@ class SimCLR(SSLTrainer):
 
     def __init__(self, config: TrainerConfig):
         super().__init__(config)
-        self.temperature = 0.15
-
-        self.criterion = nn.CrossEntropyLoss(reduction="sum")
-        self.similarity_f = nn.CosineSimilarity(dim=2)
 
     def forward(self):
         if self.training:
@@ -52,7 +48,7 @@ class SimCLR(SSLTrainer):
         z = torch.cat((z_i, z_j), dim=0)
 
         features = F.normalize(z, dim=1)
-        sim = torch.matmul(features, features.T) / self.temperature
+        sim = torch.matmul(features, features.T) / self.config.model.temperature
 
         sim_i_j = torch.diag(sim, batch_size * self.config.hardware.world_size)
         sim_j_i = torch.diag(sim, -batch_size * self.config.hardware.world_size)
@@ -76,3 +72,6 @@ class SimCLR(SSLTrainer):
             mask[i, batch_size * world_size + i] = 0
             mask[batch_size * world_size + i, i] = 0
         return mask
+
+    def compute_loss_classifier(self):
+        return F.cross_entropy(self.forward(), self.data[1])

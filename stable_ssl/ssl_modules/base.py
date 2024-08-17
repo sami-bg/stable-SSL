@@ -15,9 +15,7 @@ class SSLTrainer(Trainer):
         super().__init__(config)
 
     def initialize_modules(self):
-        model, fan_in = load_model_without_classifier(
-            self.config.architecture.model_name
-        )
+        model, fan_in = load_model_without_classifier(self.config.model.backbone_model)
 
         self.model = model.train()
 
@@ -96,3 +94,10 @@ class SSLTrainer(Trainer):
             sampler=RandomSampler(dataset),
         )
         return loader
+
+    def eval_step(self):
+        loss = self.compute_loss_classifier()
+        if np.isnan(loss.item()):
+            raise NanError
+        loss.backward()
+        self.optimizer_classifier.step()

@@ -4,9 +4,10 @@ from omegaconf import DictConfig, OmegaConf
 from stable_ssl.config import (
     TrainerConfig,
     OptimConfig,
-    ArchitectureConfig,
+    ModelConfig,
     HardwareConfig,
     LogConfig,
+    DataConfig,
 )
 from stable_ssl.trainer import Trainer
 from stable_ssl.ssl_modules import SimCLR
@@ -20,8 +21,9 @@ def main(cfg: DictConfig):
 
     # Create the input for trainer
     args = TrainerConfig(
+        data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
-        architecture=ArchitectureConfig(**cfg_dict.get("architecture", {})),
+        model=ModelConfig(**cfg_dict.get("model", {})),
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
         log=LogConfig(**cfg_dict.get("log", {})),
     )

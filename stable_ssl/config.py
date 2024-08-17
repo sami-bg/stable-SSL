@@ -10,23 +10,40 @@ from stable_ssl.utils import LARS
 
 
 @dataclass
-class ArchitectureConfig:
+class DataConfig:
     """
-    Configuration for the model architecture parameters.
+    Configuration for the data used for training the model.
 
     Parameters:
     -----------
-    model_name : str
-        Neural network architecture to use (e.g., "resnet18"). Default is "resnet18".
+    data_dir : str
+        Path to the directory containing the training data.
+    """
+
+    data_dir: str
+
+
+@dataclass
+class ModelConfig:
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    backbone_model : str
+        Neural network architecture to use for the backbone. Default is "resnet9".
     sync_batchnorm : bool, optional
         Whether to use synchronized batch normalization. Default is False.
     memory_format : str, optional
         Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
+    temperature : str
+        Temperature parameter for the contrastive loss. Default is 0.15.
     """
 
-    model_name: str = "resnet18"
+    backbone_model: str = "resnet9"
     sync_batchnorm: bool = False
     memory_format: str = "channels_last"
+    temperature: float = 0.15
 
 
 @dataclass
@@ -57,6 +74,8 @@ class OptimConfig:
         Betas for the AdamW optimizer. Default is (0.9, 0.999).
     grad_max_norm : float, optional
         Maximum norm for gradient clipping. Default is None.
+    lr_classifier : float, optional
+        Learning rate for the classifier head. Default is 0.3.
     """
 
     optimizer: str = "AdamW"
@@ -69,6 +88,7 @@ class OptimConfig:
     nesterov: bool = False
     betas: Optional[Tuple[float, float]] = None
     grad_max_norm: Optional[float] = None
+    lr_classifier: float = 0.3
 
     default_params = {
         "SGD": SGD([torch.tensor(0)]).defaults,
@@ -176,6 +196,8 @@ class TrainerConfig:
 
     Parameters:
     -----------
+    data : DataConfig
+        Data configuration.
     optim : OptimConfig
         Optimizer configuration.
     architecture : ArchitectureConfig
@@ -186,7 +208,8 @@ class TrainerConfig:
         Logging and checkpointing configuration
     """
 
+    data: DataConfig = field(default_factory=DataConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
-    architecture: ArchitectureConfig = field(default_factory=ArchitectureConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     log: LogConfig = field(default_factory=LogConfig)
