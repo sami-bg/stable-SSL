@@ -270,11 +270,6 @@ class Trainer(torch.nn.Module):
         # set-up model in eval mode + reset metrics
         self.before_eval_epoch()
 
-        # TO DO : add config to control this eval optimizer
-        self.optimizer_classifier = optim.SGD(
-            self.classifier.parameters(), lr=self.config.optim.lr
-        )
-
         # we do not ensure that the model is still in eval mode to not
         # override any user desired behavior
         if self.training:

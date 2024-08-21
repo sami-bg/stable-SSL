@@ -3,6 +3,7 @@ import torch
 import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 import torchvision.transforms.v2 as transforms
 from torch.utils.data import DataLoader, RandomSampler
 
@@ -124,9 +125,6 @@ class SSLTrainer(Trainer):
         self.scaler.step(self.optimizer_classifier)
         self.scaler.update()
 
-    def before_eval_step(self):
-        self.optimizer_classifier.zero_grad(set_to_none=True)
-
     def before_eval_epoch(self):
         self.eval()
 
@@ -137,3 +135,11 @@ class SSLTrainer(Trainer):
         # Unfreeze only the classifier part for fine-tuning
         for param in self.classifier.parameters():
             param.requires_grad = True
+
+        # TO DO : add config to control this eval optimizer
+        self.optimizer_classifier = optim.SGD(
+            self.classifier.parameters(), lr=self.config.optim.lr
+        )
+
+    def before_eval_step(self):
+        self.optimizer_classifier.zero_grad(set_to_none=True)
