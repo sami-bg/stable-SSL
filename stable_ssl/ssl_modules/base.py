@@ -29,7 +29,7 @@ class SSLTrainer(Trainer):
             torch.nn.Linear(2048, 512, bias=False),
         )
 
-        self.classifier = torch.nn.Linear(fan_in, 1000)
+        self.classifier = torch.nn.Linear(fan_in, 10)
 
     def forward(self, x):
         return self.model(x)
@@ -106,11 +106,20 @@ class SSLTrainer(Trainer):
     def eval_step(self):
         with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
             preds = self.classifier(self.forward(self.data[0]))
+
+            # STRANGE ERROR : I don't understand why we cannot backward here
+            print("Model's requires_grad status:")
+            for name, param in self.classifier.named_parameters():
+                print(
+                    f"{name}: requires_grad={param.requires_grad}, grad={param.grad is not None}"
+                )
+
             loss_classifier = F.cross_entropy(preds, self.data[1])
+
         if np.isnan(loss_classifier.item()):
             raise NanError
+
         self.scaler.scale(loss_classifier).backward()
-        # Unscales the gradients of optimizer's assigned params in-place
         self.scaler.unscale_(self.optimizer_classifier)
         self.scaler.step(self.optimizer_classifier)
         self.scaler.update()

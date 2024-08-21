@@ -12,7 +12,7 @@ model:
 
 log:
   folder: "./new_logs"
-  eval_only: false
+  eval_only: true
   checkpoint_frequency: 5
 
 hardware:
