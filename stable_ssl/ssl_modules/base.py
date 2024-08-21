@@ -1,6 +1,8 @@
+import numpy as np
 import torch
 import torchvision
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.transforms.v2 as transforms
 from torch.utils.data import DataLoader, RandomSampler
 
@@ -16,32 +18,33 @@ class SSLTrainer(Trainer):
 
     def initialize_modules(self):
         model, fan_in = load_model_without_classifier(self.config.model.backbone_model)
-
-        self.model = model.train()
+        # self.model = model.train()  # do we need this ?
+        self.model = model
 
         # TO DO : add config to control the size of the projection head
         self.projector = torch.nn.Sequential(
-            torch.nn.Linear(fan_in, 8096, bias=False),
-            torch.nn.BatchNorm1d(8096),
+            torch.nn.Linear(fan_in, 2048, bias=False),
+            torch.nn.BatchNorm1d(2048),
             torch.nn.ReLU(True),
-            torch.nn.Linear(8096, 8096, bias=False),
-            torch.nn.BatchNorm1d(8096),
-            torch.nn.ReLU(True),
-            torch.nn.Linear(8096, 8096, bias=False),
+            torch.nn.Linear(2048, 512, bias=False),
         )
 
         self.classifier = torch.nn.Linear(fan_in, 1000)
 
+    def forward(self, x):
+        return self.model(x)
+
     def initialize_train_loader(self):
+        # dataset = torchvision.datasets.ImageFolder(
+        #     self.config.data.data_dir / "train", PositivePairSampler()
+        # )
+
         dataset = torchvision.datasets.CIFAR10(
             root="./data",
             train=True,
-            transform=PositivePairSampler(),
             download=True,
+            transform=PositivePairSampler(),
         )
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data / "train", Transform()
-        # )
 
         if self.config.hardware.world_size > 1:
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
@@ -63,18 +66,23 @@ class SSLTrainer(Trainer):
         return loader
 
     def initialize_val_loader(self):
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
+
+        # dataset = torchvision.datasets.ImageFolder(
+        #     self.config.data.data_dir + "/eval", transform
+        # )
         dataset = torchvision.datasets.CIFAR10(
             root="./data",
             train=False,
             download=True,
-            transform=transforms.Normalize(
-                mean=IMAGENET_MEAN,
-                std=IMAGENET_STD,
-            ),
+            transform=transform,
         )
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data / "eval", Transform()
-        # )
 
         if self.config.hardware.world_size > 1:
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
@@ -96,8 +104,27 @@ class SSLTrainer(Trainer):
         return loader
 
     def eval_step(self):
-        loss = self.compute_loss_classifier()
-        if np.isnan(loss.item()):
+        with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
+            preds = self.classifier(self.forward(self.data[0]))
+            loss_classifier = F.cross_entropy(preds, self.data[1])
+        if np.isnan(loss_classifier.item()):
             raise NanError
-        loss.backward()
-        self.optimizer_classifier.step()
+        self.scaler.scale(loss_classifier).backward()
+        # Unscales the gradients of optimizer's assigned params in-place
+        self.scaler.unscale_(self.optimizer_classifier)
+        self.scaler.step(self.optimizer_classifier)
+        self.scaler.update()
+
+    def before_eval_step(self):
+        self.optimizer_classifier.zero_grad(set_to_none=True)
+
+    def before_eval_epoch(self):
+        self.eval()
+
+        # Freeze all parameters in the model
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        # Unfreeze only the classifier part for fine-tuning
+        for param in self.classifier.parameters():
+            param.requires_grad = True

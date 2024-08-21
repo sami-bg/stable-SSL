@@ -23,6 +23,8 @@ from pathlib import Path
 # import tables
 
 import torch
+import torch.optim as optim
+
 from torch.optim.lr_scheduler import (
     CosineAnnealingLR,
     LinearLR,
@@ -291,8 +293,8 @@ class Trainer(torch.nn.Module):
                 ):
                     self.step = step
 
-                    x = x.to(self.this_device)
-                    y = y.to(self.this_device)
+                    x = x.to(self.this_device, non_blocking=True)
+                    y = y.to(self.this_device, non_blocking=True)
                     self.data = [x, y]
 
                     # call any user specified pre-step function
@@ -544,7 +546,6 @@ class Trainer(torch.nn.Module):
         self.eval()
 
     def before_eval_step(self):
-        self.optimizer_classifier.zero_grad(set_to_none=True)
         return
 
     def after_eval_step(self):

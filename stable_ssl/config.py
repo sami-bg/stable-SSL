@@ -20,7 +20,7 @@ class DataConfig:
         Path to the directory containing the training data.
     """
 
-    data_dir: str
+    data_dir: str = "./data"
 
 
 @dataclass

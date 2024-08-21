@@ -4,21 +4,19 @@ data:
   data_dir : "./data"
   
 optim:
-  epochs: 25
-  batch_size: 128
+  epochs: 1
+  batch_size: 256
   
 model:
-  backbone_model: "resnet50"
+  backbone_model: "resnet18"
 
 log:
   folder: "./new_logs"
   eval_only: false
-  add_version: false
-  log_level: 10  # logging.DEBUG
   checkpoint_frequency: 5
 
 hardware:
-  seed: 123
+  seed: 0
   float16: false
-  gpu: 1
+  gpu: 0
   world_size: 1

@@ -19,19 +19,13 @@ class SimCLR(SSLTrainer):
     def __init__(self, config: TrainerConfig):
         super().__init__(config)
 
-    def forward(self):
-        if self.training:
-            output = self.model(torch.cat([self.data[0], self.data[1]], 0))
-            return self.projector(output)
-        else:
-            return self.classifier(self.model(self.data[0]))
-
     def compute_loss(self):
         """
         We do not sample negative examples explicitly.
         Instead, given a positive pair, similar to (Chen et al., 2017), we treat the other 2(N-1) augmented examples within a minibatch as negative examples.
         """
-        projs = self.forward()
+        embeds = self.forward(torch.cat([self.data[0], self.data[1]], 0))
+        projs = self.projector(embeds)
 
         z_i, z_j = torch.chunk(projs, 2, dim=0)
         batch_size = z_i.size(0)
@@ -72,6 +66,3 @@ class SimCLR(SSLTrainer):
             mask[i, batch_size * world_size + i] = 0
             mask[batch_size * world_size + i, i] = 0
         return mask
-
-    def compute_loss_classifier(self):
-        return F.cross_entropy(self.forward(), self.data[1])
