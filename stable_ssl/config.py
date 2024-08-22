@@ -58,17 +58,17 @@ class OptimConfig:
     -----------
     optimizer : str
         Type of optimizer to use (e.g., "AdamW", "RMSprop", "SGD", "LARS").
-        Default is "AdamW".
+        Default is "LARS".
     lr : float
-        Learning rate for the optimizer. Default is 1e-3.
+        Learning rate for the optimizer. Default is 1e0.
     batch_size : int, optional
-        Batch size for training. Default is 2048.
+        Batch size for training. Default is 256.
     epochs : int, optional
         Number of epochs to train the model. Default is 10.
     max_steps : int, optional
         Maximum number of steps per epoch. Default is -1.
     weight_decay : float
-        Weight decay for the optimizer. Default is 0.
+        Weight decay for the optimizer. Default is 1e-6.
     momentum : float
         Momentum for the optimizer. Default is None.
     nesterov : bool
@@ -77,21 +77,18 @@ class OptimConfig:
         Betas for the AdamW optimizer. Default is (0.9, 0.999).
     grad_max_norm : float, optional
         Maximum norm for gradient clipping. Default is None.
-    lr_classifier : float, optional
-        Learning rate for the classifier head. Default is 0.3.
     """
 
-    optimizer: str = "AdamW"
-    lr: float = 1e-3
-    batch_size: int = 2048
+    optimizer: str = "LARS"
+    lr: float = 1e0
+    batch_size: int = 256
     epochs: int = 10
     max_steps: int = -1
-    weight_decay: float = 0
+    weight_decay: float = 1e-6
     momentum: float = None
     nesterov: bool = False
     betas: Optional[Tuple[float, float]] = None
     grad_max_norm: Optional[float] = None
-    lr_classifier: float = 0.3
 
     default_params = {
         "SGD": SGD([torch.tensor(0)]).defaults,
@@ -142,7 +139,7 @@ class HardwareConfig:
     port : int, optional
         Port number for distributed training. Default is None.
     workers: int, optional
-        Number of workers for data loading. Default is 4.
+        Number of workers for data loading. Default is 0 (data loaded in main process).
     """
 
     seed: Optional[int] = None
@@ -150,7 +147,7 @@ class HardwareConfig:
     gpu: int = 0
     world_size: int = 1
     port: Optional[int] = None
-    workers: int = 4
+    workers: int = 0
 
 
 @dataclass
@@ -166,7 +163,8 @@ class LogConfig:
     add_version : bool, optional
         Whether to append a version number to the folder path. Default is False.
     load_from : str, optional
-        Path to a checkpoint from which to load the model, optimizer, and scheduler. Default is None.
+        Path to a checkpoint from which to load the model, optimizer, and scheduler.
+        Default is None.
     log_level : int, optional
         Logging level (e.g., logging.INFO). Default is logging.INFO.
     checkpoint_frequency : int, optional
@@ -179,17 +177,20 @@ class LogConfig:
         Whether to only evaluate the model without training. Default is False.
     eval_each_epoch : bool, optional
         Whether to evaluate the model at the end of each epoch. Default is False.
+    wandb_project_name : str, optional
+        Name of the Weights & Biases project. Default is None.
     """
 
     folder: str = "."
     add_version: bool = False
-    load_from: str = "ckpt"
+    load_from: Optional[str] = None
     log_level: int = logging.INFO
     checkpoint_frequency: int = 1
     save_final_model: bool = False
     final_model_name: str = "final_model"
     eval_only: bool = False
-    eval_each_epoch: bool = False
+    eval_each_epoch: bool = True
+    wandb_project_name: Optional[str] = None
 
 
 @dataclass

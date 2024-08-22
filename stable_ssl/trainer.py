@@ -11,27 +11,18 @@ import numpy as np
 import uuid
 import copy
 import logging
-import torchvision
 import warnings
 import yaml
 import time
 import dataclasses
-
-from tqdm import tqdm
 from pathlib import Path
+from tqdm import tqdm
+import submitit
 
-# import tables
+import wandb
 
 import torch
-import torch.optim as optim
-
-from torch.optim.lr_scheduler import (
-    CosineAnnealingLR,
-    LinearLR,
-    SequentialLR,
-    ConstantLR,
-)
-from torch.distributed.optim import ZeroRedundancyOptimizer
+from torch.utils.data import RandomSampler
 
 from stable_ssl.utils import (
     BreakAllEpochs,
@@ -43,18 +34,18 @@ from stable_ssl.utils import (
     FullGatherLayer,
     LARS,
     LinearWarmupCosineAnnealing,
+    to_device,
 )
 from stable_ssl.config import TrainerConfig
 
 
 class Trainer(torch.nn.Module):
-    r"""Base class for training a Self-Supervised Learning (SSL) model.
+    r"""Base class for training a model.
 
     Parameters:
     -----------
     config : TrainerConfig
-        Parameters for Trainer organized in the following groups :
-        'optim', 'architecture', 'hardware', 'log'.
+        Parameters for Trainer organized in groups.
         For details, see the `TrainerConfig` class in `config.py`.
     """
 
@@ -71,7 +62,7 @@ class Trainer(torch.nn.Module):
         self.folder.mkdir(parents=True, exist_ok=True)
 
         print(f"[stable-SSL] Logging in {self.folder}")
-        print(f"[stable-SSL] \t=> Dumping hyper-parameters...")
+        print("[stable-SSL] \t=> Dumping hyper-parameters...")
         with open(self.folder / "hparams.yaml", "w+") as f:
             yaml.dump(dataclasses.asdict(config), f, indent=2)
 
@@ -98,7 +89,7 @@ class Trainer(torch.nn.Module):
             assert hasattr(self, "train_loader")
             logging.info(f"\t=> Found training set of length {len(self.train_loader)}")
         else:
-            logging.info(f"\t=> No training set loaded since eval_only")
+            logging.info("\t=> No training set loaded since eval_only")
 
         logging.info("Creating val_loader dataset...")
         try:
@@ -106,7 +97,7 @@ class Trainer(torch.nn.Module):
             logging.info(f"\t=> Found validation set of length {len(self.val_loader)}")
         except NotImplementedError:
             logging.info(
-                f"\t=> Found no implementation of initialize_val_loader... skipping"
+                "\t=> Found no implementation of initialize_val_loader... skipping"
             )
             self.val_loader = None
 
@@ -132,7 +123,8 @@ class Trainer(torch.nn.Module):
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(
-                f"\t=> Found module '{name}' with\n\t\t\t- {trainable} trainable parameters"
+                f"\t=> Found module '{name}' with\n\t\t\t- {trainable} "
+                "trainable parameters"
             )
 
         if not self.config.log.eval_only:
@@ -144,9 +136,7 @@ class Trainer(torch.nn.Module):
             except NotImplementedError:
                 logging.info("No scheduler given...")
         else:
-            logging.info(
-                f"Not calling initialize_optimizer() method... since eval_only"
-            )
+            logging.info("Not calling initialize_optimizer() method... since eval_only")
 
         logging.info("Calling load_checkpoint() method...")
         self.load_checkpoint()
@@ -156,7 +146,9 @@ class Trainer(torch.nn.Module):
     def execute(self) -> None:
         """Routine that is executed after the class is initialized.
 
-        This will commonly consist of training + evaluation. Can be customized by the user to fit the use-cases. This is just a boilerplate version that provides minimal things.
+        This will commonly consist of training + evaluation.
+        Can be customized by the user to fit the use-cases.
+        This is just a boilerplate version that provides minimal things.
 
         Args:
             eval_only (bool): whether to only eval the model, or also train
@@ -228,16 +220,13 @@ class Trainer(torch.nn.Module):
         else:
             max_steps = self.config.optim.max_steps
 
-        for step, ((view1, view2), y) in enumerate(
+        for step, data in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
 
             # set up the data to have easy access throughout the methods
             self.step = step
-            view1 = view1.to(self.this_device, non_blocking=True)
-            view2 = view2.to(self.this_device, non_blocking=True)
-            y = y.to(self.this_device, non_blocking=True)
-            self.data = [view1, view2, y]
+            self.data = to_device(data, self.this_device)
 
             try:
                 # call any user specified pre-step function
@@ -281,7 +270,7 @@ class Trainer(torch.nn.Module):
 
         try:
             max_steps = len(self.val_loader)
-            with torch.no_grad():
+            with torch.inference_mode():
                 for step, (x, y) in tqdm(
                     enumerate(self.val_loader),
                     total=max_steps,
@@ -319,13 +308,18 @@ class Trainer(torch.nn.Module):
     def train_step(self):
         with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
             loss = self.compute_loss()
+
         if np.isnan(loss.item()):
             raise NanError
+
+        wandb.log({"loss": loss.item(), "epoch": self.epoch, "step": self.step})
+
         self.scaler.scale(loss).backward()
         # Unscales the gradients of optimizer's assigned params in-place
         self.scaler.unscale_(self.optimizer)
         if self.config.optim.grad_max_norm is not None:
-            # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
+            # Since the gradients of optimizer's assigned params are unscaled,
+            # clips as usual:
             torch.nn.utils.clip_grad_norm_(
                 self.parameters(), self.config.optim.grad_max_norm
             )
@@ -345,7 +339,8 @@ class Trainer(torch.nn.Module):
         return submitit.helpers.DelayedSubmission(model)
 
     def load_checkpoint(self):
-        """load a model and optionnally a scheduler/optimizer/epoch from a given path to checkpoint
+        """load a model and optionnally a scheduler/optimizer/epoch
+        from a given path to checkpoint
 
         Args:
             load_from (str): path to checkpoint
@@ -356,7 +351,8 @@ class Trainer(torch.nn.Module):
             checkpoint = load_from
         elif (self.folder / "tmp_checkpoint.ckpt").is_file():
             logging.info(
-                f"\t=> folder {self.folder} contains `tmp_checkpoint.ckpt` file\n\t=> loading it..."
+                f"\t=> folder {self.folder} contains `tmp_checkpoint.ckpt` "
+                "file\n\t=> loading it..."
             )
             checkpoint = self.folder / "tmp_checkpoint.ckpt"
         else:
@@ -378,10 +374,10 @@ class Trainer(torch.nn.Module):
             logging.info(f"\t\t=> {name} successfully loaded...")
         if "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
-            logging.info(f"\t\t=> optimizer successfully loaded...")
+            logging.info("\t\t=> optimizer successfully loaded...")
         if "scheduler" in ckpt:
             self.scheduler.load_state_dict(ckpt["scheduler"])
-            logging.info(f"\t\t=> scheduler successfully loaded...")
+            logging.info("\t\t=> scheduler successfully loaded...")
         if "epoch" in ckpt:
             self.epoch = ckpt["epoch"]
             logging.info(f"\t\t=> training will start from epoch {ckpt['epoch']}")
@@ -555,3 +551,24 @@ class Trainer(torch.nn.Module):
 
     def compute_loss(self):
         raise NotImplementedError
+
+    def initialize_dataset_loader(self, dataset):
+        if self.config.hardware.world_size > 1:
+            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+            assert self.config.optim.batch_size % self.config.hardware.world_size == 0
+        else:
+            sampler = RandomSampler(dataset)
+
+        per_device_batch_size = (
+            self.config.optim.batch_size // self.config.hardware.world_size
+        )
+
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=per_device_batch_size,
+            num_workers=self.config.hardware.workers,
+            pin_memory=True,
+            sampler=sampler,
+        )
+
+        return loader

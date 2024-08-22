@@ -3,43 +3,45 @@ from typing import Tuple
 import torch
 import torchvision
 import torch.nn as nn
+from torchvision import models
 
 
-def load_model_without_classifier(name: str, **kwargs) -> Tuple[nn.Module, int]:
+def load_model(name, n_classes, with_classifier=True, pretrained=False, **kwargs):
+
     if name == "resnet9":
         model = resnet9(**kwargs)
     elif name == "ConvMixer":
         model = ConvMixer(**kwargs)
-    else:
-        model = torchvision.models.__dict__[name](**kwargs)
 
-    if "alexnet" in name:
-        fan_in = model.classifier[6].in_features
-        model.classifier[6] = nn.Identity()
-    elif "convnext" in name:
-        fan_in = model.classifier[2].in_features
-        model.classifier[2] = nn.Identity()
-    elif "convnext" in name:
-        fan_in = model.classifier[2].in_features
-        model.classifier[2] = nn.Identity()
-    elif (
-        "resnet" in name or "resnext" in name or "regnet" in name or name == "ConvMixer"
-    ):
-        fan_in = model.fc.in_features
-        model.fc = nn.Identity()
-    elif "densenet" in name:
-        fan_in = model.classifier.in_features
-        model.classifier = nn.Identity()
-    elif "mobile" in name:
-        fan_in = model.classifier[-1].in_features
-        model.classifier[-1] = nn.Identity()
-    elif "vit" in name:
-        fan_in = model.heads.head.in_features
-        model.heads.head = nn.Identity()
-    elif "swin" in name:
-        fan_in = model.head.in_features
-        model.head = nn.Identity()
-    return model, fan_in
+    else:
+        try:
+            model = torchvision.models.__dict__[name](pretrained=pretrained, **kwargs)
+        except KeyError:
+            raise ValueError(f"Unknown model {name}.")
+
+    if hasattr(model, "fc"):  # For models like ResNet
+        in_features = model.fc.in_features
+        model.fc = last_layer(n_classes, with_classifier, in_features)
+    elif hasattr(model, "classifier"):  # For models like VGG, AlexNet
+        in_features = model.classifier[-1].in_features
+        model.classifier[-1] = last_layer(n_classes, with_classifier, in_features)
+    elif hasattr(model, "heads"):  # For models like ViT
+        in_features = model.heads.head.in_features
+        model.heads.head = last_layer(n_classes, with_classifier, in_features)
+    elif hasattr(model, "head"):  # For models like Swin Transformer
+        in_features = model.head.in_features
+        model.head = last_layer(n_classes, with_classifier, in_features)
+    else:
+        raise ValueError(f"Unknown model structure for {model_name}.")
+
+    return model, in_features
+
+
+def last_layer(n_classes, with_classifier, in_features):
+    if with_classifier:
+        return nn.Linear(in_features, n_classes)
+    else:
+        return nn.Identity()
 
 
 class resnet9(nn.Module):

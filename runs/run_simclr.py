@@ -9,7 +9,6 @@ from stable_ssl.config import (
     LogConfig,
     DataConfig,
 )
-from stable_ssl.trainer import Trainer
 from stable_ssl.ssl_modules import SimCLR
 
 

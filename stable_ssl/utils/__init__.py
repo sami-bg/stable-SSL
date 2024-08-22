@@ -1,13 +1,9 @@
-from .utils import (
-    FullGatherLayer,
-    setup_distributed,
-    seed_everything,
-)
+from .utils import FullGatherLayer, setup_distributed, seed_everything, to_device
 
 from .schedulers import LinearWarmupCosineAnnealing
 from .optim import LARS
 from .exceptions import BreakEpoch, BreakStep, NanError, BreakAllEpochs
-from .nn import load_model_without_classifier
+from .nn import load_model
 
 __all__ = [
     "mask_correlated_samples",
@@ -20,5 +16,6 @@ __all__ = [
     "BreakStep",
     "NanError",
     "BreakAllEpochs",
-    "load_model_without_classifier",
+    "load_model",
+    "to_device",
 ]

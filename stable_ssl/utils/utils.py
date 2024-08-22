@@ -12,94 +12,6 @@ import submitit
 import torch
 
 
-class PositiveBatchSampler(Sampler):
-    r"""Wraps another sampler to yield a mini-batch of indices.
-
-    Args:
-        labels (Sampler or Iterable): Base sampler. Can be any iterable object
-        views (int): number of same class samples in each mini-batch
-        batch_size (int): Size of mini-batch.
-
-    Example:
-        >>> list(BatchSampler([0,0,0,1,1,1], view=2, batch_size=4, drop_last=False))
-        [[0, 2, 5, 4]]
-    """
-
-    def __init__(
-        self, labels_or_len: Iterable[int], views: int, batch_size: int
-    ) -> None:
-        # Since collections.abc.Iterable does not check for `__getitem__`, which
-        # is one way for an object to be an iterable, we don't do an `isinstance`
-        # check here.
-        if (
-            not isinstance(batch_size, int)
-            or isinstance(batch_size, bool)
-            or batch_size <= 0
-        ):
-            raise ValueError(
-                f"batch_size should be a positive integer value, but got {batch_size=}"
-            )
-        if not isinstance(views, int) or isinstance(views, bool) or views <= 0:
-            raise ValueError(
-                f"views should be a positive integer value, but got {views=}"
-            )
-        self.batch_size = batch_size
-        self.views = views
-        self.count = 0
-        if type(labels_or_len) == int:
-            self.n_samples = labels_or_len * views
-            self.has_labels = False
-            return
-        self.has_labels = True
-        self.n_samples = len(self.labels)
-
-        self.labels = np.asarray(labels)
-        self.unique_labels = np.unique(labels)
-
-        # due to the current implementation we need to make sure that
-        # there are enough classes to produce a batch_size given views
-        assert len(self.unique_labels) * views >= batch_size
-
-        self.mapper = {}
-        for i in self.unique_labels:
-            self.mapper[i] = np.flatnonzero(self.labels == i)
-            print(f"{i} -> {self.mapper[i]}")
-
-    def __iter__(self) -> Iterator[List[int]]:
-        # Implemented based on the benchmarking in https://github.com/pytorch/pytorch/pull/76951
-        if not self.has_labels:
-            sampler_iter = iter(np.random.permutation(self.n_samples // self.views))
-            while True:
-                try:
-                    batch = [
-                        next(sampler_iter) for _ in range(self.batch_size // self.views)
-                    ]
-                    batch = np.repeat(batch, self.views)
-                    yield batch
-                except StopIteration:
-                    break
-        else:
-            while self.count < len(self):
-                selected_classes = np.random.choice(
-                    self.unique_labels,
-                    size=self.batch_size // self.views,
-                    replace=False,
-                )
-                batch = []
-                for c in selected_classes:
-                    batch.extend(
-                        np.random.choice(
-                            self.mapper[c], size=self.views, replace=False
-                        ).tolist()
-                    )
-                self.count += 1
-                yield batch
-            self.count = 0
-
-    def __len__(self) -> int:
-        return self.n_samples // self.batch_size
-
-
 class FullGatherLayer(torch.autograd.Function):
     """
     Gather tensors from all process and support backward propagation
@@ -204,3 +116,16 @@ def replace_module(model, replacement_mapping):
             parent = getattr(parent, name)
         setattr(parent, module_names[-1], replacement)
     return model
+
+
+def to_device(obj, device, non_blocking=True):
+    if isinstance(obj, torch.Tensor):
+        return obj.to(device, non_blocking=non_blocking)
+    elif isinstance(obj, tuple):
+        return tuple(move_to_device(item, device, non_blocking) for item in obj)
+    elif isinstance(obj, list):
+        return [move_to_device(item, device, non_blocking) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: move_to_device(v, device, non_blocking) for k, v in obj.items()}
+    else:
+        return obj

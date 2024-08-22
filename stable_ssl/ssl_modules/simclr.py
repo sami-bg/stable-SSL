@@ -1,6 +1,4 @@
 import torch
-import torchvision
-import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import SSLTrainer
@@ -22,7 +20,8 @@ class SimCLR(SSLTrainer):
     def compute_ssl_loss(self, embeds):
         """
         We do not sample negative examples explicitly.
-        Instead, given a positive pair, similar to (Chen et al., 2017), we treat the other 2(N-1) augmented examples within a minibatch as negative examples.
+        Instead, given a positive pair, similar to (Chen et al., 2017), we treat the
+        other 2(N-1) augmented examples within a minibatch as negative examples.
         """
         projs = self.projector(embeds)
 
@@ -46,7 +45,8 @@ class SimCLR(SSLTrainer):
         sim_i_j = torch.diag(sim, batch_size * self.config.hardware.world_size)
         sim_j_i = torch.diag(sim, -batch_size * self.config.hardware.world_size)
 
-        # We have 2N samples, but with Distributed training every GPU gets N examples too, resulting in: 2xNxN
+        # We have 2N samples, but with Distributed training every GPU gets
+        # N examples too, resulting in: 2xNxN
         positive_samples = torch.cat((sim_i_j, sim_j_i), dim=0).reshape(N, 1)
         negative_samples = sim[mask].reshape(N, -1)
         logits = torch.cat((positive_samples, negative_samples), dim=1)
