@@ -173,6 +173,7 @@ class Trainer(torch.nn.Module):
                 self.eval_epoch()
             except BreakAllEpochs:
                 self.cleanup()
+                wandb.finish()
 
     def _train_all_epochs(self):
         while self.epoch < self.config.optim.epochs:
@@ -205,6 +206,8 @@ class Trainer(torch.nn.Module):
             )
         # and remove any temporary checkpoint
         (self.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
+
+        wandb.finish()
 
     def _train_epoch(self):
 

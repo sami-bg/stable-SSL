@@ -30,6 +30,8 @@ class ModelConfig:
 
     Parameters:
     -----------
+    model : str
+        Type of model to use. Default is "SimCLR".
     backbone_model : str
         Neural network architecture to use for the backbone. Default is "resnet9".
     sync_batchnorm : bool, optional
@@ -42,6 +44,7 @@ class ModelConfig:
         Architecture of the projector head. Default is "8192-8192-8192".
     """
 
+    model: str = "SimCLR"
     backbone_model: str = "resnet9"
     sync_batchnorm: bool = False
     memory_format: str = "channels_last"
@@ -129,7 +132,7 @@ class HardwareConfig:
     Parameters:
     -----------
     seed : int, optional
-        Random seed for reproducibility. Default is 0.
+        Random seed for reproducibility. Default is None.
     float16 : bool, optional
         Whether to use mixed precision (float16) for training. Default is False.
     gpu : int, optional

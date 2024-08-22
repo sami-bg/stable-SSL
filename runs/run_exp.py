@@ -9,7 +9,13 @@ from stable_ssl.config import (
     LogConfig,
     DataConfig,
 )
-from stable_ssl.supervised import SupervisedTrainer
+from stable_ssl.ssl_modules import SimCLR
+from stable_ssl.supervised import Supervised
+
+model_dict = {
+    "SimCLR": SimCLR,
+    "Supervised": Supervised,
+}
 
 
 @hydra.main(config_path="inputs", config_name="supervised_test")
@@ -28,7 +34,7 @@ def main(cfg: DictConfig):
     )
 
     # Create a trainer object
-    trainer = SupervisedTrainer(args)
+    trainer = model_dict[args.model.model](args)
     trainer()
 
 

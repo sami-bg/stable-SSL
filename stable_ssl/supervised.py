@@ -11,7 +11,7 @@ from stable_ssl.ssl_modules.positive_pair_sampler import (
 )
 
 
-class SupervisedTrainer(Trainer):
+class Supervised(Trainer):
     r"""Base class for training a supervised model.
 
     Parameters:

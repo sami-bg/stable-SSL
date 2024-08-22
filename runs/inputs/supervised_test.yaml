@@ -1,3 +1,9 @@
+model:
+  model: Supervised
+
+optim:
+  epochs: 1
+
 log:
   folder: "./new_logs"
   eval_only: false
