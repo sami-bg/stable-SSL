@@ -228,7 +228,7 @@ class Trainer(torch.nn.Module):
         else:
             max_steps = self.config.optim.max_steps
 
-        for step, ((view1, view2), _) in enumerate(
+        for step, ((view1, view2), y) in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
 
@@ -236,7 +236,8 @@ class Trainer(torch.nn.Module):
             self.step = step
             view1 = view1.to(self.this_device, non_blocking=True)
             view2 = view2.to(self.this_device, non_blocking=True)
-            self.data = [view1, view2]
+            y = y.to(self.this_device, non_blocking=True)
+            self.data = [view1, view2, y]
 
             try:
                 # call any user specified pre-step function

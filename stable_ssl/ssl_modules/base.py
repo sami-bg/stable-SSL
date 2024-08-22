@@ -18,22 +18,25 @@ class SSLTrainer(Trainer):
         super().__init__(config)
 
     def initialize_modules(self):
+        # backbone
         model, fan_in = load_model_without_classifier(self.config.model.backbone_model)
-        # self.model = model.train()  # do we need this ?
-        self.model = model
+        self.backbone = model.train()
 
-        # TO DO : add config to control the size of the projection head
-        self.projector = torch.nn.Sequential(
-            torch.nn.Linear(fan_in, 2048, bias=False),
-            torch.nn.BatchNorm1d(2048),
-            torch.nn.ReLU(True),
-            torch.nn.Linear(2048, 512, bias=False),
-        )
+        # projector
+        sizes = [2048] + list(map(int, self.config.model.projector.split("-")))
+        layers = []
+        for i in range(len(sizes) - 2):
+            layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
+            layers.append(nn.BatchNorm1d(sizes[i + 1]))
+            layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
+        self.projector = nn.Sequential(*layers)
 
+        # linear probes
         self.classifier = torch.nn.Linear(fan_in, 10)
 
     def forward(self, x):
-        return self.model(x)
+        return self.backbone(x)
 
     def initialize_train_loader(self):
         # dataset = torchvision.datasets.ImageFolder(
@@ -104,42 +107,13 @@ class SSLTrainer(Trainer):
         )
         return loader
 
-    def eval_step(self):
-        with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
-            preds = self.classifier(self.forward(self.data[0]))
+    def compute_loss(self):
+        embeds = self.forward(torch.cat([self.data[0], self.data[1]], 0))
+        return self.compute_ssl_loss(embeds) + self.compute_classifier_loss(embeds)
 
-            # STRANGE ERROR : I don't understand why we cannot backward here
-            print("Model's requires_grad status:")
-            for name, param in self.classifier.named_parameters():
-                print(
-                    f"{name}: requires_grad={param.requires_grad}, grad={param.grad is not None}"
-                )
+    def compute_classifier_loss(self, embeds):
+        preds = self.classifier(embeds.detach())
+        return F.cross_entropy(preds, self.data[2])
 
-            loss_classifier = F.cross_entropy(preds, self.data[1])
-
-        if np.isnan(loss_classifier.item()):
-            raise NanError
-
-        self.scaler.scale(loss_classifier).backward()
-        self.scaler.unscale_(self.optimizer_classifier)
-        self.scaler.step(self.optimizer_classifier)
-        self.scaler.update()
-
-    def before_eval_epoch(self):
-        self.eval()
-
-        # Freeze all parameters in the model
-        for param in self.model.parameters():
-            param.requires_grad = False
-
-        # Unfreeze only the classifier part for fine-tuning
-        for param in self.classifier.parameters():
-            param.requires_grad = True
-
-        # TO DO : add config to control this eval optimizer
-        self.optimizer_classifier = optim.SGD(
-            self.classifier.parameters(), lr=self.config.optim.lr
-        )
-
-    def before_eval_step(self):
-        self.optimizer_classifier.zero_grad(set_to_none=True)
+    def compute_ssl_loss(self, embeds):
+        raise NotImplementedError

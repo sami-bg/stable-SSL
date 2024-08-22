@@ -19,12 +19,11 @@ class SimCLR(SSLTrainer):
     def __init__(self, config: TrainerConfig):
         super().__init__(config)
 
-    def compute_loss(self):
+    def compute_ssl_loss(self, embeds):
         """
         We do not sample negative examples explicitly.
         Instead, given a positive pair, similar to (Chen et al., 2017), we treat the other 2(N-1) augmented examples within a minibatch as negative examples.
         """
-        embeds = self.forward(torch.cat([self.data[0], self.data[1]], 0))
         projs = self.projector(embeds)
 
         z_i, z_j = torch.chunk(projs, 2, dim=0)

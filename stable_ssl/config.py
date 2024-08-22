@@ -38,12 +38,15 @@ class ModelConfig:
         Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
     temperature : str
         Temperature parameter for the contrastive loss. Default is 0.15.
+    projector : str
+        Architecture of the projector head. Default is "8192-8192-8192".
     """
 
     backbone_model: str = "resnet9"
     sync_batchnorm: bool = False
     memory_format: str = "channels_last"
     temperature: float = 0.15
+    projector: str = "8192-8192-8192"
 
 
 @dataclass
