@@ -12,8 +12,10 @@ model:
 
 log:
   folder: "./new_logs"
-  eval_only: true
+  eval_only: false
   checkpoint_frequency: 5
+  wandb_project: "simclr"
+  run_name: "test"
 
 hardware:
   seed: 0

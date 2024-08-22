@@ -36,6 +36,7 @@ from stable_ssl.utils import (
     LinearWarmupCosineAnnealing,
     to_device,
 )
+from stable_ssl.utils.eval import AverageMeter, accuracy
 from stable_ssl.config import TrainerConfig
 
 
@@ -70,6 +71,15 @@ class Trainer(torch.nn.Module):
 
         logging.basicConfig(level=self.config.log.log_level)
         seed_everything(self.config.hardware.seed)
+
+        # Initialize WandB
+        wandb.init(
+            project=self.config.log.wandb_project,
+            config=dataclasses.asdict(self.config),
+            name=self.config.log.run_name,
+            dir=str(self.folder),
+            resume="allow",
+        )
 
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
 
@@ -229,7 +239,7 @@ class Trainer(torch.nn.Module):
             self.data = to_device(data, self.this_device)
 
             try:
-                # call any user specified pre-step function
+                # call any user specified pre-step functions
                 self.before_train_step()
 
                 # perform the gradient step
@@ -271,16 +281,13 @@ class Trainer(torch.nn.Module):
         try:
             max_steps = len(self.val_loader)
             with torch.inference_mode():
-                for step, (x, y) in tqdm(
+                for step, data in tqdm(
                     enumerate(self.val_loader),
                     total=max_steps,
                     desc=f"Eval: {self.epoch=}",
                 ):
                     self.step = step
-
-                    x = x.to(self.this_device, non_blocking=True)
-                    y = y.to(self.this_device, non_blocking=True)
-                    self.data = [x, y]
+                    self.data = to_device(data, self.this_device)
 
                     # call any user specified pre-step function
                     self.before_eval_step()
@@ -537,6 +544,9 @@ class Trainer(torch.nn.Module):
     def before_eval_epoch(self):
         self.eval()
 
+        self.top1 = AverageMeter("Acc@1")
+        self.top5 = AverageMeter("Acc@5")
+
     def before_eval_step(self):
         return
 
@@ -544,15 +554,20 @@ class Trainer(torch.nn.Module):
         return
 
     def after_eval_epoch(self):
-        return
+        wandb.log({"epoch": self.epoch, "acc1": self.top1.avg, "acc5": self.top5.avg})
 
     def eval_step(self):
-        raise NotImplementedError
+        output = self.forward(self.data[0])
+        if hasattr(self, "classifier"):
+            output = self.classifier(output)
+        acc1, acc5 = accuracy(output, self.data[1], topk=(1, 5))
+        self.top1.update(acc1.item(), self.data[0].size(0))
+        self.top5.update(acc5.item(), self.data[0].size(0))
 
     def compute_loss(self):
         raise NotImplementedError
 
-    def initialize_dataset_loader(self, dataset):
+    def dataset_to_loader(self, dataset):
         if self.config.hardware.world_size > 1:
             sampler = torch.utils.data.distributed.DistributedSampler(dataset)
             assert self.config.optim.batch_size % self.config.hardware.world_size == 0

@@ -1,0 +1,6 @@
+log:
+  folder: "./new_logs"
+  eval_only: false
+  checkpoint_frequency: 5
+  wandb_project: "supervised_cifar"
+  run_name: "test_default"

@@ -1,5 +1,14 @@
 from .trainer import Trainer
 from stable_ssl.utils import load_model
+import torchvision
+import torch.nn.functional as F
+import torchvision.transforms.v2 as transforms
+
+from stable_ssl.ssl_modules.positive_pair_sampler import (
+    PositivePairSampler,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+)
 
 
 class SupervisedTrainer(Trainer):
@@ -15,6 +24,7 @@ class SupervisedTrainer(Trainer):
     def initialize_modules(self):
         model, _ = load_model(
             name=self.config.model.backbone_model,
+            n_classes=10,
             with_classifier=True,
             pretrained=False,
         )
@@ -42,7 +52,7 @@ class SupervisedTrainer(Trainer):
             transform=transform,
         )
 
-        self.initialize_dataset_loader(train_dataset)
+        return self.dataset_to_loader(train_dataset)
 
     def initialize_val_loader(self):
 
@@ -63,7 +73,7 @@ class SupervisedTrainer(Trainer):
             transform=transform,
         )
 
-        return self.initialize_dataset_loader(eval_dataset)
+        return self.dataset_to_loader(eval_dataset)
 
     def compute_loss(self):
         preds = self.forward(self.data[0])

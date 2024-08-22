@@ -17,6 +17,32 @@ class SimCLR(SSLTrainer):
     def __init__(self, config: TrainerConfig):
         super().__init__(config)
 
+    def initialize_modules(self):
+        # backbone
+        model, fan_in = load_model(
+            name=self.config.model.backbone_model,
+            n_classes=10,
+            with_classifier=False,
+            pretrained=False,
+        )
+        self.backbone = model.train()
+
+        # projector
+        sizes = [fan_in] + list(map(int, self.config.model.projector.split("-")))
+        layers = []
+        for i in range(len(sizes) - 2):
+            layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
+            layers.append(nn.BatchNorm1d(sizes[i + 1]))
+            layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
+        self.projector = nn.Sequential(*layers)
+
+        # linear probes
+        self.classifier = torch.nn.Linear(fan_in, 10)
+
+    def forward(self, x):
+        return self.backbone(x)
+
     def compute_ssl_loss(self, embeds):
         """
         We do not sample negative examples explicitly.

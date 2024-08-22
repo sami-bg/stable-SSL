@@ -78,6 +78,8 @@ def count_SLURM_jobs(pending=True, running=True):
 
 
 def seed_everything(seed, fast=True):
+    if seed is None:
+        seed = int(time())
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
@@ -122,10 +124,10 @@ def to_device(obj, device, non_blocking=True):
     if isinstance(obj, torch.Tensor):
         return obj.to(device, non_blocking=non_blocking)
     elif isinstance(obj, tuple):
-        return tuple(move_to_device(item, device, non_blocking) for item in obj)
+        return tuple(to_device(item, device, non_blocking) for item in obj)
     elif isinstance(obj, list):
-        return [move_to_device(item, device, non_blocking) for item in obj]
+        return [to_device(item, device, non_blocking) for item in obj]
     elif isinstance(obj, dict):
-        return {k: move_to_device(v, device, non_blocking) for k, v in obj.items()}
+        return {k: to_device(v, device, non_blocking) for k, v in obj.items()}
     else:
         return obj

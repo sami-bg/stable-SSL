@@ -129,7 +129,7 @@ class HardwareConfig:
     Parameters:
     -----------
     seed : int, optional
-        Random seed for reproducibility. Default is None.
+        Random seed for reproducibility. Default is 0.
     float16 : bool, optional
         Whether to use mixed precision (float16) for training. Default is False.
     gpu : int, optional
@@ -164,7 +164,7 @@ class LogConfig:
         Whether to append a version number to the folder path. Default is False.
     load_from : str, optional
         Path to a checkpoint from which to load the model, optimizer, and scheduler.
-        Default is None.
+        Default is "ckpt".
     log_level : int, optional
         Logging level (e.g., logging.INFO). Default is logging.INFO.
     checkpoint_frequency : int, optional
@@ -177,20 +177,23 @@ class LogConfig:
         Whether to only evaluate the model without training. Default is False.
     eval_each_epoch : bool, optional
         Whether to evaluate the model at the end of each epoch. Default is False.
-    wandb_project_name : str, optional
+    wandb_project : str, optional
         Name of the Weights & Biases project. Default is None.
+    run_name : str, optional
+        Name of the Weights & Biases run. Default is None.
     """
 
     folder: str = "."
     add_version: bool = False
-    load_from: Optional[str] = None
+    load_from: str = "ckpt"
     log_level: int = logging.INFO
     checkpoint_frequency: int = 1
     save_final_model: bool = False
     final_model_name: str = "final_model"
     eval_only: bool = False
     eval_each_epoch: bool = True
-    wandb_project_name: Optional[str] = None
+    wandb_project: Optional[str] = None
+    run_name: Optional[str] = None
 
 
 @dataclass
