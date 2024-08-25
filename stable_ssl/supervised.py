@@ -7,8 +7,8 @@ from stable_ssl.utils import load_model
 from .trainer import Trainer
 from .positive_pair_sampler import (
     PositivePairSampler,
-    IMAGENET_MEAN,
-    IMAGENET_STD,
+    MEAN,
+    STD,
 )
 
 

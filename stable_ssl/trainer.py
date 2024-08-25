@@ -42,8 +42,8 @@ from stable_ssl.utils.eval import AverageMeter, accuracy
 from stable_ssl.config import TrainerConfig
 from .positive_pair_sampler import (
     PositivePairSampler,
-    IMAGENET_MEAN,
-    IMAGENET_STD,
+    MEAN,
+    STD,
 )
 
 
@@ -424,6 +424,13 @@ class Trainer(torch.nn.Module):
         raise NotImplementedError
 
     def initialize_optimizer(self):
+        if self.config.optim.optimizer == "Adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.config.optim.lr,
+                weight_decay=self.config.optim.weight_decay,
+                eps=1e-8,
+            )
         if self.config.optim.optimizer == "AdamW":
             optimizer = torch.optim.AdamW(
                 self.parameters(),
@@ -636,7 +643,7 @@ class Trainer(torch.nn.Module):
         transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+                transforms.Normalize(mean=MEAN, std=STD),
             ]
         )
 

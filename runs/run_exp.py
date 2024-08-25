@@ -18,7 +18,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path="inputs", config_name="simclr_cifar10")
+@hydra.main(config_path="inputs", config_name="supervised_cifar10")
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary

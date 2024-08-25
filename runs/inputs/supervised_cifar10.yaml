@@ -1,16 +1,17 @@
 model:
   model: Supervised
-  backbone_model: resnet9
+  backbone_model: resnet18
 
 optim:
   epochs: 100
   batch_size: 256
   lr: 0.001
-  optimizer: AdamW
+  optimizer: Adam
+  weight_decay: 0
 
 log:
   folder: "./new_logs"
-  wandb_project: "simclr_cifar10"
+  wandb_project: "supervised_cifar10"
 
 hardware:
   seed: 0

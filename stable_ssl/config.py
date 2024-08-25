@@ -4,7 +4,7 @@ import warnings
 import logging
 
 import torch
-from torch.optim import SGD, RMSprop, AdamW
+from torch.optim import SGD, RMSprop, AdamW, Adam
 
 from stable_ssl.utils import LARS
 
@@ -98,11 +98,12 @@ class OptimConfig:
         "RMSprop": RMSprop([torch.tensor(0)]).defaults,
         "AdamW": AdamW([torch.tensor(0)]).defaults,
         "LARS": LARS([torch.tensor(0)]).defaults,
+        "Adam": Adam([torch.tensor(0)]).defaults,
     }
 
     def __post_init__(self):
 
-        if self.optimizer not in ["AdamW", "RMSprop", "SGD", "LARS"]:
+        if self.optimizer not in ["Adam", "AdamW", "RMSprop", "SGD", "LARS"]:
             raise ValueError(
                 f"[stable-SSL] Invalid optimizer: {self.optimizer}. Must be one of "
                 "'AdamW', 'RMSprop', 'SGD', 'LARS'."
