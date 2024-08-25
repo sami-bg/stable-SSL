@@ -45,7 +45,7 @@ class ModelConfig:
     """
 
     model: str = "SimCLR"
-    backbone_model: str = "resnet9"
+    backbone_model: str = "resnet18"
     sync_batchnorm: bool = False
     memory_format: str = "channels_last"
     temperature: float = 0.15
@@ -85,7 +85,7 @@ class OptimConfig:
     optimizer: str = "LARS"
     lr: float = 1e0
     batch_size: int = 256
-    epochs: int = 10
+    epochs: int = 1000
     max_steps: int = -1
     weight_decay: float = 1e-6
     momentum: float = None
@@ -171,7 +171,7 @@ class LogConfig:
     log_level : int, optional
         Logging level (e.g., logging.INFO). Default is logging.INFO.
     checkpoint_frequency : int, optional
-        Frequency of saving checkpoints (in terms of epochs). Default is 1.
+        Frequency of saving checkpoints (in terms of epochs). Default is 10.
     save_final_model : bool, optional
         Whether to save the final trained model. Default is False.
     final_model_name : str, optional
@@ -190,7 +190,7 @@ class LogConfig:
     add_version: bool = False
     load_from: str = "ckpt"
     log_level: int = logging.INFO
-    checkpoint_frequency: int = 1
+    checkpoint_frequency: int = 10
     save_final_model: bool = False
     final_model_name: str = "final_model"
     eval_only: bool = False

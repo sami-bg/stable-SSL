@@ -22,6 +22,8 @@ import submitit
 import wandb
 
 import torch
+import torchvision
+import torchvision.transforms.v2 as transforms
 from torch.utils.data import RandomSampler
 
 from stable_ssl.utils import (
@@ -38,6 +40,11 @@ from stable_ssl.utils import (
 )
 from stable_ssl.utils.eval import AverageMeter, accuracy
 from stable_ssl.config import TrainerConfig
+from .positive_pair_sampler import (
+    PositivePairSampler,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+)
 
 
 class Trainer(torch.nn.Module):
@@ -76,7 +83,7 @@ class Trainer(torch.nn.Module):
         wandb.init(
             project=self.config.log.wandb_project,
             config=dataclasses.asdict(self.config),
-            name=self.config.log.run_name,
+            # name=self.config.log.run_name,
             dir=str(self.folder),
             resume="allow",
         )
@@ -94,24 +101,29 @@ class Trainer(torch.nn.Module):
         torch.cuda.set_device(self.config.hardware.gpu)
 
         if not self.config.log.eval_only:
-            logging.info("Creating train_loader dataset...")
+            logging.info("[stable-SSL] Creating train_loader dataset...")
             self.train_loader = self.initialize_train_loader()
             assert hasattr(self, "train_loader")
-            logging.info(f"\t=> Found training set of length {len(self.train_loader)}")
+            logging.info(
+                f"[stable-SSL] \t=> Found training set of length {len(self.train_loader)}"
+            )
         else:
-            logging.info("\t=> No training set loaded since eval_only")
+            logging.info("[stable-SSL] \t=> No training set loaded since eval_only")
 
-        logging.info("Creating val_loader dataset...")
+        logging.info("[stable-SSL] Creating val_loader dataset...")
         try:
             self.val_loader = self.initialize_val_loader()
-            logging.info(f"\t=> Found validation set of length {len(self.val_loader)}")
+            logging.info(
+                f"[stable-SSL] \t=> Found validation set of length {len(self.val_loader)}"
+            )
         except NotImplementedError:
             logging.info(
-                "\t=> Found no implementation of initialize_val_loader... skipping"
+                "[stable-SSL] \t=> Found no implementation of initialize_val_loader... "
+                "skipping"
             )
             self.val_loader = None
 
-        logging.info("Calling initialize_modules() method...")
+        logging.info("[stable-SSL] Calling initialize_modules() method...")
         self.initialize_modules()
 
         for name, module in self.named_children():
@@ -133,22 +145,25 @@ class Trainer(torch.nn.Module):
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(
-                f"\t=> Found module '{name}' with\n\t\t\t- {trainable} "
+                f"[stable-SSL] \t=> Found module '{name}' with\n\t\t\t- {trainable} "
                 "trainable parameters"
             )
 
         if not self.config.log.eval_only:
-            logging.info("Calling initialize_optimizer() method...")
+            logging.info("[stable-SSL] Calling initialize_optimizer() method...")
             self.optimizer = self.initialize_optimizer()
-            logging.info("Calling initialize_scheduler() method...")
+            logging.info("[stable-SSL] Calling initialize_scheduler() method...")
             try:
                 self.scheduler = self.initialize_scheduler()
             except NotImplementedError:
-                logging.info("No scheduler given...")
+                logging.info("[stable-SSL] No scheduler given...")
         else:
-            logging.info("Not calling initialize_optimizer() method... since eval_only")
+            logging.info(
+                "[stable-SSL] Not calling initialize_optimizer() method... "
+                "since eval_only"
+            )
 
-        logging.info("Calling load_checkpoint() method...")
+        logging.info("[stable-SSL] Calling load_checkpoint() method...")
         self.load_checkpoint()
         self.start_time = time.time()
         self.execute()
@@ -182,10 +197,10 @@ class Trainer(torch.nn.Module):
             try:
                 self._train_epoch()
             except BreakEpoch:
-                print("Train epoch cut by user...")
-                print("Going to the next one...")
+                print("[stable-SSL] Train epoch cut by user...")
+                print("[stable-SSL] Going to the next one...")
             except NanError:
-                print("Nan error...")
+                print("[stable-SSL] Nan error...")
                 return
             except Exception as e:
                 raise (e)
@@ -218,15 +233,15 @@ class Trainer(torch.nn.Module):
         # override any user desired behavior, simply speak out
         if not self.training:
             logging.warn(
-                "starting training epoch but model is no longer in\
-                    train mode after call to before_train_epoch()"
+                "[stable-SSL] starting training epoch but model is no longer in "
+                "train mode after call to before_train_epoch()"
             )
 
         if self.config.optim.max_steps < 0:
             max_steps = len(self.train_loader)
         elif 0 < self.config.optim.max_steps < 1:
             logging.info(
-                f"\t=> Training on {self.config.optim.max_steps*100}% of "
+                f"[stable-SSL] \t=> Training on {self.config.optim.max_steps*100}% of "
                 "the training dataset"
             )
             max_steps = int(self.config.optim.max_steps * len(self.train_loader))
@@ -251,7 +266,7 @@ class Trainer(torch.nn.Module):
                 # call any user specified post-step function
                 self.after_train_step()
             except BreakStep:
-                logging.warn("train_step has been interrupted by user...")
+                logging.warn("[stable-SSL] train_step has been interrupted by user...")
 
             # we cut early in case the user specifies to only use
             # X% of the training dataset
@@ -267,7 +282,7 @@ class Trainer(torch.nn.Module):
     def eval_epoch(self) -> dict:
 
         if self.val_loader is None:
-            logging.info("No val_loader hence skipping eval epoch")
+            logging.info("[stable-SSL] No val_loader hence skipping eval epoch")
             return
 
         # set-up model in eval mode + reset metrics
@@ -277,7 +292,7 @@ class Trainer(torch.nn.Module):
         # override any user desired behavior
         if self.training:
             warnings.warn(
-                "starting eval epoch but model is not in\
+                "[stable-SSL] starting eval epoch but model is not in\
                     eval mode after call to before_eval_epoch()"
             )
 
@@ -305,7 +320,7 @@ class Trainer(torch.nn.Module):
                     self.after_eval_step()
 
         except BreakEpoch:
-            print("Eval epoch cut by user...")
+            print("[stable-SSL] Eval epoch cut by user...")
         except Exception as e:
             raise (e)
 
@@ -322,7 +337,7 @@ class Trainer(torch.nn.Module):
         if np.isnan(loss.item()):
             raise NanError
 
-        wandb.log({"loss": loss.item(), "epoch": self.epoch, "step": self.step})
+        wandb.log({"train/loss": loss.item(), "epoch": self.epoch, "step": self.step})
 
         self.scaler.scale(loss).backward()
         # Unscales the gradients of optimizer's assigned params in-place
@@ -341,7 +356,7 @@ class Trainer(torch.nn.Module):
         # sends a preemption signal, with the same arguments as the __call__ method
         # "self" is your callable, at its current state.
         # "self" therefore holds the current version of the model:
-        print("Requeuing...")
+        print("[stable-SSL] Requeuing...")
         config = copy.deepcopy(self.config)
         config.log.add_version = False
         config.log.folder = self.folder.absolute().as_posix()
@@ -357,20 +372,23 @@ class Trainer(torch.nn.Module):
         """
         load_from = Path(self.config.log.load_from)
         if load_from.is_file():
-            logging.info(f"\t=> file {load_from} exists\n\t=> loading it...")
+            logging.info(
+                f"[stable-SSL] \t=> file {load_from} exists\n\t=> loading it..."
+            )
             checkpoint = load_from
         elif (self.folder / "tmp_checkpoint.ckpt").is_file():
             logging.info(
-                f"\t=> folder {self.folder} contains `tmp_checkpoint.ckpt` "
-                "file\n\t=> loading it..."
+                f"[stable-SSL] \t=> folder {self.folder} contains `tmp_checkpoint.ckpt`"
+                " file\n\t=> loading it..."
             )
             checkpoint = self.folder / "tmp_checkpoint.ckpt"
         else:
-            logging.info(f"\t=> no checkpoint at `{load_from}`")
+            logging.info(f"[stable-SSL] \t=> no checkpoint at `{load_from}`")
             logging.info(
-                f"\t=> no checkpoint at `{self.folder / 'tmp_checkpoint.ckpt'}`"
+                f"[stable-SSL] \t=> no checkpoint at "
+                "`{self.folder / 'tmp_checkpoint.ckpt'}`"
             )
-            logging.info("f\t=> training from scratch...")
+            logging.info("[stable-SSL] \t=> training from scratch...")
             self.epoch = 0
             return
 
@@ -378,27 +396,29 @@ class Trainer(torch.nn.Module):
 
         for name, model in self.named_children():
             if name not in ckpt:
-                logging.info(f"\t\t=> {name} not in ckpt, skipping...")
+                logging.info(f"[stable-SSL] \t\t=> {name} not in ckpt, skipping...")
                 continue
             model.load_state_dict(ckpt[name])
-            logging.info(f"\t\t=> {name} successfully loaded...")
+            logging.info(f"[stable-SSL] \t\t=> {name} successfully loaded...")
         if "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
-            logging.info("\t\t=> optimizer successfully loaded...")
+            logging.info("[stable-SSL] \t\t=> optimizer successfully loaded...")
         if "scheduler" in ckpt:
             self.scheduler.load_state_dict(ckpt["scheduler"])
-            logging.info("\t\t=> scheduler successfully loaded...")
+            logging.info("[stable-SSL] \t\t=> scheduler successfully loaded...")
         if "epoch" in ckpt:
             self.epoch = ckpt["epoch"]
-            logging.info(f"\t\t=> training will start from epoch {ckpt['epoch']}")
+            logging.info(
+                f"[stable-SSL] \t\t=> training will start from epoch {ckpt['epoch']}"
+            )
         else:
             self.epoch = 0
 
-    def initialize_train_loader(self):
-        raise NotImplementedError
+    # def initialize_train_loader(self):
+    #     raise NotImplementedError
 
-    def initialize_val_loader(self):
-        raise NotImplementedError
+    # def initialize_val_loader(self):
+    #     raise NotImplementedError
 
     def initialize_modules(self):
         raise NotImplementedError
@@ -438,7 +458,7 @@ class Trainer(torch.nn.Module):
 
     def initialize_scheduler(self):
         min_lr = self.config.optim.lr * 0.005
-        peak_step = 5 * len(self.train_loader)
+        peak_step = 10 * len(self.train_loader)
         total_steps = self.config.optim.epochs * len(self.train_loader)
         return LinearWarmupCosineAnnealing(
             self.optimizer, end_lr=min_lr, peak_step=peak_step, total_steps=total_steps
@@ -557,7 +577,13 @@ class Trainer(torch.nn.Module):
         return
 
     def after_eval_epoch(self):
-        wandb.log({"epoch": self.epoch, "acc1": self.top1.avg, "acc5": self.top5.avg})
+        wandb.log(
+            {
+                "epoch": self.epoch,
+                "test/acc1": self.top1.avg,
+                "test/acc5": self.top5.avg,
+            }
+        )
 
     def eval_step(self):
         output = self.forward(self.data[0])
@@ -590,3 +616,38 @@ class Trainer(torch.nn.Module):
         )
 
         return loader
+
+    def initialize_train_loader(self):
+        # dataset = torchvision.datasets.ImageFolder(
+        #     self.config.data.data_dir / "train", PositivePairSampler()
+        # )
+
+        train_dataset = torchvision.datasets.CIFAR10(
+            root="./data",
+            train=True,
+            download=True,
+            transform=PositivePairSampler(),
+        )
+
+        return self.dataset_to_loader(train_dataset)
+
+    def initialize_val_loader(self):
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
+
+        # dataset = torchvision.datasets.ImageFolder(
+        #     self.config.data.data_dir + "/eval", transform
+        # )
+        eval_dataset = torchvision.datasets.CIFAR10(
+            root="./data",
+            train=False,
+            download=True,
+            transform=transform,
+        )
+
+        return self.dataset_to_loader(eval_dataset)

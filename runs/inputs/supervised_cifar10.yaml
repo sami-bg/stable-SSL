@@ -1,0 +1,19 @@
+model:
+  model: Supervised
+  backbone_model: resnet9
+
+optim:
+  epochs: 100
+  batch_size: 256
+  lr: 0.001
+  optimizer: AdamW
+
+log:
+  folder: "./new_logs"
+  wandb_project: "simclr_cifar10"
+
+hardware:
+  seed: 0
+  float16: true
+  gpu: 0
+  world_size: 1

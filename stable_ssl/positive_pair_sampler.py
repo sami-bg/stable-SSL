@@ -3,12 +3,18 @@
 import random
 import numpy as np
 from PIL import Image, ImageOps, ImageFilter
+
 import torchvision.transforms.v2 as transforms
 
+# import torchvision.transforms as transforms
 
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406]) * 255
-IMAGENET_STD = np.array([0.229, 0.224, 0.225]) * 255
-DEFAULT_CROP_RATIO = 224 / 256
+# # for imagenet
+# MEAN = np.array([0.485, 0.456, 0.406]) * 255
+# STD = np.array([0.229, 0.224, 0.225]) * 255
+
+# for cifar10
+MEAN = np.array([0.4914, 0.4822, 0.4465]) * 255
+STD = np.array([0.2023, 0.1994, 0.2010]) * 255
 
 
 class GaussianBlur(object):
@@ -35,7 +41,7 @@ class Solarization(object):
 
 
 class PositivePairSampler:
-    def __init__(self, size: int = 224):
+    def __init__(self, size: int = 32):  # CHANGE HERE TO 224 IF NOT CIFAR10
         self.transform = transforms.Compose(
             [
                 transforms.RandomResizedCrop(
@@ -53,12 +59,12 @@ class PositivePairSampler:
                     p=0.8,
                 ),
                 transforms.RandomGrayscale(p=0.2),
-                GaussianBlur(p=1.0),
+                # GaussianBlur(p=1.0),
                 Solarization(p=0.0),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=IMAGENET_MEAN,
-                    std=IMAGENET_STD,
+                    mean=MEAN,
+                    std=STD,
                 ),
             ]
         )
@@ -77,12 +83,12 @@ class PositivePairSampler:
                     p=0.8,
                 ),
                 transforms.RandomGrayscale(p=0.2),
-                GaussianBlur(p=0.1),
+                # GaussianBlur(p=0.1),
                 Solarization(p=0.2),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=IMAGENET_MEAN,
-                    std=IMAGENET_STD,
+                    mean=MEAN,
+                    std=STD,
                 ),
             ]
         )

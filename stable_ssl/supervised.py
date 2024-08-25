@@ -1,10 +1,11 @@
-from .trainer import Trainer
-from stable_ssl.utils import load_model
+import torch
 import torchvision
 import torch.nn.functional as F
 import torchvision.transforms.v2 as transforms
 
-from stable_ssl.ssl_modules.positive_pair_sampler import (
+from stable_ssl.utils import load_model
+from .trainer import Trainer
+from .positive_pair_sampler import (
     PositivePairSampler,
     IMAGENET_MEAN,
     IMAGENET_STD,
@@ -33,48 +34,6 @@ class Supervised(Trainer):
     def forward(self, x):
         return self.model(x)
 
-    def initialize_train_loader(self):
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data.data_dir / "train", PositivePairSampler()
-        # )
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
-
-        train_dataset = torchvision.datasets.CIFAR10(
-            root="./data",
-            train=True,
-            download=True,
-            transform=transform,
-        )
-
-        return self.dataset_to_loader(train_dataset)
-
-    def initialize_val_loader(self):
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ]
-        )
-
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data.data_dir + "/eval", transform
-        # )
-        eval_dataset = torchvision.datasets.CIFAR10(
-            root="./data",
-            train=False,
-            download=True,
-            transform=transform,
-        )
-
-        return self.dataset_to_loader(eval_dataset)
-
     def compute_loss(self):
-        preds = self.forward(self.data[0])
-        return F.cross_entropy(preds, self.data[1])
+        preds = self.forward(torch.cat([self.data[0][0], self.data[0][1]], 0))
+        return F.cross_entropy(preds, self.data[1].repeat(2))

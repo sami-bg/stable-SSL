@@ -1,8 +1,10 @@
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from .base import SSLTrainer
 from stable_ssl.config import TrainerConfig
+from stable_ssl.utils import load_model, low_resolution_resnet
 
 
 class SimCLR(SSLTrainer):
@@ -25,6 +27,11 @@ class SimCLR(SSLTrainer):
             with_classifier=False,
             pretrained=False,
         )
+        if (
+            "resnet" in self.config.model.backbone_model
+            and self.config.model.backbone_model != "resnet9"
+        ):
+            model = low_resolution_resnet(model)
         self.backbone = model.train()
 
         # projector
@@ -49,11 +56,9 @@ class SimCLR(SSLTrainer):
         Instead, given a positive pair, similar to (Chen et al., 2017), we treat the
         other 2(N-1) augmented examples within a minibatch as negative examples.
         """
-        projs = self.projector(embeds)
-
-        z_i, z_j = torch.chunk(projs, 2, dim=0)
-        batch_size = z_i.size(0)
-        N = 2 * batch_size * self.config.hardware.world_size
+        z = self.projector(embeds)
+        N = z.size(0) * self.config.hardware.world_size
+        batch_size = z.size(0) // 2
 
         mask = self._mask_correlated_samples(
             batch_size, self.config.hardware.world_size
@@ -62,8 +67,6 @@ class SimCLR(SSLTrainer):
         if self.config.hardware.world_size > 1:
             z_i = torch.cat(self.gather(z_i), dim=0)
             z_j = torch.cat(self.gather(z_j), dim=0)
-
-        z = torch.cat((z_i, z_j), dim=0)
 
         features = F.normalize(z, dim=1)
         sim = torch.matmul(features, features.T) / self.config.model.temperature
@@ -84,10 +87,11 @@ class SimCLR(SSLTrainer):
 
     @staticmethod
     def _mask_correlated_samples(batch_size, world_size):
-        N = 2 * batch_size * world_size
+        n_samples = batch_size * world_size
+        N = 2 * n_samples
         mask = torch.ones((N, N), dtype=bool)
         mask = mask.fill_diagonal_(0)
-        for i in range(batch_size * world_size):
-            mask[i, batch_size * world_size + i] = 0
-            mask[batch_size * world_size + i, i] = 0
+        indices = torch.arange(n_samples)
+        mask[indices, n_samples + indices] = 0
+        mask[n_samples + indices, indices] = 0
         return mask

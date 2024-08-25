@@ -18,7 +18,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path="inputs", config_name="supervised_test")
+@hydra.main(config_path="inputs", config_name="simclr_cifar10")
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary
@@ -32,6 +32,9 @@ def main(cfg: DictConfig):
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
         log=LogConfig(**cfg_dict.get("log", {})),
     )
+
+    print("--- Arguments ---")
+    print(args)
 
     # Create a trainer object
     trainer = model_dict[args.model.model](args)
