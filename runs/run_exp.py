@@ -9,16 +9,17 @@ from stable_ssl.config import (
     LogConfig,
     DataConfig,
 )
-from stable_ssl.ssl_modules import SimCLR
+from stable_ssl.ssl_modules import SimCLR, AutoCLR
 from stable_ssl.supervised import Supervised
 
 model_dict = {
     "SimCLR": SimCLR,
     "Supervised": Supervised,
+    "AutoCLR": AutoCLR,
 }
 
 
-@hydra.main(config_path="inputs", config_name="supervised_cifar10")
+@hydra.main(config_path="inputs")  # , config_name="simclr_cifar10")
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary

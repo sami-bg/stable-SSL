@@ -3,11 +3,10 @@ model:
   backbone_model: resnet9
 
 optim:
-  epochs: 75
+  epochs: 100
   batch_size: 256
-  lr: 0.001
-  optimizer: Adam
-  weight_decay: 0
+  lr: 1.0
+  optimizer: LARS
 
 log:
   folder: "./new_logs"

@@ -42,6 +42,8 @@ class ModelConfig:
         Temperature parameter for the contrastive loss. Default is 0.15.
     projector : str
         Architecture of the projector head. Default is "8192-8192-8192".
+    autoclr_K : int
+        Nearest neighbor parameter to consider for the AutoCLR loss. Default is 10.
     """
 
     model: str = "SimCLR"
@@ -50,6 +52,7 @@ class ModelConfig:
     memory_format: str = "channels_last"
     temperature: float = 0.15
     projector: str = "8192-8192-8192"
+    autoclr_K: int = 10
 
 
 @dataclass
@@ -164,8 +167,6 @@ class LogConfig:
     folder : str, optional
         Path to the folder where logs and checkpoints will be saved.
         Default is the current directory.
-    add_version : bool, optional
-        Whether to append a version number to the folder path. Default is False.
     load_from : str, optional
         Path to a checkpoint from which to load the model, optimizer, and scheduler.
         Default is "ckpt".
@@ -188,7 +189,6 @@ class LogConfig:
     """
 
     folder: str = "."
-    add_version: bool = False
     load_from: str = "ckpt"
     log_level: int = logging.INFO
     checkpoint_frequency: int = 10

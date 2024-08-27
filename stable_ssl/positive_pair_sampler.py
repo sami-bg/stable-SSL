@@ -9,12 +9,12 @@ import torchvision.transforms.v2 as transforms
 # import torchvision.transforms as transforms
 
 # # for imagenet
-# MEAN = np.array([0.485, 0.456, 0.406]) * 255
-# STD = np.array([0.229, 0.224, 0.225]) * 255
+# MEAN = np.array([0.485, 0.456, 0.406])
+# STD = np.array([0.229, 0.224, 0.225])
 
 # for cifar10
-MEAN = np.array([0.4914, 0.4822, 0.4465]) * 255
-STD = np.array([0.2023, 0.1994, 0.2010]) * 255
+MEAN = np.array([0.4914, 0.4822, 0.4465])
+STD = np.array([0.2023, 0.1994, 0.2010])
 
 
 class GaussianBlur(object):

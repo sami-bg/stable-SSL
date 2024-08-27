@@ -25,12 +25,27 @@ class SSLTrainer(Trainer):
         super().__init__(config)
 
     def compute_loss(self):
-        embeds = self.forward(torch.cat([self.data[0][0], self.data[0][1]], 0))
+        embed_i = self.forward(self.data[0][0])
+        embed_j = self.forward(self.data[0][1])
+
+        # check that it is the right moment to do this
+        if self.config.hardware.world_size > 1:
+            embed_i = torch.cat(self.gather(z_i), dim=0)
+            embed_j = torch.cat(self.gather(z_j), dim=0)
+
+        embeds = torch.cat([embed_i, embed_j], dim=0)
         loss_ssl = self.compute_ssl_loss(embeds)
         loss_classifier = self.compute_classifier_loss(embeds)
-        wandb.log(
-            {"train/loss_ssl": loss_ssl, "train/loss_classifier": loss_classifier}
-        )
+
+        if self.config.log.wandb_project is not None:
+            wandb.log(
+                {
+                    "train/loss_ssl": loss_ssl,
+                    "train/loss_classifier": loss_classifier,
+                    "step": self.step,
+                    "epoch": self.epoch,
+                }
+            )
         return loss_ssl + loss_classifier
 
     def compute_classifier_loss(self, embeds):

@@ -1,8 +1,8 @@
 model:
-  model: SimCLR
+  model: AutoCLR
   backbone_model: resnet50
   projector: 2048-128
-  temperature: 0.5
+  autoclr_K: 5
 
 optim:
   epochs: 1000

@@ -1,18 +1,19 @@
 model:
   model: SimCLR
-  backbone_model: resnet50
+  backbone_model: resnet18
   projector: 2048-128
   temperature: 0.5
 
 optim:
   epochs: 1000
-  batch_size: 256
-  lr: 1.5
-  optimizer: LARS
+  batch_size: 512
+  lr: 0.6
+  optimizer: SGD
   weight_decay: 1e-6
+  momentum: 0.9
 
 log:
-  folder: "."
+  folder: "./new_logs"
   wandb_project: "simclr_cifar10"
 
 hardware:

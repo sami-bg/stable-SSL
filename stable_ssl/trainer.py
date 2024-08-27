@@ -59,71 +59,61 @@ class Trainer(torch.nn.Module):
 
     def __init__(self, config: TrainerConfig):
         super().__init__()
-
         self.config = copy.deepcopy(config)
 
-        if self.config.log.add_version:
-            self.folder = (Path(self.config.log.folder) / str(uuid.uuid4())).absolute()
-        else:
-            self.folder = Path(self.config.log.folder).absolute()
+    def __call__(self):
 
+        self.folder = Path(self.config.log.folder).absolute()
         self.folder.mkdir(parents=True, exist_ok=True)
 
-        print(f"[stable-SSL] Logging in {self.folder}")
-        print("[stable-SSL] \t=> Dumping hyper-parameters...")
-        with open(self.folder / "hparams.yaml", "w+") as f:
-            yaml.dump(dataclasses.asdict(config), f, indent=2)
-
-    def __call__(self):
+        if self.config.log.wandb_project is not None:
+            print(
+                f"[stable-SSL] \t=> Initializating wandb for logging in {self.folder}."
+            )
+            wandb.init(
+                project=self.config.log.wandb_project,
+                config=dataclasses.asdict(self.config),
+                name=self.config.log.run_name if self.config.log.run_name else None,
+                dir=str(self.folder),
+                resume="allow",
+            )
+        else:
+            print(f"[stable-SSL] \t=> Dumping config file in {self.folder}.")
+            with open(self.folder / "hparams.yaml", "w+") as f:
+                yaml.dump(dataclasses.asdict(self.config), f, indent=2)
 
         logging.basicConfig(level=self.config.log.log_level)
         seed_everything(self.config.hardware.seed)
 
-        # Initialize WandB
-        wandb.init(
-            project=self.config.log.wandb_project,
-            config=dataclasses.asdict(self.config),
-            # name=self.config.log.run_name,
-            dir=str(self.folder),
-            resume="allow",
-        )
-
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
-
-        try:
-            self.config.hardware = setup_distributed(self.config.hardware)
-            self._device = f"cuda:{self.config.hardware.gpu}"
-        except RuntimeError as e:
-            print(e)
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.config.hardware.gpu = 0
-            self.config.hardware.world_size = 1
-        torch.cuda.set_device(self.config.hardware.gpu)
+        self._set_device()
 
         if not self.config.log.eval_only:
-            logging.info("[stable-SSL] Creating train_loader dataset...")
+            logging.info("[stable-SSL] Creating train_loader dataset.")
             self.train_loader = self.initialize_train_loader()
             assert hasattr(self, "train_loader")
             logging.info(
-                f"[stable-SSL] \t=> Found training set of length {len(self.train_loader)}"
+                "[stable-SSL] \t=> Found training set of length "
+                f"{len(self.train_loader)}."
             )
         else:
-            logging.info("[stable-SSL] \t=> No training set loaded since eval_only")
+            logging.info("[stable-SSL] \t=> No training set loaded since eval_only.")
 
-        logging.info("[stable-SSL] Creating val_loader dataset...")
+        logging.info("[stable-SSL] Creating val_loader dataset.")
         try:
             self.val_loader = self.initialize_val_loader()
             logging.info(
-                f"[stable-SSL] \t=> Found validation set of length {len(self.val_loader)}"
+                "[stable-SSL] \t=> Found validation set of length "
+                f"{len(self.val_loader)}."
             )
         except NotImplementedError:
             logging.info(
-                "[stable-SSL] \t=> Found no implementation of initialize_val_loader... "
-                "skipping"
+                "[stable-SSL] \t=> Found no implementation of initialize_val_loader. "
+                "Skipping for now."
             )
             self.val_loader = None
 
-        logging.info("[stable-SSL] Calling initialize_modules() method...")
+        logging.info("[stable-SSL] Calling initialize_modules() method.")
         self.initialize_modules()
 
         for name, module in self.named_children():
@@ -146,37 +136,34 @@ class Trainer(torch.nn.Module):
             )
             logging.info(
                 f"[stable-SSL] \t=> Found module '{name}' with\n\t\t\t- {trainable} "
-                "trainable parameters"
+                "trainable parameters."
             )
 
         if not self.config.log.eval_only:
-            logging.info("[stable-SSL] Calling initialize_optimizer() method...")
+            logging.info("[stable-SSL] Calling initialize_optimizer() method.")
             self.optimizer = self.initialize_optimizer()
-            logging.info("[stable-SSL] Calling initialize_scheduler() method...")
+            logging.info("[stable-SSL] Calling initialize_scheduler() method.")
             try:
                 self.scheduler = self.initialize_scheduler()
             except NotImplementedError:
                 logging.info("[stable-SSL] No scheduler given...")
         else:
             logging.info(
-                "[stable-SSL] Not calling initialize_optimizer() method... "
-                "since eval_only"
+                "[stable-SSL] Mode is eval_only, skipping optimizer and "
+                "scheduler initializations."
             )
 
-        logging.info("[stable-SSL] Calling load_checkpoint() method...")
+        logging.info("[stable-SSL] Calling load_checkpoint() method.")
         self.load_checkpoint()
         self.start_time = time.time()
         self.execute()
 
-    def execute(self) -> None:
+    def execute(self):
         """Routine that is executed after the class is initialized.
 
         This will commonly consist of training + evaluation.
         Can be customized by the user to fit the use-cases.
         This is just a boilerplate version that provides minimal things.
-
-        Args:
-            eval_only (bool): whether to only eval the model, or also train
         """
         if self.config.log.eval_only:
             self.eval_epoch()
@@ -184,23 +171,23 @@ class Trainer(torch.nn.Module):
             try:
                 self.before_train_all_epochs()
                 self._train_all_epochs()
-                # after training, we always eval the model even if done per epoch
-                self.eval_epoch()
+                self.eval_epoch()  # always eval the model after training
             except BreakAllEpochs:
                 self.cleanup()
                 wandb.finish()
 
     def _train_all_epochs(self):
         while self.epoch < self.config.optim.epochs:
+
             if hasattr(self, "train_sampler"):
                 self.train_sampler.set_epoch(self.epoch)
+
             try:
                 self._train_epoch()
             except BreakEpoch:
-                print("[stable-SSL] Train epoch cut by user...")
-                print("[stable-SSL] Going to the next one...")
+                print("[stable-SSL] Train epoch cut by user. Going to the next one.")
             except NanError:
-                print("[stable-SSL] Nan error...")
+                print("[stable-SSL] Nan error.")
                 return
             except Exception as e:
                 raise (e)
@@ -211,7 +198,7 @@ class Trainer(torch.nn.Module):
 
             freq = self.config.log.checkpoint_frequency
             if self.epoch % freq == 0:
-                print("checkpointing everything to restart if needed...")
+                print("[stable-SSL] Checkpointing everything to restart if needed.")
                 self.save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
 
         # at the end of training, we (optionally) save the final model
@@ -233,8 +220,8 @@ class Trainer(torch.nn.Module):
         # override any user desired behavior, simply speak out
         if not self.training:
             logging.warn(
-                "[stable-SSL] starting training epoch but model is no longer in "
-                "train mode after call to before_train_epoch()"
+                "[stable-SSL] Starting training epoch but model is no longer in "
+                "train mode after call to before_train_epoch()."
             )
 
         if self.config.optim.max_steps < 0:
@@ -251,7 +238,6 @@ class Trainer(torch.nn.Module):
         for step, data in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
-
             # set up the data to have easy access throughout the methods
             self.step = step
             self.data = to_device(data, self.this_device)
@@ -266,7 +252,7 @@ class Trainer(torch.nn.Module):
                 # call any user specified post-step function
                 self.after_train_step()
             except BreakStep:
-                logging.warn("[stable-SSL] train_step has been interrupted by user...")
+                logging.warn("[stable-SSL] train_step has been interrupted by user.")
 
             # we cut early in case the user specifies to only use
             # X% of the training dataset
@@ -282,7 +268,7 @@ class Trainer(torch.nn.Module):
     def eval_epoch(self) -> dict:
 
         if self.val_loader is None:
-            logging.info("[stable-SSL] No val_loader hence skipping eval epoch")
+            logging.info("[stable-SSL] No val_loader hence skipping eval epoch/")
             return
 
         # set-up model in eval mode + reset metrics
@@ -292,8 +278,8 @@ class Trainer(torch.nn.Module):
         # override any user desired behavior
         if self.training:
             warnings.warn(
-                "[stable-SSL] starting eval epoch but model is not in\
-                    eval mode after call to before_eval_epoch()"
+                "[stable-SSL] Starting eval epoch but model is not in "
+                "eval mode after call to before_eval_epoch()."
             )
 
         try:
@@ -337,7 +323,10 @@ class Trainer(torch.nn.Module):
         if np.isnan(loss.item()):
             raise NanError
 
-        wandb.log({"train/loss": loss.item(), "epoch": self.epoch, "step": self.step})
+        if self.config.log.wandb_project is not None:
+            wandb.log(
+                {"train/loss": loss.item(), "epoch": self.epoch, "step": self.step}
+            )
 
         self.scaler.scale(loss).backward()
         # Unscales the gradients of optimizer's assigned params in-place
@@ -350,6 +339,22 @@ class Trainer(torch.nn.Module):
             )
         self.scaler.step(self.optimizer)
         self.scaler.update()
+
+        self.scheduler.step()
+        if self.config.log.wandb_project is not None:
+            wandb.log({"lr": self.scheduler.get_last_lr()[0], "step": self.step})
+
+    def _set_device(self):
+        try:
+            self.config.hardware = setup_distributed(self.config.hardware)
+            self._device = f"cuda:{self.config.hardware.gpu}"
+        except RuntimeError as e:
+            print(e)
+            # self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._device = f"cuda:{self.config.hardware.gpu}"
+            self.config.hardware.gpu = 0
+            self.config.hardware.world_size = 1
+        torch.cuda.set_device(self.config.hardware.gpu)
 
     def checkpoint(self):
         # the checkpoint method is called asynchroneously when the slurm manager
@@ -429,14 +434,12 @@ class Trainer(torch.nn.Module):
                 self.parameters(),
                 lr=self.config.optim.lr,
                 weight_decay=self.config.optim.weight_decay,
-                eps=1e-8,
             )
         if self.config.optim.optimizer == "AdamW":
             optimizer = torch.optim.AdamW(
                 self.parameters(),
                 lr=self.config.optim.lr,
                 weight_decay=self.config.optim.weight_decay,
-                eps=1e-8,
                 betas=self.config.optim.betas,
             )
         elif self.config.optim.optimizer == "RMSprop":
@@ -459,7 +462,6 @@ class Trainer(torch.nn.Module):
                 lr=self.config.optim.lr,
                 weight_decay=self.config.optim.weight_decay,
                 momentum=self.config.optim.momentum,
-                epsilon=1e-8,
             )
         return optimizer
 

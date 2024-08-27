@@ -1,3 +1,4 @@
 from .simclr import SimCLR
+from .autoclr import AutoCLR
 
-__all__ = ["SimCLR"]
+__all__ = ["SimCLR", "AutoCLR"]
