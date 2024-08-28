@@ -21,7 +21,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path="inputs")
+@hydra.main(config_path="configs")
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary
