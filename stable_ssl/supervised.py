@@ -5,11 +5,6 @@ import torchvision.transforms.v2 as transforms
 
 from stable_ssl.utils import load_model
 from .trainer import Trainer
-from .positive_pair_sampler import (
-    PositivePairSampler,
-    MEAN,
-    STD,
-)
 
 
 class Supervised(Trainer):
@@ -25,7 +20,7 @@ class Supervised(Trainer):
     def initialize_modules(self):
         model, _ = load_model(
             name=self.config.model.backbone_model,
-            n_classes=10,
+            n_classes=self.config.data.num_classes,
             with_classifier=True,
             pretrained=False,
         )

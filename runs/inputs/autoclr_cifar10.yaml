@@ -2,7 +2,7 @@ model:
   model: AutoCLR
   backbone_model: resnet50
   projector: 2048-128
-  autoclr_K: 5
+  autoclr_K: 50
 
 optim:
   epochs: 1000

@@ -44,7 +44,7 @@ class AutoCLR(SimCLR):
             N, 1
         )  # shape (N, 1)
 
-        negative_samples = sim[mask].reshape(N, -1)  # shape (N, N-2)
+        negative_samples = sim[mask].reshape(N, -1)  # shape (N, N-2)d
 
         logits = torch.cat(
             (positive_samples, negative_samples), dim=1

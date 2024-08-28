@@ -15,7 +15,7 @@ class SimCLR(SSLTrainer):
         # backbone
         model, fan_in = load_model(
             name=self.config.model.backbone_model,
-            n_classes=10,
+            n_classes=self.config.data.num_classes,
             with_classifier=False,
             pretrained=False,
         )
@@ -44,7 +44,6 @@ class SimCLR(SSLTrainer):
 
     def compute_ssl_loss(self, embeds):
         z = self.projector(embeds)
-        return nt_xent(z, t=self.config.model.temperature)
 
         N = z.size(0) * self.config.hardware.world_size
         batch_size = z.size(0) // 2

@@ -40,11 +40,15 @@ from stable_ssl.utils import (
 )
 from stable_ssl.utils.eval import AverageMeter, accuracy
 from stable_ssl.config import TrainerConfig
-from .positive_pair_sampler import (
+from .sampler import (
     PositivePairSampler,
-    MEAN,
-    STD,
+    ValSampler,
 )
+
+DATASETS = {
+    "CIFAR10": torchvision.datasets.CIFAR10,
+    "CIFAR100": torchvision.datasets.CIFAR100,
+}
 
 
 class Trainer(torch.nn.Module):
@@ -627,36 +631,21 @@ class Trainer(torch.nn.Module):
         return loader
 
     def initialize_train_loader(self):
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data.data_dir / "train", PositivePairSampler()
-        # )
-
-        train_dataset = torchvision.datasets.CIFAR10(
-            root="./data",
+        train_dataset = DATASETS[self.config.data.dataset](
+            root=self.config.data.data_dir,
             train=True,
             download=True,
-            transform=PositivePairSampler(),
+            transform=PositivePairSampler(dataset=self.config.data.dataset),
         )
 
         return self.dataset_to_loader(train_dataset)
 
     def initialize_val_loader(self):
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(mean=MEAN, std=STD),
-            ]
-        )
-
-        # dataset = torchvision.datasets.ImageFolder(
-        #     self.config.data.data_dir + "/eval", transform
-        # )
-        eval_dataset = torchvision.datasets.CIFAR10(
-            root="./data",
+        eval_dataset = DATASETS[self.config.data.dataset](
+            root=self.config.data.data_dir,
             train=False,
             download=True,
-            transform=transform,
+            transform=ValSampler(dataset=self.config.data.dataset),
         )
 
         return self.dataset_to_loader(eval_dataset)

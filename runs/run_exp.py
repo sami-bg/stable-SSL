@@ -1,4 +1,6 @@
 import hydra
+import os
+from hydra import utils
 from omegaconf import DictConfig, OmegaConf
 
 from stable_ssl.config import (
@@ -19,7 +21,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path="inputs")  # , config_name="simclr_cifar10")
+@hydra.main(config_path="inputs")
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary
@@ -32,6 +34,10 @@ def main(cfg: DictConfig):
         model=ModelConfig(**cfg_dict.get("model", {})),
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
         log=LogConfig(**cfg_dict.get("log", {})),
+    )
+
+    args.data.data_dir = os.path.join(
+        utils.get_original_cwd(), args.data.data_dir, args.data.dataset
     )
 
     print("--- Arguments ---")

@@ -18,9 +18,27 @@ class DataConfig:
     -----------
     data_dir : str
         Path to the directory containing the training data.
+        Default is "data".
+    dataset : str
+        Name of the dataset to use (e.g., "CIFAR10", "CIFAR100").
+        Default is "CIFAR10".
+    resolution : int
+        Resolution of the images in the dataset. Default is 32.
+    num_classes : int
+        Number of classes in the dataset. Default is 10.
     """
 
-    data_dir: str = "./data"
+    data_dir: str = "data"
+    dataset: str = "CIFAR10"
+    resolution: int = 32
+    num_classes: int = 10
+
+    if dataset in ["CIFAR10", "CIFAR100"]:
+        resolution = 32
+        if dataset == "CIFAR10":
+            num_classes = 10
+        elif dataset == "CIFAR100":
+            num_classes = 100
 
 
 @dataclass
@@ -51,7 +69,7 @@ class ModelConfig:
     sync_batchnorm: bool = False
     memory_format: str = "channels_last"
     temperature: float = 0.15
-    projector: str = "8192-8192-8192"
+    projector: str = "2048-128"
     autoclr_K: int = 10
 
 

@@ -1,3 +1,5 @@
+# inspired from https://github.com/p3i0t/SimCLR-CIFAR10
+
 model:
   model: SimCLR
   backbone_model: resnet18
