@@ -1,3 +1,5 @@
+# inspired from https://github.com/matthias-wright/cifar10-resnet
+
 model:
   model: Supervised
   backbone_model: resnet9

@@ -13,6 +13,15 @@ Or you can also run:
 pip install git+https://github.com/rbalestr-lab/stable-SSL
 ```
 
+### Single-run
+
+```python
+python3 run_exp.py --config-name=simclr_cifar10_sgd
+```
+
+# Append new param
+
+
 ### Multi-run
 
 ```python
