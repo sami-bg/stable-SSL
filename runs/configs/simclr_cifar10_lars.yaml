@@ -1,3 +1,6 @@
+defaults:
+  - override hydra/launcher: submitit_local
+
 model:
   model: SimCLR
   backbone_model: resnet50
