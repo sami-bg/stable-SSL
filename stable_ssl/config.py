@@ -63,6 +63,10 @@ class ModelConfig:
         Architecture of the projector head. Default is "8192-8192-8192".
     autoclr_K : int
         Nearest neighbor parameter to consider for the AutoCLR loss. Default is 10.
+    pretrained : bool
+        Whether to use the torchvision pretrained weights or use random initialization.
+    with_classifier : int
+        Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
     """
 
     model: str = "SimCLR"
@@ -72,6 +76,8 @@ class ModelConfig:
     temperature: float = 0.15
     projector: str = "2048-128"
     autoclr_K: int = 10
+    pretrained: bool = False
+    with_classifier: bool = True
 
 
 @dataclass
