@@ -6,7 +6,7 @@ import logging
 
 import torch
 from torch.optim import SGD, RMSprop, AdamW, Adam
-
+from omegaconf import OmegaConf
 from stable_ssl.utils import LARS
 
 
@@ -251,4 +251,5 @@ class TrainerConfig:
     log: LogConfig = field(default_factory=LogConfig)
 
     def pprint(self) -> str:
+        return OmegaConf.to_yaml(self)
         return json.dumps(asdict(self), indent=2)

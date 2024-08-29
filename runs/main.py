@@ -22,7 +22,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"))
+@hydra.main(version_base=None, config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"))
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary
