@@ -37,7 +37,7 @@ class SimCLR(SSLTrainer):
         self.projector = nn.Sequential(*layers)
 
         # linear probes
-        self.classifier = torch.nn.Linear(fan_in, 10)
+        self.classifier = torch.nn.Linear(fan_in, self.config.data.num_classes)
 
     def forward(self, x):
         return self.backbone(x)

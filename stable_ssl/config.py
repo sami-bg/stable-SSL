@@ -121,28 +121,26 @@ class OptimConfig:
     betas: Optional[Tuple[float, float]] = None
     grad_max_norm: Optional[float] = None
 
-    default_params = {
-        "SGD": SGD([torch.tensor(0)]).defaults,
-        "RMSprop": RMSprop([torch.tensor(0)]).defaults,
-        "AdamW": AdamW([torch.tensor(0)]).defaults,
-        "LARS": LARS([torch.tensor(0)]).defaults,
-        "Adam": Adam([torch.tensor(0)]).defaults,
-    }
-
     def __post_init__(self):
 
-        if self.optimizer not in ["Adam", "AdamW", "RMSprop", "SGD", "LARS"]:
+        if not (hasattr(torch.optim, self.optimizer) or self.optimizer == "LARS"):
             raise ValueError(
-                f"[stable-SSL] Invalid optimizer: {self.optimizer}. Must be one of "
-                "'AdamW', 'RMSprop', 'SGD', 'LARS'."
+                f"[stable-SSL] Invalid optimizer: {self.optimizer}. Must be a "
+                "torch optimizer or 'LARS'."
             )
+
+        # Instantiate the optimizer to get the default parameters.
+        optimizer = (
+            LARS if self.optimizer == "LARS" else getattr(torch.optim, self.optimizer)
+        )
+        default_params = optimizer([torch.tensor(0)]).defaults
 
         # Ensure parameters are provided appropriately based on the optimizer.
         for param in ["lr", "weight_decay", "momentum", "betas", "nesterov"]:
-            if param in self.default_params[self.optimizer].keys():
+            if param in default_params.keys():
                 if getattr(self, param) is None:
                     # If a useful parameter is not provided, its default value is used.
-                    default_value = self.default_params[self.optimizer][param]
+                    default_value = default_params[param]
                     setattr(self, param, default_value)
                     warnings.warn(
                         f"[stable-SSL] {param} not provided for {self.optimizer} "
