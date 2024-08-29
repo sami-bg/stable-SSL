@@ -21,8 +21,8 @@ class Supervised(Trainer):
         model, _ = load_model(
             name=self.config.model.backbone_model,
             n_classes=self.config.data.num_classes,
-            with_classifier=True,
-            pretrained=False,
+            with_classifier=self.config.model.with_classifier,
+            pretrained=self.config.model.pretrained,
         )
         self.model = model.train()
 

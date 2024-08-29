@@ -1,11 +1,12 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+import json
 from typing import Optional, Tuple
 import warnings
 import logging
 
 import torch
 from torch.optim import SGD, RMSprop, AdamW, Adam
-
+from omegaconf import OmegaConf
 from stable_ssl.utils import LARS
 
 
@@ -62,6 +63,10 @@ class ModelConfig:
         Architecture of the projector head. Default is "8192-8192-8192".
     autoclr_K : int
         Nearest neighbor parameter to consider for the AutoCLR loss. Default is 10.
+    pretrained : bool
+        Whether to use the torchvision pretrained weights or use random initialization.
+    with_classifier : int
+        Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
     """
 
     model: str = "SimCLR"
@@ -71,6 +76,8 @@ class ModelConfig:
     temperature: float = 0.15
     projector: str = "2048-128"
     autoclr_K: int = 10
+    pretrained: bool = False
+    with_classifier: bool = True
 
 
 @dataclass
@@ -240,3 +247,7 @@ class TrainerConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     log: LogConfig = field(default_factory=LogConfig)
+
+    def pprint(self) -> str:
+        return OmegaConf.to_yaml(self)
+        return json.dumps(asdict(self), indent=2)

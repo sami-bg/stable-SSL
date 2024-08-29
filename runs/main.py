@@ -2,7 +2,8 @@ import hydra
 import os
 from hydra import utils
 from omegaconf import DictConfig, OmegaConf
-
+from pathlib import Path
+import stable_ssl
 from stable_ssl.config import (
     TrainerConfig,
     OptimConfig,
@@ -21,7 +22,7 @@ model_dict = {
 }
 
 
-@hydra.main(config_path="configs")
+@hydra.main(version_base=None, config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"))
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary
