@@ -272,7 +272,7 @@ class Trainer(torch.nn.Module):
     def eval_epoch(self) -> dict:
 
         if self.val_loader is None:
-            logging.info("[stable-SSL] No val_loader hence skipping eval epoch/")
+            logging.info("[stable-SSL] No val_loader hence skipping eval epoch.")
             return
 
         # set-up model in eval mode + reset metrics
@@ -346,7 +346,13 @@ class Trainer(torch.nn.Module):
 
         self.scheduler.step()
         if self.config.log.wandb_project is not None:
-            wandb.log({"lr": self.scheduler.get_last_lr()[0], "step": self.step})
+            wandb.log(
+                {
+                    "train/lr": self.scheduler.get_last_lr()[0],
+                    "step": self.step,
+                    "epoch": self.epoch,
+                }
+            )
 
     def _set_device(self):
         try:
@@ -422,12 +428,6 @@ class Trainer(torch.nn.Module):
             )
         else:
             self.epoch = 0
-
-    # def initialize_train_loader(self):
-    #     raise NotImplementedError
-
-    # def initialize_val_loader(self):
-    #     raise NotImplementedError
 
     def initialize_modules(self):
         raise NotImplementedError

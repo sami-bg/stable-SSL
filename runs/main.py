@@ -27,6 +27,9 @@ def main(cfg: DictConfig):
     # Convert hydra config file to dictionary
     cfg_dict = OmegaConf.to_object(cfg)
 
+    print("--- CFG ---")
+    print(cfg)
+
     # Create the input for trainer
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
