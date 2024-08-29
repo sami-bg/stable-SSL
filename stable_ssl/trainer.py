@@ -75,7 +75,8 @@ class Trainer(torch.nn.Module):
                 f"[stable-SSL] \t=> Initializating wandb for logging in {self.folder}."
             )
             wandb.init(
-                project=self.config.log.wandb_project,
+                entity=self.config.log.entity,
+                project=self.config.log.project,
                 config=dataclasses.asdict(self.config),
                 name=self.config.log.run_name if self.config.log.run_name else None,
                 dir=str(self.folder),

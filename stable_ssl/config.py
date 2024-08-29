@@ -207,8 +207,10 @@ class LogConfig:
         Whether to only evaluate the model without training. Default is False.
     eval_each_epoch : bool, optional
         Whether to evaluate the model at the end of each epoch. Default is False.
-    wandb_project : str, optional
-        Name of the Weights & Biases project. Default is None.
+    entity : str, optional
+        Name of the (Weights & Biases) entity. Default is None.
+    project : str, optional
+        Name of the (Weights & Biases) project. Default is None.
     run_name : str, optional
         Name of the Weights & Biases run. Default is None.
     """
@@ -221,7 +223,8 @@ class LogConfig:
     final_model_name: str = "final_model"
     eval_only: bool = False
     eval_each_epoch: bool = True
-    wandb_project: Optional[str] = None
+    entity: Optional[str] = None
+    project: Optional[str] = None
     run_name: Optional[str] = None
 
 
@@ -252,4 +255,3 @@ class TrainerConfig:
 
     def pprint(self) -> str:
         return OmegaConf.to_yaml(self)
-        return json.dumps(asdict(self), indent=2)
