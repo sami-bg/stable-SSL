@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+import json
 from typing import Optional, Tuple
 import warnings
 import logging
@@ -242,3 +243,6 @@ class TrainerConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     log: LogConfig = field(default_factory=LogConfig)
+
+    def pprint(self) -> str:
+        return json.dumps(asdict(self), indent=2)
