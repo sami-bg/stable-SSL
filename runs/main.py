@@ -12,17 +12,19 @@ from stable_ssl.config import (
     LogConfig,
     DataConfig,
 )
-from stable_ssl.ssl_modules import SimCLR, AutoCLR
+from stable_ssl.ssl_modules import SimCLR
 from stable_ssl.supervised import Supervised
 
 model_dict = {
     "SimCLR": SimCLR,
     "Supervised": Supervised,
-    "AutoCLR": AutoCLR,
 }
 
 
-@hydra.main(version_base=None, config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"))
+@hydra.main(
+    version_base=None,
+    config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"),
+)
 def main(cfg: DictConfig):
 
     # Convert hydra config file to dictionary

@@ -61,8 +61,6 @@ class ModelConfig:
         Temperature parameter for the contrastive loss. Default is 0.15.
     projector : str
         Architecture of the projector head. Default is "8192-8192-8192".
-    autoclr_K : int
-        Nearest neighbor parameter to consider for the AutoCLR loss. Default is 10.
     pretrained : bool
         Whether to use the torchvision pretrained weights or use random initialization.
     with_classifier : int
@@ -75,7 +73,6 @@ class ModelConfig:
     memory_format: str = "channels_last"
     temperature: float = 0.15
     projector: str = "2048-128"
-    autoclr_K: int = 10
     pretrained: bool = False
     with_classifier: bool = True
 
