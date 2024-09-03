@@ -16,7 +16,7 @@ optim:
 
 log:
   folder: "./new_logs"
-  wandb_project: "simclr_cifar10"
+  project: "simclr_cifar10"
 
 hardware:
   seed: 0
