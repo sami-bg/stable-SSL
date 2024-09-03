@@ -3,19 +3,19 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
-def read_wandb_project(entity, project):
+def wandb_project(entity, project):
     api = wandb.Api()
     runs = api.runs(f"{entity}/{project}")
     configs = []
     dfs = []
     for run in runs:
-        config, df = read_wandb_run(entity, project, run.id)
+        config, df = wandb_run(entity, project, run.id)
         configs.append(config)
         dfs.append(df)
     config = pd.DataFrame(configs)
     return config, dfs
 
-def read_wandb_run(entity, project, run_id):
+def wandb_run(entity, project, run_id):
     api = wandb.Api()
     run = api.run(f"{entity}/{project}/{run_id}")
     summary = run.summary
