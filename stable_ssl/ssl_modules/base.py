@@ -37,7 +37,7 @@ class SSLTrainer(Trainer):
         loss_ssl = self.compute_ssl_loss(embeds)
         loss_classifier = self.compute_classifier_loss(embeds)
 
-        if self.config.log.wandb_project is not None:
+        if self.config.log.project is not None:
             wandb.log(
                 {
                     "train/loss_ssl": loss_ssl,

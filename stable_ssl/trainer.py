@@ -70,7 +70,7 @@ class Trainer(torch.nn.Module):
         self.folder = Path(self.config.log.folder).absolute()
         self.folder.mkdir(parents=True, exist_ok=True)
 
-        if self.config.log.wandb_project is not None:
+        if self.config.log.project is not None:
             print(
                 f"[stable-SSL] \t=> Initializating wandb for logging in {self.folder}."
             )
@@ -328,7 +328,7 @@ class Trainer(torch.nn.Module):
         if np.isnan(loss.item()):
             raise NanError
 
-        if self.config.log.wandb_project is not None:
+        if self.config.log.project is not None:
             wandb.log(
                 {"train/loss": loss.item(), "epoch": self.epoch, "step": self.step}
             )
@@ -346,7 +346,7 @@ class Trainer(torch.nn.Module):
         self.scaler.update()
 
         self.scheduler.step()
-        if self.config.log.wandb_project is not None:
+        if self.config.log.project is not None:
             wandb.log(
                 {
                     "train/lr": self.scheduler.get_last_lr()[0],

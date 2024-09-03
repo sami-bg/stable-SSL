@@ -7,7 +7,7 @@ authors = [
 ]
 license = {text = "MIT"}
 readme = {file = "README.md", content-type = "text/markdown"}
-dependencies = ["numpy", "torch", "torchvision", "tqdm", "omegaconf", "wandb", "hydra-core", "hydra-submitit-launcher"]
+dependencies = ["numpy", "torch", "torchvision", "tqdm", "omegaconf", "wandb", "hydra-core", "hydra-submitit-launcher", "pandas"]
 dynamic = ["version"]
 
 [tool.setuptools]
