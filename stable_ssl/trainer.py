@@ -633,7 +633,7 @@ class Trainer(torch.nn.Module):
 
     def initialize_train_loader(self):
         train_dataset = DATASETS[self.config.data.dataset](
-            root=self.config.data.data_dir,
+            root=self.config.data.data_path,
             train=True,
             download=True,
             transform=PositivePairSampler(dataset=self.config.data.dataset),
@@ -643,7 +643,7 @@ class Trainer(torch.nn.Module):
 
     def initialize_val_loader(self):
         eval_dataset = DATASETS[self.config.data.dataset](
-            root=self.config.data.data_dir,
+            root=self.config.data.data_path,
             train=False,
             download=True,
             transform=ValSampler(dataset=self.config.data.dataset),

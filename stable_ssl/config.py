@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field, asdict
 import json
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 import warnings
 import logging
+import hydra
+import os
 
 import torch
 from torch.optim import SGD, RMSprop, AdamW, Adam
@@ -34,12 +36,19 @@ class DataConfig:
     resolution: int = 32
     num_classes: int = 10
 
-    if dataset in ["CIFAR10", "CIFAR100"]:
-        resolution = 32
-        if dataset == "CIFAR10":
-            num_classes = 10
-        elif dataset == "CIFAR100":
-            num_classes = 100
+    def __post_init__(self):
+        # Adjust resolution and num_classes based on dataset
+        if self.dataset in ["CIFAR10", "CIFAR100"]:
+            self.resolution = 32
+            if self.dataset == "CIFAR10":
+                self.num_classes = 10
+            elif self.dataset == "CIFAR100":
+                self.num_classes = 100
+
+        # Set data_path based on data_dir and dataset
+        self.data_path = os.path.join(
+            hydra.utils.get_original_cwd(), self.data_dir, self.dataset
+        )
 
 
 @dataclass
@@ -250,3 +259,14 @@ class TrainerConfig:
 
     def pprint(self) -> str:
         return OmegaConf.to_yaml(self)
+
+
+def get_args(cfg_dict):
+    args = TrainerConfig(
+        data=DataConfig(**cfg_dict.get("data", {})),
+        optim=OptimConfig(**cfg_dict.get("optim", {})),
+        model=ModelConfig(**cfg_dict.get("model", {})),
+        hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
+        log=LogConfig(**cfg_dict.get("log", {})),
+    )
+    return args

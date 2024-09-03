@@ -1,0 +1,84 @@
+wandb_version: 1
+
+data:
+  desc: null
+  value:
+    data_dir: data
+    dataset: CIFAR10
+    resolution: 32
+    num_classes: 10
+optim:
+  desc: null
+  value:
+    optimizer: LARS
+    lr: 5
+    batch_size: 256
+    epochs: 1000
+    max_steps: -1
+    weight_decay: 1.0e-06
+    momentum: 0
+    nesterov: false
+    betas: null
+    grad_max_norm: null
+model:
+  desc: null
+  value:
+    model: SimCLR
+    backbone_model: resnet50
+    sync_batchnorm: false
+    memory_format: channels_last
+    temperature: 0.5
+    projector: 2048-128
+    pretrained: false
+    with_classifier: true
+hardware:
+  desc: null
+  value:
+    seed: 0
+    float16: true
+    gpu: 0
+    world_size: 1
+    port: null
+    workers: 0
+log:
+  desc: null
+  value:
+    folder: .
+    load_from: ckpt
+    log_level: 20
+    checkpoint_frequency: 10
+    save_final_model: false
+    final_model_name: final_model
+    eval_only: false
+    eval_each_epoch: true
+    entity: null
+    project: simclr_cifar10
+    run_name: null
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.2
+    cli_version: 0.17.7
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1725393434
+    t:
+      1:
+      - 1
+      - 41
+      - 50
+      - 55
+      2:
+      - 1
+      - 41
+      - 50
+      - 55
+      3:
+      - 16
+      - 23
+      4: 3.11.2
+      5: 0.17.7
+      8:
+      - 5
+      13: linux-x86_64

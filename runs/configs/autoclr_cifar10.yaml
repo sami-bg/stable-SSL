@@ -2,7 +2,6 @@ model:
   model: AutoCLR
   backbone_model: resnet50
   projector: 2048-128
-  autoclr_K: 50
 
 optim:
   epochs: 1000
@@ -13,7 +12,7 @@ optim:
 
 log:
   folder: "."
-  wandb_project: "simclr_cifar10"
+  project: "simclr_cifar10"
 
 hardware:
   seed: 0

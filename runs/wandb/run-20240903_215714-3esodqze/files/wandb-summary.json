@@ -1,0 +1,1 @@
+{"train/loss_ssl": 5.39547061920166, "train/loss_classifier": 1.9631290435791016, "step": 127, "epoch": 3, "_timestamp": 1725393872.7611165, "_runtime": 437.76279044151306, "_step": 2150, "train/loss": 7.358599662780762, "train/lr": 1.8582653061224486, "test/acc1": 23.62, "test/acc5": 76.83}
