@@ -15,6 +15,6 @@ __all__ = [
     "utils",
     "sampler",
     "trainer",
-    "supervised,
+    "supervised",
     "SimCLR", 
     "get_args"]
