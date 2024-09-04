@@ -6,7 +6,6 @@ import torchvision.transforms.v2 as transforms
 
 import wandb
 
-from ..utils import load_model
 from ..trainer import Trainer
 from ..config import TrainerConfig
 

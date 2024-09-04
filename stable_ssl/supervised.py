@@ -3,7 +3,7 @@ import torchvision
 import torch.nn.functional as F
 import torchvision.transforms.v2 as transforms
 
-from stable_ssl.utils import load_model
+from .utils import load_model
 from .trainer import Trainer
 
 

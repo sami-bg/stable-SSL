@@ -5,11 +5,12 @@ import warnings
 import logging
 import hydra
 import os
+from omegaconf import OmegaConf
 
 import torch
 from torch.optim import SGD, RMSprop, AdamW, Adam
-from omegaconf import OmegaConf
-from stable_ssl.utils import LARS
+
+from .utils import LARS
 
 
 @dataclass

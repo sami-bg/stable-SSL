@@ -4,6 +4,7 @@ from .schedulers import LinearWarmupCosineAnnealing
 from .optim import LARS
 from .exceptions import BreakEpoch, BreakStep, NanError, BreakAllEpochs
 from .nn import load_model, low_resolution_resnet
+from .eval import AverageMeter, accuracy
 from . import reader
 
 __all__ = [
@@ -20,5 +21,7 @@ __all__ = [
     "load_model",
     "to_device",
     "low_resolution_resnet",
-    "reader"
+    "reader",
+    "AverageMeter",
+    "accuracy",
 ]

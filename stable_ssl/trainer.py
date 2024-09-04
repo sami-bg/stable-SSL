@@ -26,7 +26,7 @@ import torchvision
 import torchvision.transforms.v2 as transforms
 from torch.utils.data import RandomSampler
 
-from stable_ssl.utils import (
+from .utils import (
     BreakAllEpochs,
     BreakEpoch,
     NanError,
@@ -38,8 +38,8 @@ from stable_ssl.utils import (
     LinearWarmupCosineAnnealing,
     to_device,
 )
-from stable_ssl.utils.eval import AverageMeter, accuracy
-from stable_ssl.config import TrainerConfig
+from .utils import AverageMeter, accuracy
+from .config import TrainerConfig
 from .sampler import (
     PositivePairSampler,
     ValSampler,
