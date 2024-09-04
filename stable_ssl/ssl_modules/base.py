@@ -6,9 +6,9 @@ import torchvision.transforms.v2 as transforms
 
 import wandb
 
-from stable_ssl.utils import load_model
-from stable_ssl.trainer import Trainer
-from stable_ssl.config import TrainerConfig
+from ..utils import load_model
+from ..trainer import Trainer
+from ..config import TrainerConfig
 
 
 class SSLTrainer(Trainer):

@@ -3,8 +3,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from .base import SSLTrainer
-from stable_ssl.config import TrainerConfig
-from stable_ssl.utils import load_model, low_resolution_resnet
+from ..config import TrainerConfig
+from ..utils import load_model, low_resolution_resnet
 
 
 class SimCLR(SSLTrainer):
