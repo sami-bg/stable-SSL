@@ -165,3 +165,5 @@ outputs/
 multirun/
 data/
 wandb/
+
+*.ckpt
