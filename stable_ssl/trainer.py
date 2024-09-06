@@ -577,8 +577,36 @@ class Trainer(torch.nn.Module):
     def before_eval_epoch(self):
         self.eval()
 
-        self.top1 = AverageMeter("Acc@1")
-        self.top5 = AverageMeter("Acc@5")
+        self.acc1 = AverageMeter("Acc@1")
+        self.acc5 = AverageMeter("Acc@5")
+
+        self.acc1_by_class = [
+            AverageMeter(f"Acc@1_class_{i}")
+            for i in range(self.config.data.num_classes)
+        ]
+        self.acc5_by_class = [
+            AverageMeter(f"Acc@5_class_{i}")
+            for i in range(self.config.data.num_classes)
+        ]
+
+    def after_eval_epoch(self):
+        # log in wandb
+        if self.config.log.project is not None:
+            table_acc1_by_class = wandb.Table(columns=["class_id", "epoch", "acc1"])
+            table_acc5_by_class = wandb.Table(columns=["class_id", "epoch", "acc5"])
+            for i in range(self.config.data.num_classes):
+                table_acc1_by_class.add_data(i, self.epoch, self.acc1_by_class[i].avg)
+                table_acc5_by_class.add_data(i, self.epoch, self.acc5_by_class[i].avg)
+
+            wandb.log(
+                {
+                    "epoch": self.epoch,
+                    "test/acc1": self.acc1.avg,
+                    "test/acc5": self.acc5.avg,
+                    "test/acc1_by_class": table_acc1_by_class,
+                    "test/acc5_by_class": table_acc5_by_class,
+                }
+            )
 
     def before_eval_step(self):
         return
@@ -586,22 +614,26 @@ class Trainer(torch.nn.Module):
     def after_eval_step(self):
         return
 
-    def after_eval_epoch(self):
-        wandb.log(
-            {
-                "epoch": self.epoch,
-                "test/acc1": self.top1.avg,
-                "test/acc5": self.top5.avg,
-            }
-        )
-
     def eval_step(self):
         output = self.forward(self.data[0])
         if hasattr(self, "classifier"):
             output = self.classifier(output)
+
+        # compute global accuracy
+        batch_size = self.data[0].size(0)
         acc1, acc5 = accuracy(output, self.data[1], topk=(1, 5))
-        self.top1.update(acc1.item(), self.data[0].size(0))
-        self.top5.update(acc5.item(), self.data[0].size(0))
+        self.acc1.update(acc1.item(), batch_size)
+        self.acc5.update(acc5.item(), batch_size)
+
+        # compute accuracy by class
+        for i in range(self.config.data.num_classes):
+            class_indices = self.data[1] == i
+            if class_indices.sum() > 0:
+                acc1, acc5 = accuracy(
+                    output[class_indices], self.data[1][class_indices], topk=(1, 5)
+                )
+                self.acc1_by_class[i].update(acc1.item(), class_indices.sum().item())
+                self.acc5_by_class[i].update(acc5.item(), class_indices.sum().item())
 
     def compute_loss(self):
         raise NotImplementedError

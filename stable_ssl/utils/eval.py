@@ -41,3 +41,40 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+
+def eval_step(self):
+    output = self.forward(self.data[0])
+    if hasattr(self, "classifier"):
+        output = self.classifier(output)
+    acc1, acc5 = accuracy(output, self.data[1], topk=(1, 5))
+    self.top1.update(acc1.item(), self.data[0].size(0))
+    self.top5.update(acc5.item(), self.data[0].size(0))
+
+    if self.config.log.project is not None:
+        wandb.log(
+            {
+                "epoch": self.epoch,
+                "step": self.step,
+                "test/acc1": self.top1.avg,
+                "test/acc5": self.top5.avg,
+            }
+        )
+
+
+def accuracy_by_class(self, output, target, num_classes):
+    """Computes the accuracy by class"""
+    with torch.no_grad():
+        class_correct = torch.zeros(num_classes)
+        class_total = torch.zeros(num_classes)
+
+        _, predicted = output.max(1)  # Get the index of the max log-probability
+
+        for i in range(num_classes):
+            class_indices = target == i
+            class_total[i] = class_indices.sum().item()
+            correct_predictions = predicted[class_indices] == target[class_indices]
+            class_correct[i] = correct_predictions.sum().item()
+
+        class_accuracy = class_correct / class_total * 100.0
+        return class_accuracy

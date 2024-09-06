@@ -63,7 +63,7 @@ def imbalance_torchvision_dataset(
         save_path = os.path.join(data_path, f"imbalanced_coeff_{coeff_imbalance}.pt")
         torch.save(imbalanced_dataset, save_path)
 
-        print(f"Imbalanced dataset saved to {save_path}")
+        print(f"[stable-SSL] Subsampling : imbalanced dataset saved to {save_path}.")
 
     return CustomTorchvisionDataset(
         root=save_path, transform=PositivePairSampler(dataset=dataset_name)
@@ -100,7 +100,9 @@ def create_exponential_imbalance(data, labels, coeff_imbalance=2.0):
     max_samples = class_counts[0].item()
     new_class_counts = (exp_dist * max_samples).to(torch.int32)
 
-    print("New class counts:", new_class_counts)
+    print("[stable-SSL] Subsampling : original class counts:", class_counts)
+    print("[stable-SSL] Subsampling : new class counts:", new_class_counts)
+    print("[stable-SSL] Subsampling : new number of samples:", new_class_counts.sum())
 
     keep_indices = []
     for cl, count in zip(classes, new_class_counts):
