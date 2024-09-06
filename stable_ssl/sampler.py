@@ -111,6 +111,7 @@ class PositivePairSampler:
         y2 = self.transform_prime(x)
         return y1, y2
 
+
 class ValSampler:
     def __init__(self, dataset="CIFAR10"):
 

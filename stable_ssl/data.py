@@ -27,7 +27,10 @@ def load_dataset(dataset_name, data_path, train=True, coeff_imbalance=None):
     if train:
         if coeff_imbalance is not None:
             return imbalance_torchvision_dataset(
-                data_path, dataset=torchvision_dataset, coeff_imbalance=coeff_imbalance, dataset_name=dataset_name
+                data_path,
+                dataset=torchvision_dataset,
+                coeff_imbalance=coeff_imbalance,
+                dataset_name=dataset_name,
             )
         else:
             return torchvision_dataset(
@@ -46,7 +49,9 @@ def load_dataset(dataset_name, data_path, train=True, coeff_imbalance=None):
         )
 
 
-def imbalance_torchvision_dataset(data_path, dataset, dataset_name, coeff_imbalance=2.0):
+def imbalance_torchvision_dataset(
+    data_path, dataset, dataset_name, coeff_imbalance=2.0
+):
     save_path = os.path.join(data_path, f"imbalanced_coeff_{coeff_imbalance}.pt")
 
     if not os.path.exists(save_path):
@@ -85,7 +90,9 @@ def create_exponential_imbalance(data, labels, coeff_imbalance=2.0):
     classes, class_counts = torch.unique(labels, return_counts=True)
     n_classes = len(classes)
 
-    assert torch.all(class_counts == len(labels) / n_classes), "The dataset is not balanced."
+    assert torch.all(
+        class_counts == len(labels) / n_classes
+    ), "The dataset is not balanced."
 
     exp_dist = coeff_imbalance ** -torch.arange(n_classes, dtype=torch.float32)
     exp_dist /= exp_dist.max()  # Ensure the first class is not subsampled
