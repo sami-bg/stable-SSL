@@ -44,11 +44,7 @@ from .sampler import (
     PositivePairSampler,
     ValSampler,
 )
-
-DATASETS = {
-    "CIFAR10": torchvision.datasets.CIFAR10,
-    "CIFAR100": torchvision.datasets.CIFAR100,
-}
+from .data import load_dataset
 
 
 class Trainer(torch.nn.Module):
@@ -632,21 +628,21 @@ class Trainer(torch.nn.Module):
         return loader
 
     def initialize_train_loader(self):
-        train_dataset = DATASETS[self.config.data.dataset](
-            root=self.config.data.data_path,
+        train_dataset = load_dataset(
+            dataset_name=self.config.data.dataset,
+            data_path=self.config.data.data_path,
             train=True,
-            download=True,
-            transform=PositivePairSampler(dataset=self.config.data.dataset),
+            coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
         return self.dataset_to_loader(train_dataset)
 
     def initialize_val_loader(self):
-        eval_dataset = DATASETS[self.config.data.dataset](
-            root=self.config.data.data_path,
+        eval_dataset = load_dataset(
+            dataset_name=self.config.data.dataset,
+            data_path=self.config.data.data_path,
             train=False,
-            download=True,
-            transform=ValSampler(dataset=self.config.data.dataset),
+            coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
         return self.dataset_to_loader(eval_dataset)

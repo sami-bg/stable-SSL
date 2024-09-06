@@ -30,12 +30,16 @@ class DataConfig:
         Resolution of the images in the dataset. Default is 32.
     num_classes : int
         Number of classes in the dataset. Default is 10.
+    coeff_imbalance : float
+        Coefficient for creating an imbalanced version of the dataset.
+        Default is None.
     """
 
     data_dir: str = "data"
     dataset: str = "CIFAR10"
     resolution: int = 32
     num_classes: int = 10
+    coeff_imbalance: Optional[float] = None
 
     def __post_init__(self):
         # Adjust resolution and num_classes based on dataset

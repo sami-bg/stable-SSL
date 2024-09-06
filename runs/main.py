@@ -22,7 +22,7 @@ def main(cfg: DictConfig):
     print(cfg)
 
     args = stable_ssl.get_args(cfg)
-    
+
     print("--- Arguments ---")
     print(args)
 
