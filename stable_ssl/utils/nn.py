@@ -6,11 +6,16 @@ import torch.nn as nn
 from torchvision import models
 
 
-def low_resolution_resnet(model):
-    model.conv1 = nn.Conv2d(
-        3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
-    )
-    model.maxpool = nn.Identity()
+def adapt_resolution(model, dataset, backbone_model):
+    if (
+        "CIFAR" in dataset
+        and "resnet" in backbone_model
+        and backbone_model != "resnet9"
+    ):
+        model.conv1 = nn.Conv2d(
+            3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
+        )
+        model.maxpool = nn.Identity()
     return model
 
 

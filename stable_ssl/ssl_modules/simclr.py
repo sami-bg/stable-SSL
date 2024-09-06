@@ -4,7 +4,7 @@ from torch import nn
 
 from .base import SSLTrainer
 from ..config import TrainerConfig
-from ..utils import load_model, low_resolution_resnet
+from ..utils import load_model, adapt_resolution
 
 
 class SimCLR(SSLTrainer):
@@ -19,11 +19,11 @@ class SimCLR(SSLTrainer):
             with_classifier=False,
             pretrained=False,
         )
-        if (
-            "resnet" in self.config.model.backbone_model
-            and self.config.model.backbone_model != "resnet9"
-        ):
-            model = low_resolution_resnet(model)
+        model = adapt_resolution(
+            model,
+            dataset=self.config.data.dataset,
+            backbone_model=self.config.model.backbone_model,
+        )
         self.backbone = model.train()
 
         # projector
