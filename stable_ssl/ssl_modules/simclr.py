@@ -4,7 +4,7 @@ from torch import nn
 
 from .base import SSLTrainer
 from ..config import TrainerConfig
-from ..utils import load_model, adapt_resolution
+from ..utils import load_model
 
 
 class SimCLR(SSLTrainer):
@@ -18,11 +18,7 @@ class SimCLR(SSLTrainer):
             n_classes=self.config.data.num_classes,
             with_classifier=False,
             pretrained=False,
-        )
-        model = adapt_resolution(
-            model,
             dataset=self.config.data.dataset,
-            backbone_model=self.config.model.backbone_model,
         )
         self.backbone = model.train()
 

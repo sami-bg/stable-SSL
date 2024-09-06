@@ -6,20 +6,9 @@ import torch.nn as nn
 from torchvision import models
 
 
-def adapt_resolution(model, dataset, backbone_model):
-    if (
-        "CIFAR" in dataset
-        and "resnet" in backbone_model
-        and backbone_model != "resnet9"
-    ):
-        model.conv1 = nn.Conv2d(
-            3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
-        )
-        model.maxpool = nn.Identity()
-    return model
-
-
-def load_model(name, n_classes, with_classifier=True, pretrained=False, **kwargs):
+def load_model(
+    name, n_classes, with_classifier=True, pretrained=False, dataset="CIFAR10", **kwargs
+):
     if name == "resnet9":
         model = resnet9(**kwargs)
     elif name == "ConvMixer":
@@ -46,7 +35,22 @@ def load_model(name, n_classes, with_classifier=True, pretrained=False, **kwargs
     else:
         raise ValueError(f"Unknown model structure for {model_name}.")
 
+    model = adapt_resolution(model, dataset=dataset, backbone_model=name)
+
     return model, in_features
+
+
+def adapt_resolution(model, dataset, backbone_model):
+    if (
+        "CIFAR" in dataset
+        and "resnet" in backbone_model
+        and backbone_model != "resnet9"
+    ):
+        model.conv1 = nn.Conv2d(
+            3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
+        )
+        model.maxpool = nn.Identity()
+    return model
 
 
 def last_layer(n_classes, with_classifier, in_features):
