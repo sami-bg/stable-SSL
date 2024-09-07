@@ -13,13 +13,10 @@ model_dict = {
 
 
 @hydra.main(
-    version_base=None,
+    # version_base=None,
     config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"),
 )
 def main(cfg: DictConfig):
-
-    print("--- CFG ---")
-    print(cfg)
 
     args = stable_ssl.get_args(cfg)
 
