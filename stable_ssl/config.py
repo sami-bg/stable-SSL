@@ -11,6 +11,7 @@ import torch
 from torch.optim import SGD, RMSprop, AdamW, Adam
 
 from .utils import LARS
+import random
 
 
 @dataclass
@@ -189,6 +190,9 @@ class HardwareConfig:
     world_size: int = 1
     port: Optional[int] = None
     workers: int = 0
+
+    def __post_init__(self):
+        self.port = self.port or random.randint(49152, 65535)
 
 
 @dataclass

@@ -46,18 +46,28 @@ def setup_distributed(args):
     print(f"\trank: {dist_env.global_rank}")
     print(f"\tworld size: {dist_env.num_nodes*dist_env.num_tasks}")
     print(f"\tlocal rank: {dist_env.local_rank}")
-    torch.distributed.init_process_group(
-        "nccl",
-        init_method=dist_url,
-        rank=dist_env.global_rank,
-        world_size=dist_env.num_nodes * dist_env.num_tasks,
-    )
-    args.world_size = dist_env.num_nodes * dist_env.num_tasks
-    args.gpu = dist_env.local_rank
-    assert dist_env.global_rank == torch.distributed.get_rank()
-    assert (
-        dist_env.num_nodes * dist_env.num_tasks
-    ) == torch.distributed.get_world_size()
+    # ToDo ?
+    # os.environ["MASTER_ADDR"] = cluster_environment.main_address
+    # os.environ["MASTER_PORT"] = str(cluster_environment.main_port)
+    if not torch.distributed.is_available():
+        raise RuntimeError(
+            "torch.distributed is not available. Cannot initialize distributed process group"
+        )
+    if not torch.distributed.is_initialized():
+        torch.distributed.init_process_group(
+            "nccl",
+            init_method=dist_url,
+            rank=dist_env.global_rank,
+            world_size=dist_env.num_nodes * dist_env.num_tasks,
+        )
+        args.world_size = dist_env.num_nodes * dist_env.num_tasks
+        args.gpu = dist_env.local_rank
+        print("BEFORE")
+        assert dist_env.global_rank == torch.distributed.get_rank()
+        assert (
+            dist_env.num_nodes * dist_env.num_tasks
+        ) == torch.distributed.get_world_size()
+        print("AFTER")
     return args
 
 
