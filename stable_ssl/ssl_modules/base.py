@@ -20,9 +20,6 @@ class SSLTrainer(Trainer):
         For details, see the `TrainerConfig` class in `config.py`.
     """
 
-    def __init__(self, config: TrainerConfig):
-        super().__init__(config)
-
     def compute_loss(self):
         embed_i = self.forward(self.data[0][0])
         embed_j = self.forward(self.data[0][1])

@@ -8,8 +8,6 @@ from ..utils import load_model
 
 
 class SimCLR(SSLTrainer):
-    def __init__(self, config: TrainerConfig):
-        super().__init__(config)
 
     def initialize_modules(self):
         # backbone

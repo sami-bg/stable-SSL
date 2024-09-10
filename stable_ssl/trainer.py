@@ -45,6 +45,7 @@ from .sampler import (
     ValSampler,
 )
 from .data import load_dataset
+from dataclasses import make_dataclass
 
 
 class Trainer(torch.nn.Module):
@@ -57,9 +58,24 @@ class Trainer(torch.nn.Module):
         For details, see the `TrainerConfig` class in `config.py`.
     """
 
-    def __init__(self, config: TrainerConfig):
+    def __new__(cls, config, *args, **kwargs):
+        if not isinstance(config, TrainerConfig):
+            raise ValueError("First argument should be a TrainerConfig object")
+        if len(args):
+            raise ValueError(
+                "You should only provide named arguments to ensure they are logged in the config"
+            )
+        trainer = super(Trainer, cls).__new__(cls)
+        config.__class__ = make_dataclass(
+            "TrainerConfig",
+            fields=[(name, type(v), v) for name, v in kwargs.items()],
+            bases=(type(config),),
+        )
+        trainer.config = copy.deepcopy(config)
+        return trainer
+
+    def __init__(self, config: TrainerConfig, *args, **kwargs):
         super().__init__()
-        self.config = copy.deepcopy(config)
 
     def __call__(self):
 

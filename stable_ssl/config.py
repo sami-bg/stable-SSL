@@ -266,7 +266,10 @@ class TrainerConfig:
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     log: LogConfig = field(default_factory=LogConfig)
 
-    def pprint(self) -> str:
+    def __repr__(self) -> str:
+        return OmegaConf.to_yaml(self)
+
+    def __str__(self) -> str:
         return OmegaConf.to_yaml(self)
 
 
