@@ -654,12 +654,16 @@ class Trainer(torch.nn.Module):
     def compute_loss(self):
         raise NotImplementedError
 
-    def dataset_to_loader(self, dataset):
+    def dataset_to_loader(self, dataset, train):
         if self.config.hardware.world_size > 1:
-            sampler = torch.utils.data.distributed.DistributedSampler(dataset)
+            sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=not train, drop_last=train)
             assert self.config.optim.batch_size % self.config.hardware.world_size == 0
+            drop_last = None
+            shuffle=None
         else:
-            sampler = RandomSampler(dataset)
+            sampler = None
+            drop_last = train
+            shuffle=not train
 
         per_device_batch_size = (
             self.config.optim.batch_size // self.config.hardware.world_size
@@ -671,6 +675,8 @@ class Trainer(torch.nn.Module):
             num_workers=self.config.hardware.workers,
             pin_memory=True,
             sampler=sampler,
+            drop_last=drop_last,
+            shuffle=shuffle
         )
 
         return loader
@@ -683,7 +689,7 @@ class Trainer(torch.nn.Module):
             coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
-        return self.dataset_to_loader(train_dataset)
+        return self.dataset_to_loader(train_dataset, True)
 
     def initialize_val_loader(self):
         eval_dataset = load_dataset(
@@ -693,4 +699,4 @@ class Trainer(torch.nn.Module):
             coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
-        return self.dataset_to_loader(eval_dataset)
+        return self.dataset_to_loader(eval_dataset, False)
