@@ -4,6 +4,7 @@ from . import utils
 from . import sampler
 from . import trainer
 from . import supervised
+from . import reader
 
 from .ssl_modules import SimCLR
 from .config import get_args
@@ -17,4 +18,5 @@ __all__ = [
     "supervised",
     "SimCLR",
     "get_args",
+    "reader",
 ]
