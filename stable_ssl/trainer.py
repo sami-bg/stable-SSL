@@ -132,6 +132,8 @@ class Trainer(torch.nn.Module):
 
         logging.info("[stable-SSL] Calling initialize_modules() method.")
         self.initialize_modules()
+        self._log_buffer = {}
+        self.register_buffer("global_step", torch.zeros((1,), dtype=int))
 
         for name, module in self.named_children():
             if self.config.model.memory_format == "channels_last":
@@ -252,11 +254,12 @@ class Trainer(torch.nn.Module):
         else:
             max_steps = self.config.optim.max_steps
 
-        for step, data in enumerate(
+        for batch_idx, data in enumerate(
             tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
         ):
             # set up the data to have easy access throughout the methods
-            self.step = step
+            self.batch_idx = batch_idx
+            self.global_step.add_(1)
             self.data = to_device(data, self.this_device)
 
             try:
@@ -273,7 +276,7 @@ class Trainer(torch.nn.Module):
 
             # we cut early in case the user specifies to only use
             # X% of the training dataset
-            if step >= max_steps:
+            if batch_idx >= max_steps:
                 break
 
         # call any user specified post-epoch function
@@ -307,7 +310,7 @@ class Trainer(torch.nn.Module):
                     total=max_steps,
                     desc=f"Eval: {self.epoch=}",
                 ):
-                    self.step = step
+                    self.batch_idx = step
                     self.data = to_device(data, self.this_device)
 
                     # call any user specified pre-step function
@@ -341,8 +344,8 @@ class Trainer(torch.nn.Module):
             raise NanError
 
         if self.config.log.project is not None:
-            wandb.log(
-                {"train/loss": loss.item(), "epoch": self.epoch, "step": self.step}
+            self.log(
+                {"train/loss": loss.item(), "epoch": self.epoch, "step": self.batch_idx}
             )
 
         self.scaler.scale(loss).backward()
@@ -359,10 +362,10 @@ class Trainer(torch.nn.Module):
 
         self.scheduler.step()
         if self.config.log.project is not None:
-            wandb.log(
+            self.log(
                 {
                     "train/lr": self.scheduler.get_last_lr()[0],
-                    "step": self.step,
+                    "step": self.batch_idx,
                     "epoch": self.epoch,
                 }
             )
@@ -390,6 +393,9 @@ class Trainer(torch.nn.Module):
         config.log.folder = self.folder.absolute().as_posix()
         model = type(self)(config)
         return submitit.helpers.DelayedSubmission(model)
+
+    def log(self, values):
+        self._log_buffer.update(values)
 
     def load_checkpoint(self):
         """load a model and optionnally a scheduler/optimizer/epoch
@@ -522,7 +528,7 @@ class Trainer(torch.nn.Module):
             "relative_time": rel_time,
             "training": self.training,
             "epoch": self.epoch,
-            "step": self.step,
+            "step": self.batch_idx,
         }
         return bucket
 
@@ -585,7 +591,9 @@ class Trainer(torch.nn.Module):
         return
 
     def after_train_step(self):
-        return
+        if self.config.log.project is not None:
+            wandb.log(self._log_buffer, step=self.global_step.item())
+        self._log_buffer = {}
 
     def after_train_epoch(self):
         return
@@ -616,12 +624,12 @@ class Trainer(torch.nn.Module):
 
             wandb.log(
                 {
-                    "epoch": self.epoch,
                     "test/acc1": self.acc1.avg,
                     "test/acc5": self.acc5.avg,
                     "test/acc1_by_class": table_acc1_by_class,
                     "test/acc5_by_class": table_acc5_by_class,
-                }
+                },
+                step=self.epoch,
             )
 
     def before_eval_step(self):
@@ -656,14 +664,16 @@ class Trainer(torch.nn.Module):
 
     def dataset_to_loader(self, dataset, train):
         if self.config.hardware.world_size > 1:
-            sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=not train, drop_last=train)
+            sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset, shuffle=not train, drop_last=train
+            )
             assert self.config.optim.batch_size % self.config.hardware.world_size == 0
             drop_last = None
-            shuffle=None
+            shuffle = None
         else:
             sampler = None
             drop_last = train
-            shuffle=not train
+            shuffle = not train
 
         per_device_batch_size = (
             self.config.optim.batch_size // self.config.hardware.world_size
@@ -676,7 +686,7 @@ class Trainer(torch.nn.Module):
             pin_memory=True,
             sampler=sampler,
             drop_last=drop_last,
-            shuffle=shuffle
+            shuffle=shuffle,
         )
 
         return loader
