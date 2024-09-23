@@ -1,7 +1,9 @@
 # Stable-SSL: Made by researchers for researchers
 
-![stable-ssl logo](./assets/logo.jpg)
-<sub>Credit: Imagen3</sub>
+<center>
+<img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
+</center>
+
 
 Stable-SSL's philosophy relies on two core dogmas:
 - *Lightweight enough to quickly iterate on research ideas*
