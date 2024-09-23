@@ -1,5 +1,9 @@
 # Stable-SSL
 
+Stable-SSL's philosophy relies on two core dogmas:
+- *Lightweight enough to quickly iterate on research ideas*
+- *Stable enough to quickly iterate on research ideas*
+
 ## Installation
 
 The library is not yet available on PyPI. You can install it from the source code, as follows.
