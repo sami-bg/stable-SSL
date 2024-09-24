@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Main function for training a SSL model."""
-
-# Author: Randall Balestriero <randallbalestriero@gmail.com>
-#         Hugues Van Assel <vanasselhugues@gmail.com>
+"""Main function for training a model."""
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
 import numpy as np
-import uuid
 import copy
 import logging
 import warnings
@@ -22,11 +18,8 @@ import submitit
 import wandb
 
 import torch
-import torchvision
-import torchvision.transforms.v2 as transforms
-from torch.utils.data import RandomSampler
 
-from .utils import (
+from ..utils import (
     BreakAllEpochs,
     BreakEpoch,
     NanError,
@@ -37,14 +30,12 @@ from .utils import (
     LARS,
     LinearWarmupCosineAnnealing,
     to_device,
+    AverageMeter,
+    accuracy,
 )
-from .utils import AverageMeter, accuracy
-from .config import TrainerConfig
-from .sampler import (
-    PositivePairSampler,
-    ValSampler,
-)
-from .data import load_dataset
+
+from ..config import TrainerConfig
+from ..data import load_dataset
 from dataclasses import make_dataclass
 
 

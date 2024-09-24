@@ -1,13 +1,8 @@
 import torch
-import torchvision
-import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms.v2 as transforms
-
-import wandb
-
-from ..trainer import Trainer
-from ..config import TrainerConfig
+from ..base import Trainer
+from torch import nn
+from ...utils import load_model
 
 
 class SSLTrainer(Trainer):
@@ -19,6 +14,33 @@ class SSLTrainer(Trainer):
         Parameters for Trainer organized in groups.
         For details, see the `TrainerConfig` class in `config.py`.
     """
+
+    def initialize_modules(self):
+        # backbone
+        model, fan_in = load_model(
+            name=self.config.model.backbone_model,
+            n_classes=self.config.data.num_classes,
+            with_classifier=False,
+            pretrained=False,
+            dataset=self.config.data.dataset,
+        )
+        self.backbone = model.train()
+
+        # projector
+        sizes = [fan_in] + list(map(int, self.config.model.projector.split("-")))
+        layers = []
+        for i in range(len(sizes) - 2):
+            layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
+            layers.append(nn.BatchNorm1d(sizes[i + 1]))
+            layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Linear(sizes[-2], sizes[-1], bias=False))
+        self.projector = nn.Sequential(*layers)
+
+        # linear probes
+        self.classifier = torch.nn.Linear(fan_in, self.config.data.num_classes)
+
+    def forward(self, x):
+        return self.backbone(x)
 
     def compute_loss(self):
         embed_i = self.forward(self.data[0][0])

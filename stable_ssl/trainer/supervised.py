@@ -1,10 +1,8 @@
 import torch
-import torchvision
 import torch.nn.functional as F
-import torchvision.transforms.v2 as transforms
 
-from .utils import load_model
-from .trainer import Trainer
+from ..utils import load_model
+from . import Trainer
 
 
 class Supervised(Trainer):

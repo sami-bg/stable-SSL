@@ -3,7 +3,7 @@ from . import config
 from . import utils
 from . import sampler
 from . import trainer
-from . import supervised
+from .trainer import supervised
 from . import reader
 
 from .ssl_modules import SimCLR

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import stable_ssl
 from stable_ssl.ssl_modules import SimCLR
-from stable_ssl.supervised import Supervised
+from stable_ssl.trainer.supervised import Supervised
 
 model_dict = {
     "SimCLR": SimCLR,

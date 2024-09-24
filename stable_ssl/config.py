@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field, asdict
-import json
-from typing import Optional, Tuple, Dict, Any
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
 import warnings
 import logging
 import hydra
@@ -8,7 +7,6 @@ import os
 from omegaconf import OmegaConf
 
 import torch
-from torch.optim import SGD, RMSprop, AdamW, Adam
 
 from .utils import LARS
 import random
