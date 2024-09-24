@@ -8,6 +8,29 @@
 Stable-SSL's philosophy relies on two core dogmas:
 - *Lightweight enough to quickly iterate on research ideas*
 - *Stable enough to quickly iterate on research ideas*
+- *Fast enough to quickly iterate on research ideas*
+
+## Architecture
+
+Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applicatins can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
+```
+1. INITIALIZATION PHASE:
+  - seed_everything()
+  - initialize_modules()
+  - initialize_optimizer()
+  - initialize_scheduler()
+  - load_checkpoint()
+
+2. TRAIN/EVAL PHASE:
+  - before_train_epoch()
+  - for batch in train_loader:
+    - before_train_step()
+    - train_step(batch)
+    - after_train_step()
+  - after_train_epoch()
+```
+While the organization is related to the one e.g. provided by PytorchLightning, the goal here is to greatly reduce the codebase complexity without sacrificing performances. Think of PytorchLightning as industry driven (abstracting everything away) while Stable-SSL is academia driven (bringing everything in front of the user).
+
 
 ## Installation
 

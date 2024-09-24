@@ -54,10 +54,6 @@ class BaseModelConfig:
         Whether to use synchronized batch normalization. Default is False.
     memory_format : str, optional
         Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
-    temperature : str
-        Temperature parameter for the contrastive loss. Default is 0.15.
-    projector : str
-        Architecture of the projector head. Default is "8192-8192-8192".
     pretrained : bool
         Whether to use the torchvision pretrained weights or use random initialization.
     with_classifier : int
@@ -124,7 +120,7 @@ class BaseModel(torch.nn.Module):
                 yaml.dump(dataclasses.asdict(self.config), f, indent=2)
 
         logging.basicConfig(level=self.config.log.log_level)
-        seed_everything(self.config.hardware.seed)
+        self.seed_everything(self.config.hardware.seed)
 
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
         self._set_device()
@@ -218,6 +214,9 @@ class BaseModel(torch.nn.Module):
             except BreakAllEpochs:
                 self.cleanup()
                 wandb.finish()
+
+    def seed_everything(self, seed):
+        seed_everything(seed)
 
     def _train_all_epochs(self):
         while self.epoch < self.config.optim.epochs:
