@@ -1,12 +1,25 @@
 import torch
 import torch.nn.functional as F
 
-from .base import SSLTrainer
+from .base import SSLTrainer, SSLConfig
+from dataclasses import dataclass
+
+
+@dataclass
+class SimCLRConfig(SSLConfig):
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    temperature : float
+        Temperature parameter for the contrastive loss. Default is 0.15.
+    """
+
+    temperature: float = 0.1
 
 
 class SimCLR(SSLTrainer):
-
-    __config__ = {"model.temperature": 0.1}
 
     def compute_ssl_loss(self, embeds):
         z = self.projector(embeds)

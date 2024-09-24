@@ -34,38 +34,71 @@ from ..utils import (
     accuracy,
 )
 
-from ..config import TrainerConfig
 from ..data import load_dataset
 from dataclasses import make_dataclass
+from dataclasses import dataclass
 
 
-class Trainer(torch.nn.Module):
+@dataclass
+class BaseModelConfig:
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    model : str
+        Type of model to use. Default is "SimCLR".
+    backbone_model : str
+        Neural network architecture to use for the backbone. Default is "resnet9".
+    sync_batchnorm : bool, optional
+        Whether to use synchronized batch normalization. Default is False.
+    memory_format : str, optional
+        Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
+    temperature : str
+        Temperature parameter for the contrastive loss. Default is 0.15.
+    projector : str
+        Architecture of the projector head. Default is "8192-8192-8192".
+    pretrained : bool
+        Whether to use the torchvision pretrained weights or use random initialization.
+    with_classifier : int
+        Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
+    """
+
+    name: str = "Supervised"
+    backbone_model: str = "resnet18"
+    sync_batchnorm: bool = False
+    memory_format: str = "channels_last"
+    pretrained: bool = False
+    with_classifier: bool = True
+
+
+class BaseModel(torch.nn.Module):
     r"""Base class for training a model.
 
     Parameters:
     -----------
-    config : TrainerConfig
-        Parameters for Trainer organized in groups.
-        For details, see the `TrainerConfig` class in `config.py`.
+    config : BaseModelConfig
+        Parameters for BaseModel organized in groups.
+        For details, see the `BaseModelConfig` class in `config.py`.
     """
 
     def __new__(cls, config, *args, **kwargs):
-        if not isinstance(config, TrainerConfig):
-            raise ValueError("First argument should be a TrainerConfig object")
+        if not isinstance(config, BaseModelConfig):
+            raise ValueError("First argument should be a BaseModelConfig object")
         if len(args):
             raise ValueError(
                 "You should only provide named arguments to ensure they are logged in the config"
             )
-        trainer = super(Trainer, cls).__new__(cls)
+        trainer = super(BaseModel, cls).__new__(cls)
         config.__class__ = make_dataclass(
-            "TrainerConfig",
+            "BaseModelConfig",
             fields=[(name, type(v), v) for name, v in kwargs.items()],
             bases=(type(config),),
         )
         trainer.config = copy.deepcopy(config)
         return trainer
 
-    def __init__(self, config: TrainerConfig, *args, **kwargs):
+    def __init__(self, config: BaseModelConfig, *args, **kwargs):
         super().__init__()
 
     def __call__(self):

@@ -1,15 +1,26 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, make_dataclass
 from typing import Optional, Tuple
 import warnings
 import logging
 import hydra
 import os
 from omegaconf import OmegaConf
+from typing import Literal, Union
 
 import torch
 
 from .utils import LARS
+from .model.base import BaseModelConfig
+from .model.joint_embedding.barlow_twins import BarlowTwinsConfig
+from .model.joint_embedding.simclr import SimCLRConfig
 import random
+
+
+_MODEL_CONFIGS = {
+    "SimCLR": SimCLRConfig,
+    "Barlowtwins": BarlowTwinsConfig,
+    "Supervised": BaseModelConfig,
+}
 
 
 @dataclass
@@ -55,39 +66,38 @@ class DataConfig:
         )
 
 
-@dataclass
-class ModelConfig:
-    """
-    Configuration for the SSL model parameters.
+# @dataclass
+# class ModelConfig:
+#     """
+#     Configuration for the SSL model parameters.
 
-    Parameters:
-    -----------
-    model : str
-        Type of model to use. Default is "SimCLR".
-    backbone_model : str
-        Neural network architecture to use for the backbone. Default is "resnet9".
-    sync_batchnorm : bool, optional
-        Whether to use synchronized batch normalization. Default is False.
-    memory_format : str, optional
-        Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
-    temperature : str
-        Temperature parameter for the contrastive loss. Default is 0.15.
-    projector : str
-        Architecture of the projector head. Default is "8192-8192-8192".
-    pretrained : bool
-        Whether to use the torchvision pretrained weights or use random initialization.
-    with_classifier : int
-        Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
-    """
+#     Parameters:
+#     -----------
+#     model : str
+#         Type of model to use. Default is "SimCLR".
+#     backbone_model : str
+#         Neural network architecture to use for the backbone. Default is "resnet9".
+#     sync_batchnorm : bool, optional
+#         Whether to use synchronized batch normalization. Default is False.
+#     memory_format : str, optional
+#         Memory format for tensors (e.g., "channels_last"). Default is "channels_last".
+#     temperature : str
+#         Temperature parameter for the contrastive loss. Default is 0.15.
+#     projector : str
+#         Architecture of the projector head. Default is "8192-8192-8192".
+#     pretrained : bool
+#         Whether to use the torchvision pretrained weights or use random initialization.
+#     with_classifier : int
+#         Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
+#     """
 
-    model: str = "SimCLR"
-    backbone_model: str = "resnet18"
-    sync_batchnorm: bool = False
-    memory_format: str = "channels_last"
-    temperature: float = 0.15
-    projector: str = "2048-128"
-    pretrained: bool = False
-    with_classifier: bool = True
+#     model: str = "Supervised"
+#     backbone_model: str = "resnet18"
+#     sync_batchnorm: bool = False
+#     memory_format: str = "channels_last"
+#     projector: str = "2048-128"
+#     pretrained: bool = False
+#     with_classifier: bool = True
 
 
 @dataclass
@@ -258,9 +268,9 @@ class TrainerConfig:
         Logging and checkpointing configuration
     """
 
+    model: BaseModelConfig = field(default_factory=BaseModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     log: LogConfig = field(default_factory=LogConfig)
 
@@ -272,10 +282,16 @@ class TrainerConfig:
 
 
 def get_args(cfg_dict):
+    # config.__class__ = make_dataclass(
+    #     "BaseModelConfig",
+    #     fields=[(name, type(v), v) for name, v in kwargs.items()],
+    #     bases=(type(config),),
+    # )
+    print(_MODEL_CONFIGS[cfg_dict["model"]["name"]](**cfg_dict.get("model", {})))
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
-        model=ModelConfig(**cfg_dict.get("model", {})),
+        model=_MODEL_CONFIGS[cfg_dict["model"]["name"]](**cfg_dict.get("model", {})),
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
         log=LogConfig(**cfg_dict.get("log", {})),
     )

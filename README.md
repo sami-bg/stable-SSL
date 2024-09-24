@@ -35,7 +35,7 @@ The parameters are structured in the following groups : data, model, hardware, l
 You can use default config files that are located in `runs/configs`. To do so, simply specify the config file with the `--config-name` command as follows:
 
 ```bash
-python3 main.py --config-name=simclr_cifar10_sgd
+python3 train.py --config-name=simclr_cifar10_sgd --config-path configs/
 ```
 
 #### Setting params in command line

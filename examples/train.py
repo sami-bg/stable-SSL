@@ -3,19 +3,17 @@ from omegaconf import DictConfig
 from pathlib import Path
 
 import stable_ssl
-from stable_ssl.ssl_modules import SimCLR
-from stable_ssl.trainer.supervised import Supervised
+
+# from stable_ssl.ssl_modules import SimCLR
+from stable_ssl.model.supervised import Supervised
 
 model_dict = {
-    "SimCLR": SimCLR,
+    # "SimCLR": SimCLR,
     "Supervised": Supervised,
 }
 
 
-@hydra.main(
-    # version_base=None,
-    config_path=str(Path(stable_ssl.__file__).parent.parent / "runs" / "configs"),
-)
+@hydra.main()
 def main(cfg: DictConfig):
 
     args = stable_ssl.get_args(cfg)

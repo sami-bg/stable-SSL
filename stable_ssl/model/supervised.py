@@ -2,17 +2,17 @@ import torch
 import torch.nn.functional as F
 
 from ..utils import load_model
-from . import Trainer
+from . import BaseModel
 
 
-class Supervised(Trainer):
+class Supervised(BaseModel):
     r"""Base class for training a supervised model.
 
     Parameters:
     -----------
-    config : TrainerConfig
-        Parameters for Trainer organized in groups.
-        For details, see the `TrainerConfig` class in `config.py`.
+    config : BaseModelConfig
+        Parameters for BaseModel organized in groups.
+        For details, see the `BaseModelConfig` class in `config.py`.
     """
 
     def initialize_modules(self):

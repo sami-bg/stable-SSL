@@ -1,5 +1,20 @@
 import torch
-from .base import SSLTrainer
+from .base import SSLConfig, SSLTrainer
+from dataclasses import dataclass
+
+
+@dataclass
+class BarlowTwinsConfig(SSLConfig):
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    lambd : str
+        Lambda parameter for the off-diagonal loss. Default is 0.1.
+    """
+
+    lambd: str = 0.1
 
 
 def off_diagonal(x):

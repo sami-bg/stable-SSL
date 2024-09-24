@@ -1,7 +1,7 @@
 # inspired from https://github.com/p3i0t/SimCLR-CIFAR10
 
 model:
-  model: SimCLR
+  name: SimCLR
   backbone_model: resnet18
   projector: 2048-128
   temperature: 0.5

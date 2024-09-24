@@ -1,11 +1,26 @@
 import torch
 import torch.nn.functional as F
-from ..base import Trainer
+from ..base import BaseModel, BaseModelConfig
 from torch import nn
 from ...utils import load_model
+from dataclasses import dataclass
 
 
-class SSLTrainer(Trainer):
+@dataclass
+class SSLConfig(BaseModelConfig):
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    projector : str
+        Architecture of the projector head. Default is "2048-128".
+    """
+
+    projector: str = "2048-128"
+
+
+class SSLTrainer(BaseModel):
     r"""Base class for training a Self-Supervised Learning (SSL) model.
 
     Parameters:
