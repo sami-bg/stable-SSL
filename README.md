@@ -1,18 +1,20 @@
 # Stable-SSL: Made by researchers for researchers
 
 <center>
+
+### Stable | Minimalist | Fast *to quickly iterate on your research ideas*
+
 <img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
+
+<sub>[Credit: Imagen3]</sub>
+
+
 </center>
 
 
-Stable-SSL's philosophy relies on two core dogmas:
-- *Lightweight enough to quickly iterate on research ideas*
-- *Stable enough to quickly iterate on research ideas*
-- *Fast enough to quickly iterate on research ideas*
+## Design
 
-## Architecture
-
-Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applicatins can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
+Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applications can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
 ```
 1. INITIALIZATION PHASE:
   - seed_everything()
