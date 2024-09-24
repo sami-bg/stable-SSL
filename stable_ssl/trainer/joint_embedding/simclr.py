@@ -6,6 +6,8 @@ from .base import SSLTrainer
 
 class SimCLR(SSLTrainer):
 
+    __config__ = {"model.temperature": 0.1}
+
     def compute_ssl_loss(self, embeds):
         z = self.projector(embeds)
 
