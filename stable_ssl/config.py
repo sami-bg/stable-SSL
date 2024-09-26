@@ -16,13 +16,6 @@ from .model.joint_embedding.simclr import SimCLRConfig
 import random
 
 
-_MODEL_CONFIGS = {
-    "SimCLR": SimCLRConfig,
-    "Barlowtwins": BarlowTwinsConfig,
-    "Supervised": BaseModelConfig,
-}
-
-
 @dataclass
 class DataConfig:
     """
@@ -244,6 +237,42 @@ class LogConfig:
     final_model_name: str = "final_model"
     eval_only: bool = False
     eval_each_epoch: bool = True
+    api = None
+
+
+@dataclass
+class WandbConfig(LogConfig):
+    """
+    Configuration for logging and checkpointing during training.
+
+    Parameters:
+    -----------
+    folder : str, optional
+        Path to the folder where logs and checkpoints will be saved.
+        Default is the current directory.
+    load_from : str, optional
+        Path to a checkpoint from which to load the model, optimizer, and scheduler.
+        Default is "ckpt".
+    log_level : int, optional
+        Logging level (e.g., logging.INFO). Default is logging.INFO.
+    checkpoint_frequency : int, optional
+        Frequency of saving checkpoints (in terms of epochs). Default is 10.
+    save_final_model : bool, optional
+        Whether to save the final trained model. Default is False.
+    final_model_name : str, optional
+        Name for the final saved model. Default is "final_model".
+    eval_only : bool, optional
+        Whether to only evaluate the model without training. Default is False.
+    eval_each_epoch : bool, optional
+        Whether to evaluate the model at the end of each epoch. Default is False.
+    entity : str, optional
+        Name of the (Weights & Biases) entity. Default is None.
+    project : str, optional
+        Name of the (Weights & Biases) project. Default is None.
+    run_name : str, optional
+        Name of the Weights & Biases run. Default is None.
+    """
+
     entity: Optional[str] = None
     project: Optional[str] = None
     run_name: Optional[str] = None
@@ -281,18 +310,24 @@ class TrainerConfig:
         return OmegaConf.to_yaml(self)
 
 
+_MODEL_CONFIGS = {
+    "SimCLR": SimCLRConfig,
+    "Barlowtwins": BarlowTwinsConfig,
+    "Supervised": BaseModelConfig,
+}
+_LOG_CONFIGS = {
+    "Wandb": WandbConfig,
+    "None": LogConfig,
+    "Supervised": BaseModelConfig,
+}
+
+
 def get_args(cfg_dict):
-    # config.__class__ = make_dataclass(
-    #     "BaseModelConfig",
-    #     fields=[(name, type(v), v) for name, v in kwargs.items()],
-    #     bases=(type(config),),
-    # )
-    print(_MODEL_CONFIGS[cfg_dict["model"]["name"]](**cfg_dict.get("model", {})))
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
         model=_MODEL_CONFIGS[cfg_dict["model"]["name"]](**cfg_dict.get("model", {})),
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
-        log=LogConfig(**cfg_dict.get("log", {})),
+        log=_LOG_CONFIGS[cfg_dict["log"]["api"]](**cfg_dict.get("log", {})),
     )
     return args

@@ -8,8 +8,13 @@
 
 <sub>[Credit: Imagen3]</sub>
 
+We achieve that by taking the best--and only the best--from the most eponymous AI libraries: PytorchLightning, VISSL, Wandb, Hydra, Submitit.
+
 
 </center>
+
+## Minimal Example
+
 
 
 ## Design
