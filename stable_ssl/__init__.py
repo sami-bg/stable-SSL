@@ -1,6 +1,7 @@
 from . import utils
 from . import sampler
 from . import model
+from . import data
 from .model import supervised
 from . import reader
 
@@ -14,6 +15,7 @@ __all__ = [
     "utils",
     "sampler",
     "model",
+    "data",
     "supervised",
     "SimCLR",
     "get_args",

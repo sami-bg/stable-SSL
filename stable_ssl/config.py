@@ -323,11 +323,21 @@ _LOG_CONFIGS = {
 
 
 def get_args(cfg_dict):
+    if "model" in cfg_dict:
+        model_config = _MODEL_CONFIGS[cfg_dict["model"]["name"]](
+            **cfg_dict.get("model", {})
+        )
+    else:
+        model_config = None
+    if "log" in cfg_dict:
+        log_config = _LOG_CONFIGS[cfg_dict["log"]["api"]](**cfg_dict.get("log", {}))
+    else:
+        log_config = None
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
-        model=_MODEL_CONFIGS[cfg_dict["model"]["name"]](**cfg_dict.get("model", {})),
+        model=model_config,
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
-        log=_LOG_CONFIGS[cfg_dict["log"]["api"]](**cfg_dict.get("log", {})),
+        log=log_config,
     )
     return args

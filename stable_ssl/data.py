@@ -7,6 +7,9 @@ from torch.utils.data import Dataset
 from torchvision.transforms.functional import to_pil_image
 
 from stable_ssl.sampler import PositivePairSampler, ValSampler
+import numpy as np
+
+import logging
 
 
 def load_dataset(dataset_name, data_path, train=True, coeff_imbalance=None):
@@ -77,40 +80,49 @@ def from_torchvision(data_path, dataset):
     return features, labels
 
 
-def create_exponential_imbalance(data, labels, coeff_imbalance=2.0):
+def resample_classes(dataset, samples_or_freq, random_seed=None):
     """
     Create an exponential class imbalance.
     Args:
-        data (torch.Tensor): The input data, shape (N, ...).
-        labels (torch.Tensor): The class labels, shape (N,).
-        coeff_imbalance (float): The imbalance coefficient.
+        dataset (torch.utils.data.Dataset): The input data, shape (N, ...).
+        samples_or_freq (iterable): Number of samples or frequency for each class in the new dataset.
+        random_seed (int): The random seed.
     """
-    classes, class_counts = torch.unique(labels, return_counts=True)
-    n_classes = len(classes)
 
-    assert torch.all(
-        class_counts == len(labels) / n_classes
-    ), "The dataset is not balanced."
+    if hasattr(dataset, "labels"):
+        labels = dataset.labels
+        classes, class_inverse, class_counts = np.unique(
+            labels, return_counts=True, return_inverse=True
+        )
+    else:
+        raise ValueError("dataset does not have `labels`")
 
-    exp_dist = coeff_imbalance ** -torch.arange(n_classes, dtype=torch.float32)
-    exp_dist /= exp_dist.max()  # Ensure the first class is not subsampled
+    logging.info("[stable-SSL] Subsampling : original class counts:", class_counts)
 
-    max_samples = class_counts[0].item()
-    new_class_counts = (exp_dist * max_samples).to(torch.int32)
+    if np.sum(samples_or_freq) == 1:
+        target_class_counts = np.array(samples_or_freq) * len(dataset)
+    elif np.sum(samples_or_freq) == len(dataset):
+        freq = np.array(samples_or_freq) / np.sum(samples_or_freq)
+        target_class_counts = freq * len(dataset)
+        if (target_class_counts / class_counts).max() > 1:
+            raise ValueError("specified more samples per class than available")
+    else:
+        raise ValueError("samples_or_freq needs to sum to 1 of len(datset)")
 
-    print("[stable-SSL] Subsampling : original class counts:", class_counts)
-    print("[stable-SSL] Subsampling : new class counts:", new_class_counts)
-    print("[stable-SSL] Subsampling : new number of samples:", new_class_counts.sum())
+    target_class_counts = (
+        target_class_counts / (target_class_counts / class_counts).max()
+    ).astype(int)
 
+    logging.info("[stable-SSL] Subsampling : target class counts:", target_class_counts)
+
+    class_cum_counts = np.cumsum(class_counts)
     keep_indices = []
-    for cl, count in zip(classes, new_class_counts):
-        cl_indices = torch.nonzero(labels == cl, as_tuple=False).squeeze()
-        cl_indices = cl_indices[torch.randperm(len(cl_indices))]  # Shuffle the indices
-        keep_indices.append(cl_indices[:count])
-
-    keep_indices = torch.cat(keep_indices)
-
-    return data[keep_indices], labels[keep_indices]
+    generator = np.random.Generator(np.random.PCG64(seed=random_seed))
+    for cl, count in zip(classes, target_class_counts):
+        cl_indices = class_inverse[class_cum_counts[cl] : class_cum_counts[cl + 1]]
+        cl_indices = generator.choice(cl_indices, size=count, replace=False)
+        keep_indices.extend(cl_indices)
+    return torch.utils.data.Subset(dataset, indices=keep_indices)
 
 
 class CustomTorchvisionDataset(Dataset):
