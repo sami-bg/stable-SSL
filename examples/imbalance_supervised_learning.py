@@ -70,19 +70,6 @@ class MyCustomSupervised(Supervised):
 @hydra.main(version_base=None)
 def main(cfg: DictConfig):
 
-    # transform = transforms.Compose(
-    #     [
-    #         transforms.ToTensor(),
-    #         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    #     ]
-    # )
-    # trainset = torchvision.datasets.CIFAR10(
-    #     root="~/data", train=True, download=True, transform=transform
-    # )
-    # distribution = np.exp(np.linspace(0, 1, 10))
-    # distribution /= np.sum(distribution)
-    # trainset = ssl.data.resample_classes(trainset, distribution)
-
     args = ssl.get_args(cfg)
 
     print("--- Arguments ---")
@@ -95,5 +82,44 @@ def main(cfg: DictConfig):
     trainer()
 
 
+def visualization():
+    import matplotlib.pyplot as plt
+    from matplotlib import colormaps
+    import seaborn
+
+    seaborn.set(font_scale=2)
+
+    cmap = colormaps.get_cmap("cool")
+
+    configs, values = ssl.reader.jsonl_project("experiment_llm")
+    distris = {j: i for i, j in enumerate(np.unique(configs["distribution"]))}
+    print(distris)
+    fig, axs = plt.subplots(1, 1, sharey="all", sharex="all", figsize=(10, 7))
+
+    for (_, c), v in zip(configs.iterrows(), values):
+        if c["distribution"] > 0.01:
+            continue
+        axs.plot(
+            v[-1]["eval/epoch/acc1_by_class"],
+            c=cmap(np.sqrt(np.sqrt(c["optim.weight_decay"] / 10))),
+            linewidth=3,
+        )
+        print(
+            "(",
+            c["optim.weight_decay"],
+            ",",
+            np.round(100 * np.array(v[-1]["eval/epoch/acc1_by_class"]), 2),
+            ")",
+        )
+
+    plt.ylabel("test accuracy")
+    plt.xlabel("class index")
+    plt.tight_layout()
+    plt.savefig("imbalance_classification.png")
+    plt.close()
+
+
 if __name__ == "__main__":
+    visualization()
+    adsf
     main()

@@ -15,6 +15,7 @@ from pathlib import Path
 from tqdm import tqdm
 import submitit
 import jsonlines
+import omegaconf
 
 
 try:
@@ -108,20 +109,23 @@ class BaseModel(torch.nn.Module):
 
         if self.config.log.api == "wandb":
             print(
-                f"[stable-SSL] \t=> Initializating wandb for logging in {self.config.log.folder}."
+                f"[stable-SSL] \t=> Initializating wandb for logging in {self.config.log.dump_path}."
             )
             wandb.init(
                 entity=self.config.log.entity,
                 project=self.config.log.project,
                 config=dataclasses.asdict(self.config),
-                name=self.config.log.run_name if self.config.log.run_name else None,
-                dir=str(self.config.log.folder),
+                name=self.config.log.run,
+                dir=str(self.config.log.dump_path),
                 resume="allow",
             )
         else:
-            print(f"[stable-SSL] \t=> Dumping config file in {self.config.log.folder}.")
-            with open(self.config.log.folder / "hparams.yaml", "w+") as f:
-                yaml.dump(dataclasses.asdict(self.config), f, indent=2)
+            print(
+                f"[stable-SSL] \t=> Dumping config file in {self.config.log.dump_path}"
+            )
+            omegaconf.OmegaConf.save(
+                self.config, self.config.log.dump_path / "hparams.yaml"
+            )
 
         logging.basicConfig(level=self.config.log.level)
         self.seed_everything(self.config.hardware.seed)
@@ -266,7 +270,7 @@ class BaseModel(torch.nn.Module):
                 f"{self.config.log.final_model_name}.ckpt", model_only=True
             )
         # and remove any temporary checkpoint
-        (self.config.log.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
+        (self.config.log.dump_path / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
 
         wandb.finish()
 
@@ -430,7 +434,7 @@ class BaseModel(torch.nn.Module):
         print("[stable-SSL] Requeuing...")
         config = copy.deepcopy(self.config)
         config.log.add_version = False
-        config.log.folder = self.config.log.folder.as_posix()
+        config.log.folder = self.config.log.dump_path.as_posix()
         model = type(self)(config)
         return submitit.helpers.DelayedSubmission(model)
 
@@ -457,7 +461,7 @@ class BaseModel(torch.nn.Module):
             wandb.log(self._log_buffer, step=self.global_step.item())
         else:
             with jsonlines.open(
-                self.config.log.folder / "csv_logs.jsonl", mode="a"
+                self.config.log.dump_path / "csv_logs.jsonl", mode="a"
             ) as writer:
                 writer.write(self._log_buffer)
         self._log_buffer = {}
@@ -475,16 +479,16 @@ class BaseModel(torch.nn.Module):
                 f"[stable-SSL] \t=> file {load_from} exists\n\t=> loading it..."
             )
             checkpoint = load_from
-        elif (self.config.log.folder / "tmp_checkpoint.ckpt").is_file():
+        elif (self.config.log.dump_path / "tmp_checkpoint.ckpt").is_file():
             logging.info(
-                f"[stable-SSL] \t=> folder {self.config.log.folder} contains `tmp_checkpoint.ckpt`"
+                f"[stable-SSL] \t=> folder {self.config.log.dump_path} contains `tmp_checkpoint.ckpt`"
                 " file\n\t=> loading it..."
             )
-            checkpoint = self.config.log.folder / "tmp_checkpoint.ckpt"
+            checkpoint = self.config.log.dump_path / "tmp_checkpoint.ckpt"
         else:
             logging.info(f"[stable-SSL] \t=> no checkpoint at `{load_from}`")
             logging.info(
-                f"[stable-SSL] \t=> no checkpoint at `{self.config.log.folder / 'tmp_checkpoint.ckpt'}`"
+                f"[stable-SSL] \t=> no checkpoint at `{self.config.log.dump_path / 'tmp_checkpoint.ckpt'}`"
             )
             logging.info("[stable-SSL] \t=> training from scratch...")
             self.epoch = 0
@@ -561,7 +565,7 @@ class BaseModel(torch.nn.Module):
         if self.config.hardware.world_size > 1:
             if torch.distributed.get_rank() != 0:
                 return
-        saving_name = self.config.log.folder / name
+        saving_name = self.config.log.dump_path / name
         state = {}
         for subname, model in self.named_children():
             state[subname] = model.state_dict()

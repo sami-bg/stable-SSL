@@ -94,7 +94,11 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
         f"[stable-SSL] Subsampling : original class counts: {list(class_counts)}"
     )
 
-    if np.sum(samples_or_freq) == 1:
+    if np.min(samples_or_freq) < 0:
+        raise ValueError(
+            f"You can't have negative values in `sampels_or_freq`, got {samples_or_freq}"
+        )
+    elif np.sum(samples_or_freq) <= 1:
         target_class_counts = np.array(samples_or_freq) * len(dataset)
     elif np.sum(samples_or_freq) == len(dataset):
         freq = np.array(samples_or_freq) / np.sum(samples_or_freq)
@@ -102,7 +106,9 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
         if (target_class_counts / class_counts).max() > 1:
             raise ValueError("specified more samples per class than available")
     else:
-        raise ValueError("samples_or_freq needs to sum to 1 of len(datset)")
+        raise ValueError(
+            f"samples_or_freq needs to sum to <= 1 or len(datset) ({len(dataset)}), got {np.sum(samples_or_freq)}"
+        )
 
     target_class_counts = (
         target_class_counts / (target_class_counts / class_counts).max()

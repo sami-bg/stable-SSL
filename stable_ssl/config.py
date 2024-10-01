@@ -222,7 +222,8 @@ class LogConfig:
         Whether to evaluate the model at the end of each epoch. Default is False.
     """
 
-    folder: str = None
+    folder: Optional[str] = None
+    run: Optional[str] = None
     load_from: str = "ckpt"
     level: int = logging.INFO
     checkpoint_frequency: int = 10
@@ -234,10 +235,16 @@ class LogConfig:
 
     def __post_init__(self):
         if self.folder is None:
-            t = datetime.now().strftime("%Y%m%d_%H%M%S.%f")
-            self.folder = f"./logs/{t}"
-        self.folder = Path(self.folder).absolute().resolve()
-        self.folder.mkdir(parents=True, exist_ok=True)
+            self.folder = Path("./logs")
+        else:
+            self.folder = Path(self.folder)
+        if self.run is None:
+            self.run = datetime.now().strftime("%Y%m%d_%H%M%S.%f")
+        (self.folder / self.run).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def dump_path(self):
+        return self.folder / self.run
 
 
 @dataclass
@@ -251,13 +258,12 @@ class WandbConfig(LogConfig):
         Name of the (Weights & Biases) entity. Default is None.
     project : str, optional
         Name of the (Weights & Biases) project. Default is None.
-    run_name : str, optional
+    run : str, optional
         Name of the Weights & Biases run. Default is None.
     """
 
     entity: Optional[str] = None
     project: Optional[str] = None
-    run_name: Optional[str] = None
 
 
 @dataclass
