@@ -4,7 +4,6 @@ from .schedulers import LinearWarmupCosineAnnealing
 from .optim import LARS
 from .exceptions import BreakEpoch, BreakStep, NanError, BreakAllEpochs
 from .nn import load_model, adapt_resolution
-from .eval import AverageMeter, accuracy
 
 __all__ = [
     "mask_correlated_samples",
@@ -20,6 +19,4 @@ __all__ = [
     "load_model",
     "to_device",
     "adapt_resolution",
-    "AverageMeter",
-    "accuracy",
 ]

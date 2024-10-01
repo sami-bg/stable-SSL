@@ -15,6 +15,12 @@ We achieve that by taking the best--and only the best--from the most eponymous A
 
 ## Minimal Example
 
+### How to use our `Trainer`
+
+At the very least, you need to implement three methods: 
+- `initialize_modules`: this method initialized whatever model and parameter to use for training/inference
+- `forward`: that method that will be doing the prediction, e.g., for classification it will be p(y|x)
+- `compute_loss`: that method should return a scalar value used for backpropagation/training. 
 
 
 ## Design
@@ -59,6 +65,44 @@ The file `main.py` to launch experiments is located in the `runs/` folder.
 The default parameters are given in the `sable_ssl/config.py` file.
 The parameters are structured in the following groups : data, model, hardware, log, optim.
 
+### I want to pass my own hyper-parameters!
+
+There are two options based if you leverage the Hydra framework or not.
+<table border="0">
+ <tr>
+    <td><u><b style="font-size:10px">With Hydra</b></u></td>
+    <td><u><b style="font-size:10px">Without Hydra</b></u></td>
+ </tr>
+ <tr>
+    <td>Simply pass your custom argument when calling the function as `++my_argument=2` and you can retreive anywhere in the `Trainer` with `self.config.my_argument`. If you don't even use the Trainer, you can directly get the value of the parameter in the script like that
+
+    ```
+    @hydra.main(version_base=None)
+    def main(cfg: DictConfig):
+
+        args = ssl.get_args(cfg)
+        args.my_argument
+
+    ```
+
+    </td>
+
+    <td>You can directly pass to the `Trainer` whatever custom argument you might have as
+    
+    ```
+    @hydra.main(version_base=None)
+    def main(cfg: DictConfig):
+
+        args = ssl.get_args(cfg)
+        trainer = MyCustomSupervised(args, root="~/data", my_argument=2)
+    ```
+
+    and anywhere inside the `Trainer` instance you will have access to `self.config.my_argument`.
+
+    </td>
+ </tr>
+</table>
+
 
 #### Using default config files
 
@@ -68,12 +112,19 @@ You can use default config files that are located in `runs/configs`. To do so, s
 python3 train.py --config-name=simclr_cifar10_sgd --config-path configs/
 ```
 
+
+### Classification case
+
+- **How is the accuracy calculated?** the predictions are assumed to tbe the output of the forward method, then this is fed into a few metrics along with `self.data[1]` which is assumed to encode the labels
+
 #### Setting params in command line
 
 You can modify/add parameters of the config file by adding `++group.variable=value` as follows 
 
 ```bash
 python3 main.py --config-name=simclr_cifar10_sgd ++optim.lr=2
+# same but with SLURM
+python3 main.py --config-name=simclr_cifar10_sgd ++optim.epochs=4 ++optim.lr=1 hydra/launcher=submitit_slurm hydra.launcher.timeout_min=1800 hydra.launcher.cpus_per_task=4 hydra.launcher.gpus_per_task=1 hydra.launcher.partition=gpu-he
 ```
 
 **Remark**: If `group.variable` is already in the config file you can use `group.variable=value` and if it is not you can use `+group.variable=value`. The `++` command handles both cases that's why I would recommend using it.

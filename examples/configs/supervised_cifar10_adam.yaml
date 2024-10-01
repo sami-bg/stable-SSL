@@ -1,19 +1,11 @@
-# inspired from https://github.com/matthias-wright/cifar10-resnet
-
 model:
-  model: Supervised
+  name: Supervised
   backbone_model: resnet9
 
 optim:
-  epochs: 75
+  epochs: 10
   batch_size: 256
-  lr: 0.001
   optimizer: Adam
-  weight_decay: 0
-
-log:
-  folder: "./new_logs"
-  project: "supervised_cifar10"
 
 hardware:
   seed: 0

@@ -14,10 +14,6 @@ optim:
   weight_decay: 1e-6
   momentum: 0.9
 
-log:
-  folder: "./new_logs"
-  project: "simclr_cifar10"
-
 hardware:
   seed: 0
   float16: true

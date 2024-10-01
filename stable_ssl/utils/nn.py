@@ -1,9 +1,5 @@
-from typing import Tuple
-
-import torch
 import torchvision
 import torch.nn as nn
-from torchvision import models
 
 
 def load_model(

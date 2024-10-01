@@ -3,6 +3,7 @@ import torch.nn.functional as F
 
 from ..utils import load_model
 from . import BaseModel
+from torchmetrics.classification import MulticlassAccuracy
 
 
 class Supervised(BaseModel):
@@ -28,5 +29,27 @@ class Supervised(BaseModel):
         return self.model(x)
 
     def compute_loss(self):
-        preds = self.forward(torch.cat([self.data[0][0], self.data[0][1]], 0))
-        return F.cross_entropy(preds, self.data[1].repeat(2))
+        preds = self.forward(self.data[0])
+        self.log(
+            {"train/step/acc1": self.metrics["train/step/acc1"](preds, self.data[1])},
+            commit=False,
+        )
+        return F.cross_entropy(preds, self.data[1])
+
+    def initialize_metrics(self):
+
+        nc = self.config.data.num_classes
+        tacc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
+        acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
+        acc5 = MulticlassAccuracy(num_classes=nc, top_k=5)
+        acc1_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=1)
+        acc5_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=5)
+        self.metrics = torch.nn.ModuleDict(
+            {
+                "train/step/acc1": tacc1,
+                "eval/epoch/acc1": acc1,
+                "eval/epoch/acc5": acc5,
+                "eval/epoch/acc1_by_class": acc1_by_class,
+                "eval/epoch/acc5_by_class": acc5_by_class,
+            }
+        )

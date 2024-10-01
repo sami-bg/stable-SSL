@@ -14,8 +14,15 @@ import dataclasses
 from pathlib import Path
 from tqdm import tqdm
 import submitit
+import jsonlines
 
-import wandb
+
+try:
+    import wandb
+except ModuleNotFoundError:
+    logging.warning(
+        "Wandb module is not installed, make sure to not use wandb for logging or an error will be thrown"
+    )
 
 import torch
 
@@ -30,8 +37,6 @@ from ..utils import (
     LARS,
     LinearWarmupCosineAnnealing,
     to_device,
-    AverageMeter,
-    accuracy,
 )
 
 from ..data import load_dataset
@@ -73,53 +78,52 @@ class BaseModel(torch.nn.Module):
 
     Parameters:
     -----------
-    config : BaseModelConfig
+    config : TrainerConfig
         Parameters for BaseModel organized in groups.
-        For details, see the `BaseModelConfig` class in `config.py`.
+        For details, see the `TrainerConfig` class in `config.py`.
     """
 
     def __new__(cls, config, *args, **kwargs):
-        if not isinstance(config, BaseModelConfig):
-            raise ValueError("First argument should be a BaseModelConfig object")
         if len(args):
             raise ValueError(
                 "You should only provide named arguments to ensure they are logged in the config"
             )
         trainer = super(BaseModel, cls).__new__(cls)
         config.__class__ = make_dataclass(
-            "BaseModelConfig",
+            "TrainerConfig",
             fields=[(name, type(v), v) for name, v in kwargs.items()],
             bases=(type(config),),
         )
-        trainer.config = copy.deepcopy(config)
+        trainer._config = copy.deepcopy(config)
         return trainer
 
-    def __init__(self, config: BaseModelConfig, *args, **kwargs):
+    @property
+    def config(self):
+        return self._config
+
+    def __init__(self, config, *args, **kwargs):
         super().__init__()
 
     def __call__(self):
 
-        self.folder = Path(self.config.log.folder).absolute()
-        self.folder.mkdir(parents=True, exist_ok=True)
-
-        if self.config.log.project is not None:
+        if self.config.log.api == "wandb":
             print(
-                f"[stable-SSL] \t=> Initializating wandb for logging in {self.folder}."
+                f"[stable-SSL] \t=> Initializating wandb for logging in {self.config.log.folder}."
             )
             wandb.init(
                 entity=self.config.log.entity,
                 project=self.config.log.project,
                 config=dataclasses.asdict(self.config),
                 name=self.config.log.run_name if self.config.log.run_name else None,
-                dir=str(self.folder),
+                dir=str(self.config.log.folder),
                 resume="allow",
             )
         else:
-            print(f"[stable-SSL] \t=> Dumping config file in {self.folder}.")
-            with open(self.folder / "hparams.yaml", "w+") as f:
+            print(f"[stable-SSL] \t=> Dumping config file in {self.config.log.folder}.")
+            with open(self.config.log.folder / "hparams.yaml", "w+") as f:
                 yaml.dump(dataclasses.asdict(self.config), f, indent=2)
 
-        logging.basicConfig(level=self.config.log.log_level)
+        logging.basicConfig(level=self.config.log.level)
         self.seed_everything(self.config.hardware.seed)
 
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
@@ -152,6 +156,17 @@ class BaseModel(torch.nn.Module):
 
         logging.info("[stable-SSL] Calling initialize_modules() method.")
         self.initialize_modules()
+        if hasattr(self, "metrics"):
+            raise RuntimeError(
+                "You can't assign any value to `self.metrics`, this will be used for metrics only"
+            )
+        self.initialize_metrics()
+        if not hasattr(self, "metrics"):
+            raise RuntimeError(
+                "The `initialize_metrics` method should create a `self.metrics` ModuleDict object"
+            )
+        if not isinstance(self.metrics, torch.nn.ModuleDict):
+            raise RuntimeError("The `self.metrics` should be a ModuleDict")
         self._log_buffer = {}
         self.register_buffer("global_step", torch.zeros((1,), dtype=int))
 
@@ -174,8 +189,7 @@ class BaseModel(torch.nn.Module):
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(
-                f"[stable-SSL] \t=> Found module '{name}' with\n\t\t\t- {trainable} "
-                "trainable parameters."
+                f"[stable-SSL] \t=> Found module '{name}' with {trainable} trainable parameters."
             )
 
         if not self.config.log.eval_only:
@@ -218,6 +232,9 @@ class BaseModel(torch.nn.Module):
     def seed_everything(self, seed):
         seed_everything(seed)
 
+    def initialize_metrics(self):
+        return torch.nn.ModuleDict()
+
     def _train_all_epochs(self):
         while self.epoch < self.config.optim.epochs:
 
@@ -249,7 +266,7 @@ class BaseModel(torch.nn.Module):
                 f"{self.config.log.final_model_name}.ckpt", model_only=True
             )
         # and remove any temporary checkpoint
-        (self.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
+        (self.config.log.folder / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
 
         wandb.finish()
 
@@ -366,10 +383,10 @@ class BaseModel(torch.nn.Module):
         if np.isnan(loss.item()):
             raise NanError
 
-        if self.config.log.project is not None:
-            self.log(
-                {"train/loss": loss.item(), "epoch": self.epoch, "step": self.batch_idx}
-            )
+        self.log(
+            {"train/loss": loss.item(), "epoch": self.epoch, "step": self.batch_idx},
+            commit=False,
+        )
 
         self.scaler.scale(loss).backward()
         # Unscales the gradients of optimizer's assigned params in-place
@@ -384,14 +401,14 @@ class BaseModel(torch.nn.Module):
         self.scaler.update()
 
         self.scheduler.step()
-        if self.config.log.project is not None:
-            self.log(
-                {
-                    "train/lr": self.scheduler.get_last_lr()[0],
-                    "step": self.batch_idx,
-                    "epoch": self.epoch,
-                }
-            )
+        self.log(
+            {
+                "train/lr": self.scheduler.get_last_lr()[0],
+                "step": self.batch_idx,
+                "epoch": self.epoch,
+            },
+            commit=False,
+        )
 
     def _set_device(self):
         try:
@@ -413,12 +430,37 @@ class BaseModel(torch.nn.Module):
         print("[stable-SSL] Requeuing...")
         config = copy.deepcopy(self.config)
         config.log.add_version = False
-        config.log.folder = self.folder.absolute().as_posix()
+        config.log.folder = self.config.log.folder.as_posix()
         model = type(self)(config)
         return submitit.helpers.DelayedSubmission(model)
 
-    def log(self, values):
-        self._log_buffer.update(values)
+    def log(self, packet=None, commit=True):
+        packet = packet or {}
+        self._log_buffer.update(packet)
+        if not commit or len(self._log_buffer) == 0:
+            return
+        # make values JSON serializable
+        for name, value in self._log_buffer.items():
+            if torch.is_tensor(value):
+                if torch.numel(value) == 1:
+                    self._log_buffer[name] = value.item()
+                else:
+                    self._log_buffer[name] = value.tolist()
+        # log in wandb
+        if self.config.log.api == "wandb":
+            for name, value in self._log_buffer.items():
+                if type(value) == list:
+                    table = wandb.Table(columns=["index", "epoch", name])
+                    for i, v in enumerate(np.asarray(value).flatten()):
+                        table.add_data(i, v)
+                    self._log_buffer[name] = table
+            wandb.log(self._log_buffer, step=self.global_step.item())
+        else:
+            with jsonlines.open(
+                self.config.log.folder / "csv_logs.jsonl", mode="a"
+            ) as writer:
+                writer.write(self._log_buffer)
+        self._log_buffer = {}
 
     def load_checkpoint(self):
         """load a model and optionnally a scheduler/optimizer/epoch
@@ -433,17 +475,16 @@ class BaseModel(torch.nn.Module):
                 f"[stable-SSL] \t=> file {load_from} exists\n\t=> loading it..."
             )
             checkpoint = load_from
-        elif (self.folder / "tmp_checkpoint.ckpt").is_file():
+        elif (self.config.log.folder / "tmp_checkpoint.ckpt").is_file():
             logging.info(
-                f"[stable-SSL] \t=> folder {self.folder} contains `tmp_checkpoint.ckpt`"
+                f"[stable-SSL] \t=> folder {self.config.log.folder} contains `tmp_checkpoint.ckpt`"
                 " file\n\t=> loading it..."
             )
-            checkpoint = self.folder / "tmp_checkpoint.ckpt"
+            checkpoint = self.config.log.folder / "tmp_checkpoint.ckpt"
         else:
             logging.info(f"[stable-SSL] \t=> no checkpoint at `{load_from}`")
             logging.info(
-                f"[stable-SSL] \t=> no checkpoint at "
-                "`{self.folder / 'tmp_checkpoint.ckpt'}`"
+                f"[stable-SSL] \t=> no checkpoint at `{self.config.log.folder / 'tmp_checkpoint.ckpt'}`"
             )
             logging.info("[stable-SSL] \t=> training from scratch...")
             self.epoch = 0
@@ -470,9 +511,6 @@ class BaseModel(torch.nn.Module):
             )
         else:
             self.epoch = 0
-
-    def initialize_modules(self):
-        raise NotImplementedError
 
     def initialize_optimizer(self):
         if self.config.optim.optimizer == "Adam":
@@ -523,7 +561,7 @@ class BaseModel(torch.nn.Module):
         if self.config.hardware.world_size > 1:
             if torch.distributed.get_rank() != 0:
                 return
-        saving_name = self.folder / name
+        saving_name = self.config.log.folder / name
         state = {}
         for subname, model in self.named_children():
             state[subname] = model.state_dict()
@@ -614,46 +652,23 @@ class BaseModel(torch.nn.Module):
         return
 
     def after_train_step(self):
-        if self.config.log.project is not None:
-            wandb.log(self._log_buffer, step=self.global_step.item())
-        self._log_buffer = {}
+        self.log(commit=True)
 
     def after_train_epoch(self):
         return
 
     def before_eval_epoch(self):
         self.eval()
-
-        self.acc1 = AverageMeter("Acc@1")
-        self.acc5 = AverageMeter("Acc@5")
-
-        self.acc1_by_class = [
-            AverageMeter(f"Acc@1_class_{i}")
-            for i in range(self.config.data.num_classes)
-        ]
-        self.acc5_by_class = [
-            AverageMeter(f"Acc@5_class_{i}")
-            for i in range(self.config.data.num_classes)
-        ]
+        for name, metric in self.metrics.items():
+            if name.startswith("eval/epoch/"):
+                metric.reset()
 
     def after_eval_epoch(self):
-        # log in wandb
-        if self.config.log.project is not None:
-            table_acc1_by_class = wandb.Table(columns=["class_id", "epoch", "acc1"])
-            table_acc5_by_class = wandb.Table(columns=["class_id", "epoch", "acc5"])
-            for i in range(self.config.data.num_classes):
-                table_acc1_by_class.add_data(i, self.epoch, self.acc1_by_class[i].avg)
-                table_acc5_by_class.add_data(i, self.epoch, self.acc5_by_class[i].avg)
-
-            wandb.log(
-                {
-                    "test/acc1": self.acc1.avg,
-                    "test/acc5": self.acc5.avg,
-                    "test/acc1_by_class": table_acc1_by_class,
-                    "test/acc5_by_class": table_acc5_by_class,
-                },
-                step=self.epoch,
-            )
+        packet = {}
+        for name, metric in self.metrics.items():
+            if name.startswith("eval/epoch/"):
+                packet[name] = metric.compute()
+        self.log(packet, commit=True)
 
     def before_eval_step(self):
         return
@@ -663,27 +678,12 @@ class BaseModel(torch.nn.Module):
 
     def eval_step(self):
         output = self.forward(self.data[0])
-        if hasattr(self, "classifier"):
-            output = self.classifier(output)
-
-        # compute global accuracy
-        batch_size = self.data[0].size(0)
-        acc1, acc5 = accuracy(output, self.data[1], topk=(1, 5))
-        self.acc1.update(acc1.item(), batch_size)
-        self.acc5.update(acc5.item(), batch_size)
-
-        # compute accuracy by class
-        for i in range(self.config.data.num_classes):
-            class_indices = self.data[1] == i
-            if class_indices.sum() > 0:
-                acc1, acc5 = accuracy(
-                    output[class_indices], self.data[1][class_indices], topk=(1, 5)
-                )
-                self.acc1_by_class[i].update(acc1.item(), class_indices.sum().item())
-                self.acc5_by_class[i].update(acc5.item(), class_indices.sum().item())
-
-    def compute_loss(self):
-        raise NotImplementedError
+        for name, metric in self.metrics.items():
+            if name.startswith("eval/epoch/"):
+                metric.update(output, self.data[1])
+            elif name.startswith("eval/step/"):
+                self.log({name: metric(output, self.data[1])}, commit=False)
+        self.log(commit=True)
 
     def dataset_to_loader(self, dataset, train):
         if self.config.hardware.world_size > 1:
@@ -719,7 +719,6 @@ class BaseModel(torch.nn.Module):
             dataset_name=self.config.data.dataset,
             data_path=self.config.data.data_path,
             train=True,
-            coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
         return self.dataset_to_loader(train_dataset, True)
@@ -729,7 +728,15 @@ class BaseModel(torch.nn.Module):
             dataset_name=self.config.data.dataset,
             data_path=self.config.data.data_path,
             train=False,
-            coeff_imbalance=self.config.data.coeff_imbalance,
         )
 
         return self.dataset_to_loader(eval_dataset, False)
+
+    def initialize_modules(self):
+        raise NotImplementedError("You need to implement your own `initialize_modules`")
+
+    def forward(self):
+        raise NotImplementedError("You need to implement your own `forward`")
+
+    def compute_loss(self):
+        raise NotImplementedError("You need to implement your own `compute_loss`")

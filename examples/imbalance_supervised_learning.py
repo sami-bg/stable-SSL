@@ -21,8 +21,9 @@ class MyCustomSupervised(Supervised):
         trainset = torchvision.datasets.CIFAR10(
             root=self.config.root, train=True, download=True, transform=transform
         )
-        trainset = ssl.data.resample_classes(trainset, np.ones(10) / 10)
-        asdf
+        distribution = np.exp(np.linspace(0, self.config.distribution, 10))
+        distribution /= np.sum(distribution)
+        trainset = ssl.data.resample_classes(trainset, distribution)
         trainloader = torch.utils.data.DataLoader(
             trainset,
             batch_size=self.config.optim.batch_size,
@@ -43,23 +44,44 @@ class MyCustomSupervised(Supervised):
             root=self.config.root, train=False, download=True, transform=transform
         )
         testloader = torch.utils.data.DataLoader(
-            testset,
-            batch_size=self.config.optim.batch_size,
-            shuffle=False,
-            num_workers=2,
+            testset, batch_size=self.config.optim.batch_size, num_workers=2
         )
         return testloader
+
+    def initialize_modules(self):
+        self.model = ssl.utils.nn.resnet9()
+
+    def forward(self, x):
+        return self.model(x)
 
     def compute_loss(self):
         """The computer loss is called during training on each mini-batch
         stable-SSL automatically stores the output of the data loader as `self.data`
         which you can access directly within that function"""
         preds = self.forward(self.data[0])
+        print(self.data[1][:4])
+        self.log(
+            {"train/step/acc1": self.metrics["train/step/acc1"](preds, self.data[1])},
+            commit=False,
+        )
         return F.cross_entropy(preds, self.data[1])
 
 
-@hydra.main()
+@hydra.main(version_base=None)
 def main(cfg: DictConfig):
+
+    # transform = transforms.Compose(
+    #     [
+    #         transforms.ToTensor(),
+    #         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    #     ]
+    # )
+    # trainset = torchvision.datasets.CIFAR10(
+    #     root="~/data", train=True, download=True, transform=transform
+    # )
+    # distribution = np.exp(np.linspace(0, 1, 10))
+    # distribution /= np.sum(distribution)
+    # trainset = ssl.data.resample_classes(trainset, distribution)
 
     args = ssl.get_args(cfg)
 

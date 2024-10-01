@@ -5,8 +5,8 @@ import logging
 import hydra
 import os
 from omegaconf import OmegaConf
-from typing import Literal, Union
-
+from pathlib import Path
+from datetime import datetime
 import torch
 
 from .utils import LARS
@@ -42,7 +42,6 @@ class DataConfig:
     dataset: str = "CIFAR10"
     resolution: int = 32
     num_classes: int = 10
-    coeff_imbalance: Optional[float] = None
 
     def __post_init__(self):
         # Adjust resolution and num_classes based on dataset
@@ -128,9 +127,9 @@ class OptimConfig:
     batch_size: int = 256
     epochs: int = 1000
     max_steps: int = -1
-    weight_decay: float = 1e-6
-    momentum: float = None
-    nesterov: bool = False
+    weight_decay: float = 0
+    momentum: Optional[float] = None
+    nesterov: Optional[bool] = None
     betas: Optional[Tuple[float, float]] = None
     grad_max_norm: Optional[float] = None
 
@@ -205,11 +204,11 @@ class LogConfig:
     -----------
     folder : str, optional
         Path to the folder where logs and checkpoints will be saved.
-        Default is the current directory.
+        Default is the current directory + random hash folder.
     load_from : str, optional
         Path to a checkpoint from which to load the model, optimizer, and scheduler.
         Default is "ckpt".
-    log_level : int, optional
+    level : int, optional
         Logging level (e.g., logging.INFO). Default is logging.INFO.
     checkpoint_frequency : int, optional
         Frequency of saving checkpoints (in terms of epochs). Default is 10.
@@ -221,23 +220,24 @@ class LogConfig:
         Whether to only evaluate the model without training. Default is False.
     eval_each_epoch : bool, optional
         Whether to evaluate the model at the end of each epoch. Default is False.
-    entity : str, optional
-        Name of the (Weights & Biases) entity. Default is None.
-    project : str, optional
-        Name of the (Weights & Biases) project. Default is None.
-    run_name : str, optional
-        Name of the Weights & Biases run. Default is None.
     """
 
-    folder: str = "."
+    folder: str = None
     load_from: str = "ckpt"
-    log_level: int = logging.INFO
+    level: int = logging.INFO
     checkpoint_frequency: int = 10
     save_final_model: bool = False
     final_model_name: str = "final_model"
     eval_only: bool = False
     eval_each_epoch: bool = True
     api = None
+
+    def __post_init__(self):
+        if self.folder is None:
+            t = datetime.now().strftime("%Y%m%d_%H%M%S.%f")
+            self.folder = f"./logs/{t}"
+        self.folder = Path(self.folder).absolute().resolve()
+        self.folder.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -247,24 +247,6 @@ class WandbConfig(LogConfig):
 
     Parameters:
     -----------
-    folder : str, optional
-        Path to the folder where logs and checkpoints will be saved.
-        Default is the current directory.
-    load_from : str, optional
-        Path to a checkpoint from which to load the model, optimizer, and scheduler.
-        Default is "ckpt".
-    log_level : int, optional
-        Logging level (e.g., logging.INFO). Default is logging.INFO.
-    checkpoint_frequency : int, optional
-        Frequency of saving checkpoints (in terms of epochs). Default is 10.
-    save_final_model : bool, optional
-        Whether to save the final trained model. Default is False.
-    final_model_name : str, optional
-        Name for the final saved model. Default is "final_model".
-    eval_only : bool, optional
-        Whether to only evaluate the model without training. Default is False.
-    eval_each_epoch : bool, optional
-        Whether to evaluate the model at the end of each epoch. Default is False.
     entity : str, optional
         Name of the (Weights & Biases) entity. Default is None.
     project : str, optional
@@ -317,27 +299,37 @@ _MODEL_CONFIGS = {
 }
 _LOG_CONFIGS = {
     "Wandb": WandbConfig,
+    "wandb": WandbConfig,
     "None": LogConfig,
-    "Supervised": BaseModelConfig,
+    None: LogConfig,
 }
 
 
 def get_args(cfg_dict):
-    if "model" in cfg_dict:
-        model_config = _MODEL_CONFIGS[cfg_dict["model"]["name"]](
-            **cfg_dict.get("model", {})
-        )
-    else:
-        model_config = None
-    if "log" in cfg_dict:
-        log_config = _LOG_CONFIGS[cfg_dict["log"]["api"]](**cfg_dict.get("log", {}))
-    else:
-        log_config = None
+
+    kwargs = {
+        name: value
+        for name, value in cfg_dict.items()
+        if name not in ["data", "optim", "model", "hardware", "log"]
+    }
+
+    model = cfg_dict.get("model", {})
+    model = _MODEL_CONFIGS[model.get("name", None)](**model)
+    log = cfg_dict.get("log", {})
+    log = _LOG_CONFIGS[log.get("api", None)](**log)
+
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
-        model=model_config,
+        model=model,
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
-        log=log_config,
+        log=log,
     )
+
+    args.__class__ = make_dataclass(
+        "TrainerConfig",
+        fields=[(name, type(v), v) for name, v in kwargs.items()],
+        bases=(type(args),),
+    )
+
     return args

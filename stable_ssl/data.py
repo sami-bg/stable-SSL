@@ -12,7 +12,7 @@ import numpy as np
 import logging
 
 
-def load_dataset(dataset_name, data_path, train=True, coeff_imbalance=None):
+def load_dataset(dataset_name, data_path, train=True):
     """
     Load a dataset from torchvision.datasets.
     Uses PositivePairSampler for training and ValSampler for validation.
@@ -26,28 +26,19 @@ def load_dataset(dataset_name, data_path, train=True, coeff_imbalance=None):
     torchvision_dataset = getattr(torchvision.datasets, dataset_name)
 
     if train:
-        if coeff_imbalance is not None:
-            return imbalance_torchvision_dataset(
-                data_path,
-                dataset=torchvision_dataset,
-                coeff_imbalance=coeff_imbalance,
-                dataset_name=dataset_name,
-            )
-        else:
-            return torchvision_dataset(
-                root=data_path,
-                train=True,
-                download=True,
-                transform=PositivePairSampler(dataset=dataset_name),
-            )
-
-    else:
         return torchvision_dataset(
             root=data_path,
-            train=False,
+            train=True,
             download=True,
-            transform=ValSampler(dataset=dataset_name),
+            transform=PositivePairSampler(dataset=dataset_name),
         )
+
+    return torchvision_dataset(
+        root=data_path,
+        train=False,
+        download=True,
+        transform=ValSampler(dataset=dataset_name),
+    )
 
 
 def imbalance_torchvision_dataset(
@@ -57,7 +48,7 @@ def imbalance_torchvision_dataset(
 
     if not os.path.exists(save_path):
         data, labels = from_torchvision(data_path=data_path, dataset=dataset)
-        imbalanced_data, imbalanced_labels = create_exponential_imbalance(
+        imbalanced_data, imbalanced_labels = resample_classes(
             data, labels, coeff_imbalance=coeff_imbalance
         )
         imbalanced_dataset = {"features": imbalanced_data, "labels": imbalanced_labels}
@@ -91,13 +82,17 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
 
     if hasattr(dataset, "labels"):
         labels = dataset.labels
-        classes, class_inverse, class_counts = np.unique(
-            labels, return_counts=True, return_inverse=True
-        )
+    elif hasattr(dataset, "targets"):
+        labels = dataset.targets
     else:
         raise ValueError("dataset does not have `labels`")
+    classes, class_inverse, class_counts = np.unique(
+        labels, return_counts=True, return_inverse=True
+    )
 
-    logging.info("[stable-SSL] Subsampling : original class counts:", class_counts)
+    logging.info(
+        f"[stable-SSL] Subsampling : original class counts: {list(class_counts)}"
+    )
 
     if np.sum(samples_or_freq) == 1:
         target_class_counts = np.array(samples_or_freq) * len(dataset)
@@ -113,13 +108,14 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
         target_class_counts / (target_class_counts / class_counts).max()
     ).astype(int)
 
-    logging.info("[stable-SSL] Subsampling : target class counts:", target_class_counts)
+    logging.info(
+        f"[stable-SSL] Subsampling : target class counts: {list(target_class_counts)}"
+    )
 
-    class_cum_counts = np.cumsum(class_counts)
     keep_indices = []
     generator = np.random.Generator(np.random.PCG64(seed=random_seed))
     for cl, count in zip(classes, target_class_counts):
-        cl_indices = class_inverse[class_cum_counts[cl] : class_cum_counts[cl + 1]]
+        cl_indices = np.flatnonzero(class_inverse == cl)
         cl_indices = generator.choice(cl_indices, size=count, replace=False)
         keep_indices.extend(cl_indices)
     return torch.utils.data.Subset(dataset, indices=keep_indices)
