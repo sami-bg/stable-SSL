@@ -63,8 +63,8 @@ class SSLTrainer(BaseModel):
 
         # check that it is the right moment to do this
         if self.config.hardware.world_size > 1:
-            embed_i = torch.cat(self.gather(z_i), dim=0)
-            embed_j = torch.cat(self.gather(z_j), dim=0)
+            embed_i = torch.cat(self.gather(embed_i), dim=0)
+            embed_j = torch.cat(self.gather(embed_j), dim=0)
 
         embeds = torch.cat([embed_i, embed_j], dim=0)
         loss_ssl = self.compute_ssl_loss(embeds)

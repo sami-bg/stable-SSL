@@ -78,9 +78,11 @@ class DataConfig:
 #     projector : str
 #         Architecture of the projector head. Default is "8192-8192-8192".
 #     pretrained : bool
-#         Whether to use the torchvision pretrained weights or use random initialization.
+#         Whether to use the torchvision pretrained weights or use random
+# initialization.
 #     with_classifier : int
-#         Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
+#         Whether to keep the last layer(s) of the backbone (classifier) when loading
+# the model.
 #     """
 
 #     model: str = "Supervised"

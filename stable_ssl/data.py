@@ -76,7 +76,8 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
     Create an exponential class imbalance.
     Args:
         dataset (torch.utils.data.Dataset): The input data, shape (N, ...).
-        samples_or_freq (iterable): Number of samples or frequency for each class in the new dataset.
+        samples_or_freq (iterable): Number of samples or frequency
+            for each class in the new dataset.
         random_seed (int): The random seed.
     """
 
@@ -96,7 +97,8 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
 
     if np.min(samples_or_freq) < 0:
         raise ValueError(
-            f"You can't have negative values in `sampels_or_freq`, got {samples_or_freq}"
+            "You can't have negative values in `sampels_or_freq`, "
+            f"got {samples_or_freq}."
         )
     elif np.sum(samples_or_freq) <= 1:
         target_class_counts = np.array(samples_or_freq) * len(dataset)
@@ -107,7 +109,8 @@ def resample_classes(dataset, samples_or_freq, random_seed=None):
             raise ValueError("specified more samples per class than available")
     else:
         raise ValueError(
-            f"samples_or_freq needs to sum to <= 1 or len(datset) ({len(dataset)}), got {np.sum(samples_or_freq)}"
+            f"samples_or_freq needs to sum to <= 1 or len(datset) ({len(dataset)}), "
+            f"got {np.sum(samples_or_freq)}."
         )
 
     target_class_counts = (

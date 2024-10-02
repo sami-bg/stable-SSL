@@ -29,7 +29,7 @@ def load_model(
         in_features = model.head.in_features
         model.head = last_layer(n_classes, with_classifier, in_features)
     else:
-        raise ValueError(f"Unknown model structure for {model_name}.")
+        raise ValueError(f"Unknown model structure for {name}.")
 
     model = adapt_resolution(model, dataset=dataset, backbone_model=name)
 
