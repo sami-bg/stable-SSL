@@ -12,19 +12,44 @@ We achieve that by taking the best--and only the best--from the most eponymous A
 
 </center>
 
-## Minimal Examples
+*Table of contents*
 
-### The few things you will need to implement for your `Trainer`
+- [Installation](#installation)
+- [Minimal examples](#minimal)
+  - [Your own `Trainer`](#own_trainer)
+  - [Write/Read logs](#logs)
+  - [Multi-run](#multirun)
+  - [SLURM](#slurm)
+
+
+
+## Installation <a name="installation"></a>
+
+The library is not yet available on PyPI. You can install it from the source code, as follows.
+
+```bash
+pip install -e .
+```
+Or you can also run:
+
+```bash
+pip install git+https://github.com/rbalestr-lab/stable-SSL
+```
+
+## Minimal Examples <a name="minimal"></a>
+
+### Implement your own `Trainer` <a name="own_trainer"></a>
 
 At the very least, you need to implement three methods: 
 - `initialize_modules`: this method initialized whatever model and parameter to use for training/inference
 - `forward`: that method that will be doing the prediction, e.g., for classification it will be p(y|x)
 - `compute_loss`: that method should return a scalar value used for backpropagation/training. 
 
-### Write and Read your logs (Wandb or jsonl)
-We support the Weights and Biases API for logging as well as jsonlines (text).
+### Write and Read your logs (Wandb or JSON) <a name="logs"></a>
 
-- **Logging values**: you can directly use `self.log({"loss": 0.001, "lr": 1})` which will add an entry or row in Wandb or the text file. If you want to log many different things are once, it can be easier to ``pack'' your log commits, as in 
+- **Loggers**: We support the [*Weights and Biases*](https://wandb.ai/site) and [*jsonlines*](https://jsonlines.readthedocs.io/en/latest/)  for logging. For the Wandb, you will need to use the following tags: `log.entity` (optional), `log.project` (optional), `log.run` (optional). They are all optional since Wandb handles its own exceptions if those are not passed by users. For jsonlines, the `log.folder` / `log.name` is where the logs will be dumped. Both are also optionals. `log.folder` will be set to `./logs` and `log.name` will be set to `%Y%m%d_%H%M%S.%f` of the call. References: `stable_ssl.configs.LogConfig`, `stable_ssl.configs.WandbConfig`.
+
+- **Logging values**: we have a unified logging framework regardless of the loggger you employ. You can directly use `self.log({"loss": 0.001, "lr": 1})` which will add an entry or row in Wandb or the text file. If you want to log many different things are once, it can be easier to ``pack'' your log commits, as in 
   ```
   self.log({"loss": 0.001}, commit=False)
   ...
@@ -56,6 +81,31 @@ We support the Weights and Biases API for logging as well as jsonlines (text).
   configs, dfs = reader.jsonl_project(FOLDER_NAME)
   ```
 
+### Multi-run<a name="multirun"></a>
+
+To launch multiple runs, add `-m` and specify the multiple values to try as `++group.variable=value1,value2,value3`. For instance:
+
+```bash
+python3 main.py --config-name=simclr_cifar10_sgd -m ++optim.lr=2,5,10
+```
+
+### Slurm<a name="slurm"></a>
+
+To launch on slurm simply add `hydra/launcher=submitit_slurm` in the command line for instance:
+
+```bash
+python3 main.py hydra/launcher=submitit_slurm hydra.launcher.timeout_min=3
+```
+
+**Remark**: All the parameters of the slurm `hydra.launcher` are given [here](https://github.com/facebookresearch/hydra/blob/main/plugins/hydra_submitit_launcher/hydra_plugins/hydra_submitit_launcher/config.py) (similar to submitit).
+
+Or to specify the slurm launcher you can add in the config file:
+
+```yaml
+defaults:
+  - override hydra/launcher: submitit_slurm
+```
+
 ## Design
 
 Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applications can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
@@ -78,18 +128,6 @@ Stable-SSL provides all the boilerplate to quickly get started doing AI research
 While the organization is related to the one e.g. provided by PytorchLightning, the goal here is to greatly reduce the codebase complexity without sacrificing performances. Think of PytorchLightning as industry driven (abstracting everything away) while Stable-SSL is academia driven (bringing everything in front of the user).
 
 
-## Installation
-
-The library is not yet available on PyPI. You can install it from the source code, as follows.
-
-```bash
-pip install -e .
-```
-Or you can also run:
-
-```bash
-pip install git+https://github.com/rbalestr-lab/stable-SSL
-```
 
 ## How to launch experiments
 
@@ -161,28 +199,3 @@ python3 main.py --config-name=simclr_cifar10_sgd ++optim.epochs=4 ++optim.lr=1 h
 ```
 
 **Remark**: If `group.variable` is already in the config file you can use `group.variable=value` and if it is not you can use `+group.variable=value`. The `++` command handles both cases that's why I would recommend using it.
-
-#### Multi-run
-
-To launch multiple runs, add `-m` and specify the multiple values to try as `++group.variable=value1,value2,value3`. For instance:
-
-```bash
-python3 main.py --config-name=simclr_cifar10_sgd -m ++optim.lr=2,5,10
-```
-
-#### Slurm 
-
-To launch on slurm simply add `hydra/launcher=submitit_slurm` in the command line for instance:
-
-```bash
-python3 main.py hydra/launcher=submitit_slurm hydra.launcher.timeout_min=3
-```
-
-**Remark**: All the parameters of the slurm `hydra.launcher` are given [here](https://github.com/facebookresearch/hydra/blob/main/plugins/hydra_submitit_launcher/hydra_plugins/hydra_submitit_launcher/config.py) (similar to submitit).
-
-Or to specify the slurm launcher you can add in the config file:
-
-```yaml
-defaults:
-  - override hydra/launcher: submitit_slurm
-```
