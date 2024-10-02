@@ -8,7 +8,6 @@ import numpy as np
 import copy
 import logging
 import warnings
-import yaml
 import time
 import dataclasses
 from pathlib import Path
@@ -22,7 +21,8 @@ try:
     import wandb
 except ModuleNotFoundError:
     logging.warning(
-        "Wandb module is not installed, make sure to not use wandb for logging or an error will be thrown"
+        "Wandb module is not installed, make sure to not use wandb for logging "
+        "or an error will be thrown"
     )
 
 import torch
@@ -63,7 +63,8 @@ class BaseModelConfig:
     pretrained : bool
         Whether to use the torchvision pretrained weights or use random initialization.
     with_classifier : int
-        Whether to keep the last layer(s) of the backbone (classifier) when loading the model.
+        Whether to keep the last layer(s) of the backbone (classifier)
+        when loading the model.
     """
 
     name: str = "Supervised"
@@ -87,7 +88,8 @@ class BaseModel(torch.nn.Module):
     def __new__(cls, config, *args, **kwargs):
         if len(args):
             raise ValueError(
-                "You should only provide named arguments to ensure they are logged in the config"
+                "You should only provide named arguments to ensure they are "
+                "logged in the config."
             )
         trainer = super(BaseModel, cls).__new__(cls)
         config.__class__ = make_dataclass(
@@ -109,7 +111,8 @@ class BaseModel(torch.nn.Module):
 
         if self.config.log.api == "wandb":
             print(
-                f"[stable-SSL] \t=> Initializating wandb for logging in {self.config.log.dump_path}."
+                "[stable-SSL] \t=> Initializating wandb for logging in "
+                f"{self.config.log.dump_path}."
             )
             wandb.init(
                 entity=self.config.log.entity,
@@ -162,12 +165,14 @@ class BaseModel(torch.nn.Module):
         self.initialize_modules()
         if hasattr(self, "metrics"):
             raise RuntimeError(
-                "You can't assign any value to `self.metrics`, this will be used for metrics only"
+                "You can't assign any value to `self.metrics`, this will be "
+                "used for metrics only"
             )
         self.initialize_metrics()
         if not hasattr(self, "metrics"):
             raise RuntimeError(
-                "The `initialize_metrics` method should create a `self.metrics` ModuleDict object"
+                "The `initialize_metrics` method should create a `self.metrics` "
+                "ModuleDict object"
             )
         if not isinstance(self.metrics, torch.nn.ModuleDict):
             raise RuntimeError("The `self.metrics` should be a ModuleDict")
@@ -193,7 +198,8 @@ class BaseModel(torch.nn.Module):
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(
-                f"[stable-SSL] \t=> Found module '{name}' with {trainable} trainable parameters."
+                f"[stable-SSL] \t=> Found module '{name}' with {trainable} "
+                "trainable parameters."
             )
 
         if not self.config.log.eval_only:
@@ -453,7 +459,7 @@ class BaseModel(torch.nn.Module):
         # log in wandb
         if self.config.log.api == "wandb":
             for name, value in self._log_buffer.items():
-                if type(value) == list:
+                if isinstance(value, list):
                     table = wandb.Table(columns=["index", "epoch", name])
                     for i, v in enumerate(np.asarray(value).flatten()):
                         table.add_data(i, v)
@@ -481,14 +487,15 @@ class BaseModel(torch.nn.Module):
             checkpoint = load_from
         elif (self.config.log.dump_path / "tmp_checkpoint.ckpt").is_file():
             logging.info(
-                f"[stable-SSL] \t=> folder {self.config.log.dump_path} contains `tmp_checkpoint.ckpt`"
-                " file\n\t=> loading it..."
+                f"[stable-SSL] \t=> folder {self.config.log.dump_path} contains "
+                "`tmp_checkpoint.ckpt` file\n\t=> loading it..."
             )
             checkpoint = self.config.log.dump_path / "tmp_checkpoint.ckpt"
         else:
             logging.info(f"[stable-SSL] \t=> no checkpoint at `{load_from}`")
             logging.info(
-                f"[stable-SSL] \t=> no checkpoint at `{self.config.log.dump_path / 'tmp_checkpoint.ckpt'}`"
+                "[stable-SSL] \t=> no checkpoint at "
+                f"`{self.config.log.dump_path / 'tmp_checkpoint.ckpt'}`. "
             )
             logging.info("[stable-SSL] \t=> training from scratch...")
             self.epoch = 0

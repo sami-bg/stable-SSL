@@ -66,7 +66,7 @@ class PositivePairSampler:
                 transforms.RandomGrayscale(p=0.2),
                 (
                     GaussianBlur(1.0)
-                    if not "CIFAR" in dataset
+                    if "CIFAR" not in dataset
                     else transforms.Lambda(lambda x: x)  # if CIFAR do nothing
                 ),
                 Solarization(p=0.0),
@@ -94,7 +94,7 @@ class PositivePairSampler:
                 transforms.RandomGrayscale(p=0.2),
                 (
                     GaussianBlur(0.1)
-                    if not "CIFAR" in dataset
+                    if "CIFAR" not in dataset
                     else transforms.Lambda(lambda x: x)  # if CIFAR do nothing
                 ),
                 Solarization(p=0.2),

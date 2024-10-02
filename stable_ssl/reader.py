@@ -4,7 +4,8 @@ try:
     import wandb
 except ModuleNotFoundError:
     logging.warning(
-        "Wandb module is not installed, make sure to not use wandb for logging or an error will be thrown"
+        "Wandb module is not installed, make sure to not use wandb for logging "
+        "or an error will be thrown."
     )
 import pandas as pd
 import numpy as np
@@ -86,9 +87,9 @@ def wandb_run(entity, project, run_id, max_steps=-1, keys=None):
 
     if max_steps == -1:
         max_steps = run.lastHistoryStep
-        min_step = 0
-    else:
-        min_step = run.lastHistoryStep - max_steps
+        # min_step = 0
+    # else:
+    # min_step = run.lastHistoryStep - max_steps
 
     summary = run.summary
     # extract names that are not hidden
@@ -135,7 +136,7 @@ def tabulate_runs(configs, runs, value, ignore=["hardware.port"]):
         try:
             i = int(i)
             return runs[i][value][-1]
-        except:
+        except ValueError:
             print(i)
 
     table = table.map(fn)

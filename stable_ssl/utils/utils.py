@@ -4,10 +4,7 @@ import numpy as np
 import subprocess
 from time import time
 import logging
-from typing import Tuple
 import torch.distributed as dist
-from torch.utils.data import Sampler
-from typing import Iterable, Iterator, List
 import submitit
 import torch
 
@@ -32,7 +29,7 @@ class FullGatherLayer(torch.autograd.Function):
 
 
 def setup_distributed(args):
-    logging.info(f"Setting up Distributed model...")
+    logging.info("Setting up Distributed model...")
     print("exporting PyTorch distributed environment variables")
     dist_env = submitit.JobEnvironment()
     if "SLURM_JOB_NODELIST" in os.environ:
@@ -51,7 +48,8 @@ def setup_distributed(args):
     # os.environ["MASTER_PORT"] = str(cluster_environment.main_port)
     if not torch.distributed.is_available():
         raise RuntimeError(
-            "torch.distributed is not available. Cannot initialize distributed process group"
+            "torch.distributed is not available. Cannot initialize "
+            "distributed process group."
         )
     if not torch.distributed.is_initialized():
         torch.distributed.init_process_group(
