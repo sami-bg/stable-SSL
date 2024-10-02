@@ -10,18 +10,51 @@
 
 We achieve that by taking the best--and only the best--from the most eponymous AI libraries: PytorchLightning, VISSL, Wandb, Hydra, Submitit.
 
-
 </center>
 
-## Minimal Example
+## Minimal Examples
 
-### How to use our `Trainer`
+### The few things you will need to implement for your `Trainer`
 
 At the very least, you need to implement three methods: 
 - `initialize_modules`: this method initialized whatever model and parameter to use for training/inference
 - `forward`: that method that will be doing the prediction, e.g., for classification it will be p(y|x)
 - `compute_loss`: that method should return a scalar value used for backpropagation/training. 
 
+### Write and Read your logs (Wandb or jsonl)
+We support the Weights and Biases API for logging as well as jsonlines (text).
+
+- **Logging values**: you can directly use `self.log({"loss": 0.001, "lr": 1})` which will add an entry or row in Wandb or the text file. If you want to log many different things are once, it can be easier to ``pack'' your log commits, as in 
+  ```
+  self.log({"loss": 0.001}, commit=False)
+  ...
+  self.log({"lr": 1})
+  ````
+  `stable-SSL` will automaticall pack those two and commit the logs.
+
+- **Reading logs (Wandb):**
+  ```
+  from stable_ssl import reader
+
+  # single run
+  config, df = reader.wandb_run(
+      ENTITY_NAME, PROJECT_NAME, RUN_NAME
+  )
+
+  # single project (multiple runs)
+  configs, dfs = reader.wandb_project(ENTITY_NAME, PROJECT_NAME)
+  ```
+- **Reading logs (jsonl):**
+  ```
+  from stable_ssl import reader
+
+  # single run
+  config, df = reader.jsonl_run(
+      FOLDER_NAME, RUN_NAME
+  )
+  # single project (multiple runs)
+  configs, dfs = reader.jsonl_project(FOLDER_NAME)
+  ```
 
 ## Design
 
