@@ -76,8 +76,8 @@ def main(cfg: DictConfig):
     print(args)
 
     # while we provide a lot of config parameters (e.g. `optim.batch_size`), you can
-    # also pass arguments directly when calling your model, they will be logged and accessible
-    # from within the model as `self.config.root` (in this example)
+    # also pass arguments directly when calling your model, they will be logged and
+    #  accessible from within the model as `self.config.root` (in this example)
     trainer = MyCustomSupervised(args, root="~/data")
     trainer()
 
@@ -120,6 +120,5 @@ def visualization():
 
 
 if __name__ == "__main__":
-    visualization()
-    adsf
     main()
+    visualization()
