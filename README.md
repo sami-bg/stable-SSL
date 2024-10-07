@@ -74,7 +74,7 @@ At the very least, you need to implement three methods:
 
 ### Pass user arguments <a name="arguments"></a>
 
-There are two options based if you leverage the Hydra framework or not.
+To pass a user argument e.g. `my_arg` that is not already supported in our configs .i.e. different than `optim.lr` etc, there are two options:
 <table border="0">
  <tr>
     <td><u><b style="font-size:10px">With Hydra</b></u></td>
@@ -82,30 +82,33 @@ There are two options based if you leverage the Hydra framework or not.
  </tr>
  <tr>
     <td>
-    Simply pass your custom argument when calling the function as `++my_argument=2` and you can retreive anywhere in the `Trainer` with `self.config.my_argument`. If you don't even use the Trainer, you can directly get the value of the parameter in the script like that
+    Pass your argument when calling the Python script as `++my_arg=2`
 
 ```
 @hydra.main(version_base=None)
 def main(cfg: DictConfig):
     args = ssl.get_args(cfg)
-    args.my_argument
+    args.my_arg # your arg!
+    trainer = MyTrainer(args)
+    trainer.config.my_arg # your arg!
 ```
   </td>
   <td>  
-    You can directly pass to the `Trainer` whatever custom argument you might have as
+    Pass your argument to your `Trainer`
     
   
 ```
 @hydra.main(version_base=None)
 def main(cfg: DictConfig):
     args = ssl.get_args(cfg)
-    trainer = MyCustomSupervised(args, root="~/data", my_argument=2)
+    trainer = MyTrainer(args, my_arg=2)
+    trainer.config.my_arg # your arg!
 ```
   </td>
  </tr>
 </table>
 
-and anywhere inside the `Trainer` instance you will have access to `self.config.my_argument`.
+Your argument can be retreived anywhere inside your `Trainer` instance through `self.config.my_arg` with either of the two above options.
 
 ### Write and Read your logs (Wandb or JSON) <a name="logs"></a>
 
