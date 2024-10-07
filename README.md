@@ -8,12 +8,16 @@
 
 <sub>[Credit: Imagen3]</sub>
 
+*You got a research idea? It shouldn't take you more than 10 minutes to get it running and have the ability to produce high quality figures/tables from its results: that's the goal of stable-SSL.*
+
 We achieve that by taking the best--and only the best--from the most eponymous AI libraries: PytorchLightning, VISSL, Wandb, Hydra, Submitit.
 
 </center>
 
 *Table of contents*
 
+- [Why?](#why)
+- [How?](#how)
 - [Installation](#installation)
 - [Minimal examples](#minimal)
   - [Your own `Trainer`](#own_trainer)
@@ -21,6 +25,19 @@ We achieve that by taking the best--and only the best--from the most eponymous A
   - [Multi-run](#multirun)
   - [SLURM](#slurm)
 
+## Why stable-SSL? <a name="why"></a>
+
+A quick search of `AI libaries` or `Self Supervised Learning libraires` will return hundreds of results. 99% will be independent project-centric libraries that can't be reused for general purpose AI research. The other 1% includes 
+- framework libraries such as PytorchLightning that focus on production needs
+- SSL libraries such as VISSL, FFCV-SSL, LightlySSL that are too rigid, often discontinuted or not maintained, or commercial
+- standalone libraries such as Wandb, submitit, Hydra that do not offer enough boilerplate for AI research
+Hence our goal is to fill that void. 
+
+
+
+## How stable-SSL helps you <a name="how"></a>
+
+`stable-SSL` implements all the basic boiler plate code, including data loader, logging, checkpointing, optimization, ... You only need to implement 3 methods to get start: you loss, your model, and your prediction (see [example](#own_trainer) below). But if you want to customize more things, simply inherit the base `Trainer` and override any method! This could include different metrics, different data samples, different training loops, ...
 
 
 ## Installation <a name="installation"></a>
