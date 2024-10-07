@@ -20,13 +20,14 @@ We achieve that by taking the best--and only the best--from the most eponymous A
   - [Why?](#why)
   - [How?](#how)
   - [Installation](#installation)
-  - [Minimal examples](#minimal)
+  - [Minimal documentation](#minimal)
     - [Your own `Trainer`](#own_trainer)
     - [Pass/Customize user arguments](#arguments)
     - [Write/Read logs](#logs)
     - [Multi-run](#multirun)
     - [SLURM](#slurm)
-  - [Library design](#design)
+    - [Library design](#design)
+  - [Examples](#examples)
   </td>
   <td>
     <img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
@@ -62,7 +63,7 @@ Or you can also run:
 pip install git+https://github.com/rbalestr-lab/stable-SSL
 ```
 
-## Minimal Examples <a name="minimal"></a>
+## Minimal Documentation <a name="minimal"></a>
 
 ### Implement your own `Trainer` <a name="own_trainer"></a>
 
@@ -171,7 +172,7 @@ defaults:
   - override hydra/launcher: submitit_slurm
 ```
 
-## Design <a name="design"></a>
+### Library Design <a name="design"></a>
 
 Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applications can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
 ```
@@ -192,7 +193,7 @@ Stable-SSL provides all the boilerplate to quickly get started doing AI research
 ```
 While the organization is related to the one e.g. provided by PytorchLightning, the goal here is to greatly reduce the codebase complexity without sacrificing performances. Think of PytorchLightning as industry driven (abstracting everything away) while Stable-SSL is academia driven (bringing everything in front of the user).
 
-
+## Examples <a name="examples"></a>
 
 ## How to launch experiments
 
