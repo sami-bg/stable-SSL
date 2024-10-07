@@ -3,7 +3,8 @@ import torch.nn.functional as F
 from ..base import BaseModel, BaseModelConfig
 from torch import nn
 from ...utils import load_model
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from torchmetrics.classification import MulticlassAccuracy
 
 
 @dataclass
@@ -17,7 +18,11 @@ class SSLConfig(BaseModelConfig):
         Architecture of the projector head. Default is "2048-128".
     """
 
-    projector: str = "2048-128"
+    projector: list[int] = field(default_factory=lambda: [2048, 128])
+
+    def __post_init__(self):
+        if isinstance(self.projector, str):
+            self.projector = [int(i) for i in self.projector.split("-")]
 
 
 class SSLTrainer(BaseModel):
@@ -42,7 +47,7 @@ class SSLTrainer(BaseModel):
         self.backbone = model.train()
 
         # projector
-        sizes = [fan_in] + list(map(int, self.config.model.projector.split("-")))
+        sizes = [fan_in] + self.config.model.projector
         layers = []
         for i in range(len(sizes) - 2):
             layers.append(nn.Linear(sizes[i], sizes[i + 1], bias=False))
@@ -52,30 +57,66 @@ class SSLTrainer(BaseModel):
         self.projector = nn.Sequential(*layers)
 
         # linear probes
-        self.classifier = torch.nn.Linear(fan_in, self.config.data.num_classes)
+        self.backbone_classifier = torch.nn.Linear(fan_in, self.config.data.num_classes)
+        self.projector_classifier = torch.nn.Linear(
+            self.config.model.projector[-1], self.config.data.num_classes
+        )
 
     def forward(self, x):
-        return self.backbone(x)
+        return self.backbone_classifier(self.backbone(x))
 
     def compute_loss(self):
-        embed_i = self.forward(self.data[0][0])
-        embed_j = self.forward(self.data[0][1])
+        embed_i = self.backbone(self.data[0][0])
+        embed_j = self.backbone(self.data[0][1])
 
-        # check that it is the right moment to do this
-        if self.config.hardware.world_size > 1:
-            embed_i = torch.cat(self.gather(embed_i), dim=0)
-            embed_j = torch.cat(self.gather(embed_j), dim=0)
+        h_i = self.projector(embed_i)
+        h_j = self.projector(embed_j)
+        loss_ssl = self.compute_ssl_loss(h_i, h_j)
+        loss_backbone = F.cross_entropy(
+            self.backbone_classifier(embed_i.detach()), self.data[1]
+        )
+        loss_backbone += F.cross_entropy(
+            self.backbone_classifier(embed_j.detach()), self.data[1]
+        )
+        loss_proj = F.cross_entropy(
+            self.projector_classifier(h_i.detach()), self.data[1]
+        )
+        loss_proj += F.cross_entropy(
+            self.projector_classifier(h_j.detach()), self.data[1]
+        )
 
-        embeds = torch.cat([embed_i, embed_j], dim=0)
-        loss_ssl = self.compute_ssl_loss(embeds)
-        loss_classifier = self.compute_classifier_loss(embeds)
-
-        self.log({"train/loss_ssl": loss_ssl, "train/loss_classifier": loss_classifier})
-        return loss_ssl + loss_classifier
+        self.log(
+            {
+                "train/loss_ssl": loss_ssl,
+                "train/loss_backbone_classifier": loss_backbone,
+                "train/loss_projector_classifier": loss_proj,
+            }
+        )
+        return loss_ssl + loss_proj + loss_backbone
 
     def compute_classifier_loss(self, embeds):
-        preds = self.classifier(embeds.detach())
-        return F.cross_entropy(preds, self.data[1].repeat(2))
+        preds = self.backbone_classifier(embeds.detach())
+        return F.cross_entropy(
+            self.backbone_classifier(embeds.detach()), self.data[1].repeat(2)
+        )
 
     def compute_ssl_loss(self, embeds):
         raise NotImplementedError
+
+    def initialize_metrics(self):
+
+        nc = self.config.data.num_classes
+        train_acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
+        acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
+        acc5 = MulticlassAccuracy(num_classes=nc, top_k=5)
+        acc1_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=1)
+        acc5_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=5)
+        self.metrics = torch.nn.ModuleDict(
+            {
+                "train/step/acc1": train_acc1,
+                "eval/epoch/acc1": acc1,
+                "eval/epoch/acc5": acc5,
+                "eval/epoch/acc1_by_class": acc1_by_class,
+                "eval/epoch/acc5_by_class": acc5_by_class,
+            }
+        )

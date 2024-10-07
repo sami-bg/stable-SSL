@@ -243,7 +243,7 @@ class BaseModel(torch.nn.Module):
         seed_everything(seed)
 
     def initialize_metrics(self):
-        return torch.nn.ModuleDict()
+        self.metrics = torch.nn.ModuleDict()
 
     def _train_all_epochs(self):
         while self.epoch < self.config.optim.epochs:
@@ -421,6 +421,9 @@ class BaseModel(torch.nn.Module):
         )
 
     def _set_device(self):
+        if torch.cuda.is_available() is False:
+            self._device = "cpu"
+            return
         try:
             self.config.hardware = setup_distributed(self.config.hardware)
             self._device = f"cuda:{self.config.hardware.gpu}"

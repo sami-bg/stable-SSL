@@ -5,24 +5,10 @@ from .base import SSLTrainer, SSLConfig
 from dataclasses import dataclass
 
 
-@dataclass
-class SimCLRConfig(SSLConfig):
-    """
-    Configuration for the SSL model parameters.
-
-    Parameters:
-    -----------
-    temperature : float
-        Temperature parameter for the contrastive loss. Default is 0.15.
-    """
-
-    temperature: float = 0.1
-
-
 class SimCLR(SSLTrainer):
 
-    def compute_ssl_loss(self, embeds):
-        z = self.projector(embeds)
+    def compute_ssl_loss(self, h_i, h_j):
+        z = torch.cat([h_i, h_j], 0)
 
         N = z.size(0) * self.config.hardware.world_size
 
@@ -41,3 +27,20 @@ class SimCLR(SSLTrainer):
         repulsion = torch.logsumexp(negative_samples, dim=1).mean()
 
         return attraction + repulsion
+
+
+@dataclass
+class SimCLRConfig(SSLConfig):
+    """
+    Configuration for the SSL model parameters.
+
+    Parameters:
+    -----------
+    temperature : float
+        Temperature parameter for the contrastive loss. Default is 0.15.
+    """
+
+    temperature: float = 0.1
+
+    def trainer(self):
+        return SimCLR

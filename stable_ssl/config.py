@@ -13,6 +13,8 @@ from .utils import LARS
 from .model.base import BaseModelConfig
 from .model.joint_embedding.barlow_twins import BarlowTwinsConfig
 from .model.joint_embedding.simclr import SimCLRConfig
+from .model.joint_embedding.vicreg import VICRegConfig
+from .model.joint_embedding.wmse import WMSEConfig
 import random
 
 
@@ -304,6 +306,8 @@ _MODEL_CONFIGS = {
     "SimCLR": SimCLRConfig,
     "Barlowtwins": BarlowTwinsConfig,
     "Supervised": BaseModelConfig,
+    "VICReg": VICRegConfig,
+    "WMSE": WMSEConfig,
 }
 _LOG_CONFIGS = {
     "Wandb": WandbConfig,
