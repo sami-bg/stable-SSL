@@ -94,12 +94,6 @@ class SSLTrainer(BaseModel):
         )
         return loss_ssl + loss_proj + loss_backbone
 
-    def compute_classifier_loss(self, embeds):
-        preds = self.backbone_classifier(embeds.detach())
-        return F.cross_entropy(
-            self.backbone_classifier(embeds.detach()), self.data[1].repeat(2)
-        )
-
     def compute_ssl_loss(self, embeds):
         raise NotImplementedError
 
