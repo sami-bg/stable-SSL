@@ -13,7 +13,7 @@ We achieve that by taking the best--and only the best--from the most eponymous A
  <tr>
     <td> Table of contents
     </td>
-    <td> table-SSL (Credit: Imagen3)</td>
+    <td> stable-SSL (Credit: Imagen3)</td>
  </tr>
  <tr><td>
 
@@ -22,9 +22,11 @@ We achieve that by taking the best--and only the best--from the most eponymous A
   - [Installation](#installation)
   - [Minimal examples](#minimal)
     - [Your own `Trainer`](#own_trainer)
+    - [Pass/Customize user arguments](#arguments)
     - [Write/Read logs](#logs)
     - [Multi-run](#multirun)
     - [SLURM](#slurm)
+  - [Library design](#design)
   </td>
   <td>
     <img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
@@ -68,6 +70,42 @@ At the very least, you need to implement three methods:
 - `initialize_modules`: this method initialized whatever model and parameter to use for training/inference
 - `forward`: that method that will be doing the prediction, e.g., for classification it will be p(y|x)
 - `compute_loss`: that method should return a scalar value used for backpropagation/training. 
+
+
+### Pass user arguments <a name="arguments"></a>
+
+There are two options based if you leverage the Hydra framework or not.
+<table border="0">
+ <tr>
+    <td><u><b style="font-size:10px">With Hydra</b></u></td>
+    <td><u><b style="font-size:10px">Without Hydra</b></u></td>
+ </tr>
+ <tr>
+    <td>
+    Simply pass your custom argument when calling the function as `++my_argument=2` and you can retreive anywhere in the `Trainer` with `self.config.my_argument`. If you don't even use the Trainer, you can directly get the value of the parameter in the script like that
+
+```
+@hydra.main(version_base=None)
+def main(cfg: DictConfig):
+    args = ssl.get_args(cfg)
+    args.my_argument
+```
+  </td>
+  <td>  
+    You can directly pass to the `Trainer` whatever custom argument you might have as
+    
+  
+```
+@hydra.main(version_base=None)
+def main(cfg: DictConfig):
+    args = ssl.get_args(cfg)
+    trainer = MyCustomSupervised(args, root="~/data", my_argument=2)
+```
+  </td>
+ </tr>
+</table>
+
+and anywhere inside the `Trainer` instance you will have access to `self.config.my_argument`.
 
 ### Write and Read your logs (Wandb or JSON) <a name="logs"></a>
 
@@ -130,7 +168,7 @@ defaults:
   - override hydra/launcher: submitit_slurm
 ```
 
-## Design
+## Design <a name="design"></a>
 
 Stable-SSL provides all the boilerplate to quickly get started doing AI research, with a focus on Self Supervised Learning (SSL) albeit other applications can certainly build upon Stable-SSL. In short, we provide a `BaseModel` class that calls the following methods (in order):
 ```
@@ -160,43 +198,6 @@ The file `main.py` to launch experiments is located in the `runs/` folder.
 The default parameters are given in the `sable_ssl/config.py` file.
 The parameters are structured in the following groups : data, model, hardware, log, optim.
 
-### I want to pass my own hyper-parameters!
-
-There are two options based if you leverage the Hydra framework or not.
-<table border="0">
- <tr>
-    <td><u><b style="font-size:10px">With Hydra</b></u></td>
-    <td><u><b style="font-size:10px">Without Hydra</b></u></td>
- </tr>
- <tr>
-    <td>Simply pass your custom argument when calling the function as `++my_argument=2` and you can retreive anywhere in the `Trainer` with `self.config.my_argument`. If you don't even use the Trainer, you can directly get the value of the parameter in the script like that
-
-    ```
-    @hydra.main(version_base=None)
-    def main(cfg: DictConfig):
-
-        args = ssl.get_args(cfg)
-        args.my_argument
-
-    ```
-
-    </td>
-
-    <td>You can directly pass to the `Trainer` whatever custom argument you might have as
-    
-    ```
-    @hydra.main(version_base=None)
-    def main(cfg: DictConfig):
-
-        args = ssl.get_args(cfg)
-        trainer = MyCustomSupervised(args, root="~/data", my_argument=2)
-    ```
-
-    and anywhere inside the `Trainer` instance you will have access to `self.config.my_argument`.
-
-    </td>
- </tr>
-</table>
 
 
 #### Using default config files
