@@ -2,28 +2,35 @@
 
 <center>
 
-### Stable | Minimalist | Fast *to quickly iterate on your research ideas*
-
-<img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
-
-<sub>[Credit: Imagen3]</sub>
-
-*You got a research idea? It shouldn't take you more than 10 minutes to get it running and have the ability to produce high quality figures/tables from its results: that's the goal of stable-SSL.*
+*You got a research idea? It shouldn't take you more than 10 minutes to start from scratch and get it running with the ability to produce high quality figures/tables from the results: that's the goal of `stable-SSL`.*
 
 We achieve that by taking the best--and only the best--from the most eponymous AI libraries: PytorchLightning, VISSL, Wandb, Hydra, Submitit.
 
+
+
 </center>
+<table border="0">
+ <tr>
+    <td> Table of contents
+    </td>
+    <td> table-SSL (Credit: Imagen3)</td>
+ </tr>
+ <tr><td>
 
-*Table of contents*
+  - [Why?](#why)
+  - [How?](#how)
+  - [Installation](#installation)
+  - [Minimal examples](#minimal)
+    - [Your own `Trainer`](#own_trainer)
+    - [Write/Read logs](#logs)
+    - [Multi-run](#multirun)
+    - [SLURM](#slurm)
+  </td>
+  <td>
+    <img src="./assets/logo.jpg" alt="ssl logo" width="200"/>
+  </td></tr>
+ </table>
 
-- [Why?](#why)
-- [How?](#how)
-- [Installation](#installation)
-- [Minimal examples](#minimal)
-  - [Your own `Trainer`](#own_trainer)
-  - [Write/Read logs](#logs)
-  - [Multi-run](#multirun)
-  - [SLURM](#slurm)
 
 ## Why stable-SSL? <a name="why"></a>
 
