@@ -90,7 +90,8 @@ class SSLTrainer(BaseModel):
                 "train/loss_ssl": loss_ssl,
                 "train/loss_backbone_classifier": loss_backbone,
                 "train/loss_projector_classifier": loss_proj,
-            }
+            },
+            commit=False,
         )
         return loss_ssl + loss_proj + loss_backbone
 

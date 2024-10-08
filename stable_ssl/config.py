@@ -44,6 +44,7 @@ class DataConfig:
     dataset: str = "CIFAR10"
     resolution: int = 32
     num_classes: int = 10
+    num_workers: int = 0
 
     def __post_init__(self):
         # Adjust resolution and num_classes based on dataset

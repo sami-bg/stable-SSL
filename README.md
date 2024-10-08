@@ -147,6 +147,11 @@ Your argument can be retreived anywhere inside your `Trainer` instance through `
   configs, dfs = reader.jsonl_project(FOLDER_NAME)
   ```
 
+- **Reading logs (json+CLI):**:
+  ```
+  python cli/plot_metric.py --path PATH --metric eval/epoch/acc1 --savefig ./test.png --hparams model.name,optim.lr
+  ```
+
 ### Multi-run<a name="multirun"></a>
 
 To launch multiple runs, add `-m` and specify the multiple values to try as `++group.variable=value1,value2,value3`. For instance:

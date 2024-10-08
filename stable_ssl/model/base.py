@@ -449,6 +449,7 @@ class BaseModel(torch.nn.Module):
 
     def log(self, packet=None, commit=True):
         packet = packet or {}
+        assert "_global_step" not in packet
         self._log_buffer.update(packet)
         if not commit or len(self._log_buffer) == 0:
             return
@@ -719,7 +720,7 @@ class BaseModel(torch.nn.Module):
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=per_device_batch_size,
-            num_workers=self.config.hardware.workers,
+            num_workers=self.config.data.num_workers,
             pin_memory=True,
             sampler=sampler,
             drop_last=drop_last,

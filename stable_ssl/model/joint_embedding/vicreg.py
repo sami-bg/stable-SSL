@@ -26,23 +26,23 @@ class VICReg(SSLTrainer):
         x = x - x.mean(dim=0)
         y = y - y.mean(dim=0)
 
-        std_x = torch.sqrt(x.var(dim=0) + 0.0001)
-        std_y = torch.sqrt(y.var(dim=0) + 0.0001)
+        std_x = torch.sqrt(x.var(dim=0) + self.config.model.epsilon)
+        std_y = torch.sqrt(y.var(dim=0) + self.config.model.epsilon)
         std_loss = (
             torch.mean(torch.nn.functional.relu(1 - std_x)) / 2
             + torch.mean(torch.nn.functional.relu(1 - std_y)) / 2
         )
 
-        cov_x = (x.T @ x) / (self.args.batch_size - 1)
-        cov_y = (y.T @ y) / (self.args.batch_size - 1)
-        cov_loss = off_diagonal(cov_x).pow_(2).sum().div(
-            self.num_features
-        ) + off_diagonal(cov_y).pow_(2).sum().div(self.num_features)
+        cov_x = (x.T @ x) / (x.size(0) - 1)
+        cov_y = (y.T @ y) / (x.size(0) - 1)
+        cov_loss = off_diagonal(cov_x).pow_(2).sum().div(x.size(1)) + off_diagonal(
+            cov_y
+        ).pow_(2).sum().div(x.size(1))
 
         loss = (
-            self.args.sim_coeff * repr_loss
-            + self.args.std_coeff * std_loss
-            + self.args.cov_coeff * cov_loss
+            self.config.model.sim_coeff * repr_loss
+            + self.config.model.std_coeff * std_loss
+            + self.config.model.cov_coeff * cov_loss
         )
         return loss
 
@@ -75,6 +75,7 @@ class VICRegConfig(SSLConfig):
     sim_coeff: float = 25
     std_coeff: float = 25
     cov_coeff: float = 1
+    epsilon: float = 0.0001
 
     def trainer(self):
         return VICReg
