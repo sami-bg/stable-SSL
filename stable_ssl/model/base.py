@@ -15,6 +15,7 @@ from tqdm import tqdm
 import submitit
 import jsonlines
 import omegaconf
+from ..reader import jsonl_run, wandb_run
 
 
 try:
@@ -564,9 +565,16 @@ class BaseModel(torch.nn.Module):
             )
         return optimizer
 
+    @property
+    def logs(self):
+        if self.config.log.api == "wandb":
+            raise NotImplementedError
+        else:
+            return jsonl_run(self.config.log.dump_path)[1]
+
     def initialize_scheduler(self):
         min_lr = self.config.optim.lr * 0.005
-        peak_step = 10 * len(self.train_loader)
+        peak_step = 5 * len(self.train_loader)
         total_steps = self.config.optim.epochs * len(self.train_loader)
         return LinearWarmupCosineAnnealing(
             self.optimizer, end_lr=min_lr, peak_step=peak_step, total_steps=total_steps

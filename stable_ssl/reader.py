@@ -14,20 +14,27 @@ from tqdm import tqdm
 import jsonlines
 from pathlib import Path
 import omegaconf
+from multiprocessing import Pool
+import logging
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 # yaml.add_constructor("tag:yaml.org,2002:python/object/apply:pathlib.PosixPath", Path)
 
 
-def jsonl_project(folder):
+def jsonl_project(folder, num_workers=8):
     if not Path(folder).is_dir():
         raise ValueError(f"The provided folder ({folder}) is not a directory!")
-    runs = Path(folder).rglob("*/hparams.yaml")
+    runs = list(Path(folder).rglob("*/hparams.yaml"))
     configs = []
     values = []
-    for run in runs:
-        c, v = jsonl_run(run.parent)
-        configs.append(flatten_config(c))
-        values.append(v)
+    logging.basicConfig(level=logging.INFO)
+    with logging_redirect_tqdm():
+        args = [run.parent for run in runs]
+        with Pool(num_workers) as p:
+            results = list(tqdm(p.imap(jsonl_run, args), total=len(runs)))
+        for c, v in results:
+            configs.append(flatten_config(c))
+            values.append(v)
     config = pd.DataFrame(configs)
     return config, values
 

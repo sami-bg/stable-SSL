@@ -61,7 +61,7 @@ class PositivePairSampler:
                             brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1
                         )
                     ],
-                    p=0.8,
+                    p=0.0,
                 ),
                 transforms.RandomGrayscale(p=0.2),
                 (
@@ -89,7 +89,7 @@ class PositivePairSampler:
                             brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1
                         )
                     ],
-                    p=0.8,
+                    p=0.0,
                 ),
                 transforms.RandomGrayscale(p=0.2),
                 (
