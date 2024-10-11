@@ -2,7 +2,6 @@ from . import utils
 from . import sampler
 from . import model
 from . import data
-from .model import supervised
 from . import reader
 
 # from .ssl_modules import SimCLR
@@ -16,8 +15,6 @@ __all__ = [
     "sampler",
     "model",
     "data",
-    "supervised",
-    "SimCLR",
     "get_args",
     "reader",
 ]

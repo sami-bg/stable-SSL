@@ -15,6 +15,7 @@ from .model.joint_embedding.barlow_twins import BarlowTwinsConfig
 from .model.joint_embedding.simclr import SimCLRConfig
 from .model.joint_embedding.vicreg import VICRegConfig
 from .model.joint_embedding.wmse import WMSEConfig
+from .model.supervised import Supervised
 import random
 
 
@@ -318,7 +319,7 @@ _LOG_CONFIGS = {
 }
 
 
-def get_args(cfg_dict):
+def get_args(cfg_dict, model_class=None):
 
     kwargs = {
         name: value
@@ -327,7 +328,13 @@ def get_args(cfg_dict):
     }
 
     model = cfg_dict.get("model", {})
-    model = _MODEL_CONFIGS[model.get("name", None)](**model)
+    if model_class is None:
+        name = model.get("name", None)
+    else:
+        if issubclass(model_class, Supervised):
+            name = "Supervised"
+    model = _MODEL_CONFIGS[name](**model)
+
     log = cfg_dict.get("log", {})
     log = _LOG_CONFIGS[log.get("api", None)](**log)
 
