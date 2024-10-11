@@ -15,7 +15,7 @@ from tqdm import tqdm
 import submitit
 import jsonlines
 import omegaconf
-from ..reader import jsonl_run, wandb_run
+from ..reader import jsonl_run
 
 
 try:

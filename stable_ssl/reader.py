@@ -14,7 +14,6 @@ from tqdm import tqdm
 import jsonlines
 from pathlib import Path
 import omegaconf
-from multiprocessing import Pool
 import logging
 from tqdm.contrib.logging import logging_redirect_tqdm
 
