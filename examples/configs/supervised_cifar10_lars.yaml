@@ -1,3 +1,41 @@
+
+data:
+  train_on: base
+  base:
+    name: CIFAR10
+    batch_size: 32
+    drop_last: True
+    shuffle: True
+    split: train
+    transforms:
+      - view1:
+        - name: RandomResizedCrop
+          kwargs:
+            scale: (0.1,0.2)
+          p: 1.0
+        - name: RandomHorizontalFlip
+        - name: GaussianBlur
+          kwargs:
+            kernel_size: 5
+          p: 0.2
+      - view2:
+        - name: RandomResizedCrop
+          kwargs:
+            scale: (0.1,0.2)
+          p: 1.0
+        - name: RandomHorizontalFlip
+  test_in:
+    name: CIFAR10
+    batch_size: 32
+    drop_last: False
+    split: test
+  test_out:
+    name: SVHN
+    batch_size: 32
+    drop_last: False
+    split: test
+
+
 model:
   model: Supervised
   backbone_model: resnet9

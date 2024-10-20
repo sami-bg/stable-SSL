@@ -39,10 +39,10 @@ class SSLTrainer(BaseModel):
         # backbone
         model, fan_in = load_model(
             name=self.config.model.backbone_model,
-            n_classes=self.config.data.num_classes,
+            n_classes=self.config.data.datasets[self.config.data.train_on].num_classes,
             with_classifier=False,
             pretrained=False,
-            dataset=self.config.data.dataset,
+            dataset=self.config.data.datasets[self.config.data.train_on].name,
         )
         self.backbone = model.train()
 
@@ -57,9 +57,12 @@ class SSLTrainer(BaseModel):
         self.projector = nn.Sequential(*layers)
 
         # linear probes
-        self.backbone_classifier = torch.nn.Linear(fan_in, self.config.data.num_classes)
+        self.backbone_classifier = torch.nn.Linear(
+            fan_in, self.config.data.datasets[self.config.data.train_on].num_classes
+        )
         self.projector_classifier = torch.nn.Linear(
-            self.config.model.projector[-1], self.config.data.num_classes
+            self.config.model.projector[-1],
+            self.config.data.datasets[self.config.data.train_on].num_classes,
         )
 
     def forward(self, x):
@@ -100,7 +103,7 @@ class SSLTrainer(BaseModel):
 
     def initialize_metrics(self):
 
-        nc = self.config.data.num_classes
+        nc = self.config.data.datasets[self.config.data.train_on].num_classes
         train_acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
         acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
         acc5 = MulticlassAccuracy(num_classes=nc, top_k=5)

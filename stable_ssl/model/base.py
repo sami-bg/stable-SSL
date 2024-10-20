@@ -41,7 +41,6 @@ from ..utils import (
     to_device,
 )
 
-from ..data import load_dataset
 from dataclasses import make_dataclass
 from dataclasses import dataclass
 
@@ -137,30 +136,23 @@ class BaseModel(torch.nn.Module):
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.config.hardware.float16)
         self._set_device()
 
-        if not self.config.log.eval_only:
-            logging.info("[stable-SSL] Creating train_loader dataset.")
-            self.train_loader = self.initialize_train_loader()
-            assert hasattr(self, "train_loader")
+        logging.info("[stable-SSL] Creating dataloaders.")
+        dataloaders = self.initialize_dataloaders()
+        for name, loader in dataloaders.items():
             logging.info(
-                "[stable-SSL] \t=> Found training set of length "
-                f"{len(self.train_loader)}."
+                f"[stable-SSL] \t=> Found dataloader `{name}` with length {len(loader)}"
             )
+        if self.config.log.eval_only:
+            for name in dataloaders:
+                if name in self.config.data.train_on:
+                    logging.info(
+                        f"[stable-SSL] \t=> `{name}` will be ignored (eval_only=True)."
+                    )
         else:
-            logging.info("[stable-SSL] \t=> No training set loaded since eval_only.")
-
-        logging.info("[stable-SSL] Creating val_loader dataset.")
-        try:
-            self.val_loader = self.initialize_val_loader()
-            logging.info(
-                "[stable-SSL] \t=> Found validation set of length "
-                f"{len(self.val_loader)}."
-            )
-        except NotImplementedError:
-            logging.info(
-                "[stable-SSL] \t=> Found no implementation of initialize_val_loader. "
-                "Skipping for now."
-            )
-            self.val_loader = None
+            assert len(self.config.data.train_on)
+            if self.config.data.train_on not in dataloaders:
+                raise RuntimeError(f"eval_only=False and `{name}` not given")
+        self.dataloaders = dataloaders
 
         logging.info("[stable-SSL] Calling initialize_modules() method.")
         self.initialize_modules()
@@ -295,18 +287,25 @@ class BaseModel(torch.nn.Module):
             )
 
         if self.config.optim.max_steps < 0:
-            max_steps = len(self.train_loader)
+            max_steps = len(self.dataloaders[self.config.data.train_on])
         elif 0 < self.config.optim.max_steps < 1:
             logging.info(
                 f"[stable-SSL] \t=> Training on {self.config.optim.max_steps*100}% of "
                 "the training dataset"
             )
-            max_steps = int(self.config.optim.max_steps * len(self.train_loader))
+            max_steps = int(
+                self.config.optim.max_steps
+                * len(self.dataloaders[self.config.data.train_on])
+            )
         else:
             max_steps = self.config.optim.max_steps
 
         for batch_idx, data in enumerate(
-            tqdm(self.train_loader, total=max_steps, desc=f"Training: {self.epoch=}")
+            tqdm(
+                self.dataloaders[self.config.data.train_on],
+                total=max_steps,
+                desc=f"Training: {self.epoch=}",
+            )
         ):
             # set up the data to have easy access throughout the methods
             self.batch_idx = batch_idx
@@ -338,54 +337,56 @@ class BaseModel(torch.nn.Module):
 
     def eval_epoch(self) -> dict:
 
-        if self.val_loader is None:
+        if set(self.dataloaders) == set([self.config.data.train_on]):
             logging.info("[stable-SSL] No val_loader hence skipping eval epoch.")
             return
 
-        # set-up model in eval mode + reset metrics
-        self.before_eval_epoch()
+        for name, loader in self.dataloaders.items():
+            if name == self.config.data.train_on:
+                continue
+            # set-up model in eval mode + reset metrics
+            self.before_eval_epoch()
 
-        # we do not ensure that the model is still in eval mode to not
-        # override any user desired behavior
-        if self.training:
-            warnings.warn(
-                "[stable-SSL] Starting eval epoch but model is not in "
-                "eval mode after call to before_eval_epoch()."
-            )
+            # we do not ensure that the model is still in eval mode to not
+            # override any user desired behavior
+            if self.training:
+                warnings.warn(
+                    "[stable-SSL] Starting eval epoch but model is not in "
+                    "eval mode after call to before_eval_epoch()."
+                )
 
-        try:
-            max_steps = len(self.val_loader)
-            with torch.inference_mode():
-                for step, data in tqdm(
-                    enumerate(self.val_loader),
-                    total=max_steps,
-                    desc=f"Eval: {self.epoch=}",
-                ):
-                    self.batch_idx = step
-                    self.data = to_device(data, self.this_device)
-
-                    # call any user specified pre-step function
-                    self.before_eval_step()
-
-                    # call the eval step
-                    with torch.amp.autocast(
-                        "cuda", enabled=self.config.hardware.float16
+            try:
+                max_steps = len(loader)
+                with torch.inference_mode():
+                    for step, data in tqdm(
+                        enumerate(loader),
+                        total=max_steps,
+                        desc=f"Eval {name}: {self.epoch=}",
                     ):
-                        self.eval_step()
+                        self.batch_idx = step
+                        self.data = to_device(data, self.this_device)
 
-                    # call any user specified post-step function
-                    self.after_eval_step()
+                        # call any user specified pre-step function
+                        self.before_eval_step()
 
-        except BreakEpoch:
-            print("[stable-SSL] Eval epoch cut by user...")
-        except Exception as e:
-            raise (e)
+                        # call the eval step
+                        with torch.amp.autocast(
+                            "cuda", enabled=self.config.hardware.float16
+                        ):
+                            self.eval_step()
 
-        # be sure to clean up to avoid silent bugs
-        self.data = None
+                        # call any user specified post-step function
+                        self.after_eval_step()
+            except BreakEpoch:
+                print("[stable-SSL] Eval epoch cut by user...")
+            except Exception as e:
+                raise (e)
 
-        # call any user specified post-epoch function
-        self.after_eval_epoch()
+            # be sure to clean up to avoid silent bugs
+            self.data = None
+
+            # call any user specified post-epoch function
+            self.after_eval_epoch()
 
     def train_step(self):
         with torch.amp.autocast("cuda", enabled=self.config.hardware.float16):
@@ -574,8 +575,10 @@ class BaseModel(torch.nn.Module):
 
     def initialize_scheduler(self):
         min_lr = self.config.optim.lr * 0.005
-        peak_step = 5 * len(self.train_loader)
-        total_steps = self.config.optim.epochs * len(self.train_loader)
+        peak_step = 5 * len(self.dataloaders[self.config.data.train_on])
+        total_steps = self.config.optim.epochs * len(
+            self.dataloaders[self.config.data.train_on]
+        )
         return LinearWarmupCosineAnnealing(
             self.optimizer, end_lr=min_lr, peak_step=peak_step, total_steps=total_steps
         )
@@ -708,52 +711,56 @@ class BaseModel(torch.nn.Module):
                 self.log({name: metric(output, self.data[1])}, commit=False)
         self.log(commit=True)
 
-    def dataset_to_loader(self, dataset, train):
-        if self.config.hardware.world_size > 1:
-            sampler = torch.utils.data.distributed.DistributedSampler(
-                dataset, shuffle=not train, drop_last=train
-            )
-            assert self.config.optim.batch_size % self.config.hardware.world_size == 0
-            drop_last = None
-            shuffle = None
-        else:
-            sampler = None
-            drop_last = train
-            shuffle = not train
+    # FIXME: to remove since this is now handled by the data config
+    # def dataset_to_loader(self, dataset, train):
+    #     if self.config.hardware.world_size > 1:
+    #         sampler = torch.utils.data.distributed.DistributedSampler(
+    #             dataset, shuffle=not train, drop_last=train
+    #         )
+    #         assert self.config.optim.batch_size % self.config.hardware.world_size == 0
+    #         drop_last = None
+    #         shuffle = None
+    #     else:
+    #         sampler = None
+    #         drop_last = train
+    #         shuffle = not train
 
-        per_device_batch_size = (
-            self.config.optim.batch_size // self.config.hardware.world_size
-        )
+    #     per_device_batch_size = (
+    #         self.config.optim.batch_size // self.config.hardware.world_size
+    #     )
 
-        loader = torch.utils.data.DataLoader(
-            dataset,
-            batch_size=per_device_batch_size,
-            num_workers=self.config.data.num_workers,
-            pin_memory=True,
-            sampler=sampler,
-            drop_last=drop_last,
-            shuffle=shuffle,
-        )
+    #     loader = torch.utils.data.DataLoader(
+    #         dataset,
+    #         batch_size=per_device_batch_size,
+    #         num_workers=self.config.data.num_workers,
+    #         pin_memory=True,
+    #         sampler=sampler,
+    #         drop_last=drop_last,
+    #         shuffle=shuffle,
+    #     )
 
-        return loader
+    #     return loader
 
-    def initialize_train_loader(self):
-        train_dataset = load_dataset(
-            dataset_name=self.config.data.dataset,
-            data_path=self.config.data.data_path,
-            train=True,
-        )
+    # def initialize_train_loader(self):
+    #     train_dataset = load_dataset(
+    #         dataset_name=self.config.data.dataset,
+    #         data_path=self.config.data.data_path,
+    #         train=True,
+    #     )
 
-        return self.dataset_to_loader(train_dataset, True)
+    #     return self.dataset_to_loader(train_dataset, True)
 
-    def initialize_val_loader(self):
-        eval_dataset = load_dataset(
-            dataset_name=self.config.data.dataset,
-            data_path=self.config.data.data_path,
-            train=False,
-        )
+    # def initialize_val_loader(self):
+    #     eval_dataset = load_dataset(
+    #         dataset_name=self.config.data.dataset,
+    #         data_path=self.config.data.data_path,
+    #         train=False,
+    #     )
 
-        return self.dataset_to_loader(eval_dataset, False)
+    #     return self.dataset_to_loader(eval_dataset, False)
+
+    def initialize_dataloaders(self):
+        return self.config.data.get_dataloaders()
 
     def initialize_modules(self):
         raise NotImplementedError("You need to implement your own `initialize_modules`")

@@ -1,10 +1,8 @@
 from . import utils
-from . import sampler
+from .data import sampler
 from . import model
-from . import data
 from . import reader
 
-# from .ssl_modules import SimCLR
 from .config import get_args
 from . import config
 
@@ -14,7 +12,7 @@ __all__ = [
     "utils",
     "sampler",
     "model",
-    "data",
+    "base",
     "get_args",
     "reader",
 ]
