@@ -165,7 +165,8 @@ cython_debug/
 
 outputs/
 multirun/
-data/
+./data/
+examples/data/
 wandb/
 
 *.ckpt
