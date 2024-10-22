@@ -71,41 +71,6 @@ At the very least, you need to implement three methods:
 - ``forward``: that method that will be doing the prediction, e.g., for classification it will be p(y|x)
 - ``compute_loss``: that method should return a scalar value used for backpropagation/training.
 
-Pass user arguments
-~~~~~~~~~~~~~~~~~~~
-
-.. _arguments:
-
-To pass a user argument e.g., ``my_arg`` that is not already supported in our configs (i.e., different than ``optim.lr`` etc.), there are two options:
-
-.. list-table::
-   :widths: 50 50
-   :header-rows: 1
-
-   * - **With Hydra**
-     - **Without Hydra**
-   * - Pass your argument when calling the Python script as ``++my_arg=2``
-
-       .. code-block:: python
-
-          @hydra.main(version_base=None)
-          def main(cfg: DictConfig):
-              args = ssl.get_args(cfg)
-              args.my_arg  # your arg!
-              trainer = MyTrainer(args)
-              trainer.config.my_arg  # your arg!
-
-     - Pass your argument to your `Trainer`
-
-       .. code-block:: python
-
-          @hydra.main(version_base=None)
-          def main(cfg: DictConfig):
-              args = ssl.get_args(cfg)
-              trainer = MyTrainer(args, my_arg=2)
-              trainer.config.my_arg  # your arg!
-
-Your argument can be retrieved anywhere inside your ``Trainer`` instance through ``self.config.my_arg`` with either of the two above options.
 
 
 
