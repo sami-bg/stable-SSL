@@ -92,7 +92,7 @@ jobs:
               echo -e "Host *\nStrictHostKeyChecking no" > ~/.ssh/config
               chmod og= ~/.ssh/config
               if [ ! -d ~/stable-SSL.github.io ]; then
-                git clone git@github.com:/stable-SSL/stable-SSL.github.io ~/stable-SSL.github.io --depth=1
+                git clone git@github.com:/rbalestr-lab/stable-SSL.github.io ~/stable-SSL.github.io --depth=1
               fi
         - run:
             name: Deploy docs
@@ -133,7 +133,7 @@ jobs:
               echo -e "Host *\nStrictHostKeyChecking no" > ~/.ssh/config
               chmod og= ~/.ssh/config
               if [ ! -d ~/stable-SSL.github.io ]; then
-                git clone git@github.com:/stable-SSL/stable-SSL.github.io ~/stable-SSL.github.io --depth=1
+                git clone git@github.com:/rbalestr-lab/stable-SSL.github.io ~/stable-SSL.github.io --depth=1
               fi
         - run:
             name: Deploy docs
