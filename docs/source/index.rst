@@ -7,5 +7,5 @@
     :caption: Contents:
     
     self
-    quick_start
+    getting_started
     whats_new
