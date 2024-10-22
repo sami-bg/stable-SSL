@@ -19,6 +19,10 @@ data:
             - 0.1
             - 0.2
       - name: RandomHorizontalFlip
+      - name: SpeckleNoise
+        kwargs:
+          severity: 2
+        p: 0.5
       - name: GaussianBlur
         kwargs:
           kernel_size: 5
