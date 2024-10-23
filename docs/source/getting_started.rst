@@ -98,11 +98,34 @@ Write and Read your logs (Wandb or JSON)
      python cli/plot_metric.py --path PATH --metric eval/epoch/acc1 --savefig ./test.png --hparams model.name,optim.lr
 
 
-Installation
-------------
+Multi-run
+~~~~~~~~~
 
-To install stable-SSL, run in the terminal:
+.. _multirun:
 
-.. code-block:: shell
+To launch multiple runs, add `-m` and specify the multiple values to try as ``++group.variable=value1,value2,value3``. For instance:
 
-   pip install stable-ssl
+.. code-block:: bash
+
+   python3 main.py --config-name=simclr_cifar10_sgd -m ++optim.lr=2,5,10
+
+Slurm
+~~~~~
+
+.. _slurm:
+
+To launch on slurm simply add ``hydra/launcher=submitit_slurm`` in the command line, for instance: 
+
+.. code-block:: bash
+
+   python3 main.py hydra/launcher=submitit_slurm hydra.launcher.timeout_min=3
+
+**Remark**: All the parameters of the slurm ``hydra.launcher`` are given `here <https://github.com/facebookresearch/hydra/blob/main/plugins/hydra_submitit_launcher/hydra_plugins/hydra_submitit_launcher/config.py>`_ (similar to submitit).
+
+Or to specify the slurm launcher you can add in the config file:
+
+.. code-block:: yaml
+
+   defaults:
+     - override hydra/launcher: submitit_slurm
+

@@ -74,36 +74,7 @@ At the very least, you need to implement three methods:
 
 
 
-Multi-run
-~~~~~~~~~
 
-.. _multirun:
-
-To launch multiple runs, add `-m` and specify the multiple values to try as ``++group.variable=value1,value2,value3``. For instance:
-
-.. code-block:: bash
-
-   python3 main.py --config-name=simclr_cifar10_sgd -m ++optim.lr=2,5,10
-
-Slurm
-~~~~~
-
-.. _slurm:
-
-To launch on slurm simply add ``hydra/launcher=submitit_slurm`` in the command line, for instance: 
-
-.. code-block:: bash
-
-   python3 main.py hydra/launcher=submitit_slurm hydra.launcher.timeout_min=3
-
-**Remark**: All the parameters of the slurm ``hydra.launcher`` are given `here <https://github.com/facebookresearch/hydra/blob/main/plugins/hydra_submitit_launcher/hydra_plugins/hydra_submitit_launcher/config.py>`_ (similar to submitit).
-
-Or to specify the slurm launcher you can add in the config file:
-
-.. code-block:: yaml
-
-   defaults:
-     - override hydra/launcher: submitit_slurm
 
 Library Design
 ~~~~~~~~~~~~~~
