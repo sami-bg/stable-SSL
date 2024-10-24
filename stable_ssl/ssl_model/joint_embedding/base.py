@@ -1,15 +1,24 @@
+# -*- coding: utf-8 -*-
+"""Base class for joint embedding models."""
+#
+# Author: Hugues Van Assel <vanasselhugues@gmail.com>
+#         Randall Balestriero <randallbalestriero@gmail.com>
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torchmetrics.classification import MulticlassAccuracy
 
-from ...utils import load_nn
-from ..base import BaseModel, BaseModelConfig
+from stable_ssl.utils import load_nn
+from stable_ssl.base import BaseModel, BaseModelConfig
 
 
 @dataclass
-class SSLConfig(BaseModelConfig):
+class JEConfig(BaseModelConfig):
     """
     Configuration for the SSL model parameters.
 
@@ -26,7 +35,7 @@ class SSLConfig(BaseModelConfig):
             self.projector = [int(i) for i in self.projector.split("-")]
 
 
-class SSLTrainer(BaseModel):
+class JETrainer(BaseModel):
     r"""Base class for training a Self-Supervised Learning (SSL) model.
 
     Parameters:

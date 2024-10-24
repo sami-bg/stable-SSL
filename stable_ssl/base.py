@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Main function for training a model."""
+"""Base class for training a model."""
 #
 # Author: Hugues Van Assel <vanasselhugues@gmail.com>
 #         Randall Balestriero <randallbalestriero@gmail.com>
@@ -18,8 +18,9 @@ import jsonlines
 import omegaconf
 from pathlib import Path
 from tqdm import tqdm
+from dataclasses import dataclass, make_dataclass
 
-from ..reader import jsonl_run
+from .reader import jsonl_run
 
 
 try:
@@ -32,7 +33,7 @@ except ModuleNotFoundError:
 
 import torch
 
-from ..utils import (
+from .utils import (
     BreakAllEpochs,
     BreakEpoch,
     NanError,
@@ -44,9 +45,6 @@ from ..utils import (
     LinearWarmupCosineAnnealing,
     to_device,
 )
-
-from dataclasses import make_dataclass
-from dataclasses import dataclass
 
 
 @dataclass

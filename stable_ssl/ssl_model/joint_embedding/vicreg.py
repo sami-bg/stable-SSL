@@ -1,7 +1,18 @@
-import torch
-from .base import SSLConfig, SSLTrainer
+# -*- coding: utf-8 -*-
+"""VICReg model."""
+#
+# Author: Randall Balestriero <randallbalestriero@gmail.com>
+#         Hugues Van Assel <vanasselhugues@gmail.com>
+#
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 from dataclasses import dataclass
-import torch.distributed as dist
+import torch
+
+from stable_ssl.utils import FullGatherLayer
+from .base import JEConfig, JETrainer
 
 
 def off_diagonal(x):
@@ -11,7 +22,7 @@ def off_diagonal(x):
     return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
 
-class VICReg(SSLTrainer):
+class VICReg(JETrainer):
     def compute_ssl_loss(self, z1, z2):
 
         repr_loss = torch.nn.functional.mse_loss(z1, z2)
@@ -46,30 +57,9 @@ class VICReg(SSLTrainer):
         return loss
 
 
-class FullGatherLayer(torch.autograd.Function):
-    """
-    Gather tensors from all process and support backward propagation
-    for the gradients across processes.
-    """
-
-    @staticmethod
-    def forward(ctx, x):
-        output = [torch.zeros_like(x) for _ in range(dist.get_world_size())]
-        dist.all_gather(output, x)
-        return tuple(output)
-
-    @staticmethod
-    def backward(ctx, *grads):
-        all_gradients = torch.stack(grads)
-        dist.all_reduce(all_gradients)
-        return all_gradients[dist.get_rank()]
-
-
 @dataclass
-class VICRegConfig(SSLConfig):
-    """
-    Configuration for the VICreg model parameters.
-    """
+class VICRegConfig(JEConfig):
+    """Configuration for the VICreg model parameters."""
 
     sim_coeff: float = 25
     std_coeff: float = 25

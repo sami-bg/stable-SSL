@@ -4,21 +4,19 @@ import logging
 from omegaconf import OmegaConf
 from pathlib import Path
 from datetime import datetime
+import random
 import torch
 
 from .utils import LARS
-from .model.base import BaseModelConfig
-from .model.joint_embedding import (
+from .ssl_model.joint_embedding import (
     BarlowTwinsConfig,
     SimCLRConfig,
     VICRegConfig,
     WMSEConfig,
 )
-from .model.supervised import Supervised
-
+from .supervised import Supervised
 from .data import DataConfig
-
-import random
+from .base import BaseModelConfig
 
 
 @dataclass
