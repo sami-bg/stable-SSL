@@ -148,8 +148,12 @@ class LogConfig:
         Name for the final saved model. Default is "final_model".
     eval_only : bool, optional
         Whether to only evaluate the model without training. Default is False.
-    eval_each_epoch : bool, optional
-        Whether to evaluate the model at the end of each epoch. Default is False.
+    eval_epoch_freq : int, optional
+        Frequency of evaluation (in terms of epochs). Default is 1.
+    wandb_entity : str, optional
+        Name of the (Weights & Biases) entity. Default is None.
+    wandb_project : str, optional
+        Name of the (Weights & Biases) project. Default is None.
     """
 
     folder: Optional[str] = None
@@ -160,8 +164,9 @@ class LogConfig:
     save_final_model: bool = False
     final_model_name: str = "final_model"
     eval_only: bool = False
-    eval_each_epoch: bool = True
-    api = None
+    eval_epoch_freq: int = 1
+    wandb_entity: Optional[str] = None
+    wandb_project: Optional[str] = None
 
     def __post_init__(self):
         """Initializes logging folder and run settings.
@@ -186,22 +191,23 @@ class LogConfig:
         return self.folder / self.run
 
 
-@dataclass
-class WandbConfig(LogConfig):
-    """Configuration for logging with Weights & Biases (Wandb) during training.
+# @dataclass
+# class WandbConfig(LogConfig):
+#     """Configuration for logging with Weights & Biases (Wandb) during training.
 
-    Parameters:
-    -----------
-    entity : str, optional
-        Name of the (Weights & Biases) entity. Default is None.
-    project : str, optional
-        Name of the (Weights & Biases) project. Default is None.
-    run : str, optional
-        Name of the Weights & Biases run. Default is None.
-    """
+#     Parameters:
+#     -----------
+#     entity : str, optional
+#         Name of the (Weights & Biases) entity. Default is None.
+#     project : str, optional
+#         Name of the (Weights & Biases) project. Default is None.
+#     run : str, optional
+#         Name of the Weights & Biases run. Default is None.
+#     """
 
-    entity: Optional[str] = None
-    project: Optional[str] = None
+#     entity: Optional[str] = None
+#     project: Optional[str] = None
+#     api: str = None
 
 
 @dataclass
@@ -242,12 +248,12 @@ _MODEL_CONFIGS = {
     "VICReg": VICRegConfig,
     "WMSE": WMSEConfig,
 }
-_LOG_CONFIGS = {
-    "Wandb": WandbConfig,
-    "wandb": WandbConfig,
-    "None": LogConfig,
-    None: LogConfig,
-}
+# _LOG_CONFIGS = {
+#     "Wandb": WandbConfig,
+#     "wandb": WandbConfig,
+#     "None": LogConfig,
+#     None: LogConfig,
+# }
 
 
 def get_args(cfg_dict, model_class=None):
@@ -266,15 +272,12 @@ def get_args(cfg_dict, model_class=None):
             name = "Supervised"
     model = _MODEL_CONFIGS[name](**model)
 
-    log = cfg_dict.get("log", {})
-    log = _LOG_CONFIGS[log.get("api", None)](**log)
-
     args = TrainerConfig(
         data=DataConfig(**cfg_dict.get("data", {})),
         optim=OptimConfig(**cfg_dict.get("optim", {})),
         model=model,
         hardware=HardwareConfig(**cfg_dict.get("hardware", {})),
-        log=log,
+        log=LogConfig(**cfg_dict.get("log", {})),
     )
 
     args.__class__ = make_dataclass(

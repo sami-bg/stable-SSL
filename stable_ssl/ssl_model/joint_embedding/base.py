@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torchmetrics.classification import MulticlassAccuracy
 
 from stable_ssl.utils import load_nn
 from stable_ssl.base import BaseModel, BaseModelConfig
@@ -116,21 +115,3 @@ class JETrainer(BaseModel):
 
     def compute_ssl_loss(self, embeds):
         raise NotImplementedError
-
-    def initialize_metrics(self):
-
-        nc = self.config.data.datasets[self.config.data.train_on].num_classes
-        train_acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
-        acc1 = MulticlassAccuracy(num_classes=nc, top_k=1)
-        acc5 = MulticlassAccuracy(num_classes=nc, top_k=5)
-        acc1_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=1)
-        acc5_by_class = MulticlassAccuracy(num_classes=nc, average="none", top_k=5)
-        self.metrics = torch.nn.ModuleDict(
-            {
-                "train/step/acc1": train_acc1,
-                "eval/epoch/acc1": acc1,
-                "eval/epoch/acc5": acc5,
-                "eval/epoch/acc1_by_class": acc1_by_class,
-                "eval/epoch/acc5_by_class": acc5_by_class,
-            }
-        )
