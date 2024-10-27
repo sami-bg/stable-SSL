@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Learning rate schedulers."""
+#
+# Author: Randall Balestriero <randallbalestriero@gmail.com>
+#         Hugues Van Assel <vanasselhugues@gmail.com>
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
 from torch.optim.lr_scheduler import (
     LinearLR,
     MultiStepLR,
@@ -9,6 +18,8 @@ import numpy as np
 
 
 class CosineDecayer:
+    """Apply cosine decay with multiple cycles for learning rate scheduling."""
+
     def __init__(self, total_steps, n_cycles=3, gamma=0.2):
         self.total_steps = total_steps
         self.n_cycles = n_cycles
@@ -20,6 +31,7 @@ class CosineDecayer:
 
 
 def LinearWarmup(optimizer, total_steps, start_factor=0.01, peak_step=0.1):
+    """Create a linear warmup scheduler."""
     if peak_step < 1:
         peak_step = int(peak_step * total_steps)
     warmup = LinearLR(optimizer, start_factor, total_iters=peak_step)
@@ -29,6 +41,7 @@ def LinearWarmup(optimizer, total_steps, start_factor=0.01, peak_step=0.1):
 def LinearWarmupCosineAnnealing(
     optimizer, total_steps, start_factor=0.01, end_lr=0.0001, peak_step=0.1
 ):
+    """Combine linear warmup with cosine annealing decay."""
     if peak_step < 1:
         peak_step = int(peak_step * total_steps)
     warmup = LinearLR(optimizer, start_factor, total_iters=peak_step)
@@ -44,6 +57,7 @@ def LinearWarmupCosineAnnealing(
 def LinearWarmupCyclicAnnealing(
     optimizer, total_steps, start_factor=0.01, peak_step=0.1
 ):
+    """Combine linear warmup with cyclic cosine annealing."""
     if peak_step < 1:
         peak_step = int(peak_step * total_steps)
 
@@ -60,6 +74,7 @@ def LinearWarmupCyclicAnnealing(
 def LinearWarmupThreeStepsAnnealing(
     optimizer, total_steps, start_factor=0.001, gamma=0.3, peak_step=0.05
 ):
+    """Combine linear warmup with a three-step learning rate annealing."""
     if peak_step < 1:
         peak_step = int(peak_step * total_steps)
     warmup = LinearLR(optimizer, start_factor, total_iters=peak_step)
