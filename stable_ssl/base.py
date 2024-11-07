@@ -506,24 +506,23 @@ class BaseModel(torch.nn.Module):
         self.scaler.update()
 
         self.scheduler.step()
-        self.log(
-            {
-                "train/loss": loss.item(),
-                "train/lr": self.scheduler.get_last_lr()[0],
-                "step": self.batch_idx,
-                "epoch": self.epoch,
-            },
-            commit=True,
-        )
+
+        if self.batch_idx % self.config.log.log_every_step == 0:
+            self.log(
+                {
+                    "train/loss": loss.item(),
+                    "train/lr": self.scheduler.get_last_lr()[0],
+                    "step": self.batch_idx,
+                    "epoch": self.epoch,
+                },
+                commit=True,
+            )
 
     def eval_step(self, name_loader):
         output = self.forward(self.data[0])
         for name, metric in self.metrics.items():
             if name.startswith(f"eval/{name_loader}/"):
                 metric.update(output, self.data[1])
-            elif name.startswith(f"eval/{name_loader}/"):
-                self.log({name: metric(output, self.data[1])}, commit=False)
-        self.log(commit=True)
 
     def _set_device(self):
         # Check if CUDA is available, otherwise set to CPU.
