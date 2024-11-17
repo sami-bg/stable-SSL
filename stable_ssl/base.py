@@ -21,6 +21,7 @@ import torch
 import subprocess
 import os
 from .data import DistributedSamplerWrapper
+from . import reader
 
 try:
     import wandb
@@ -34,14 +35,11 @@ from .utils import (
     BreakAllEpochs,
     BreakEpoch,
     NanError,
-    BreakStep,
     seed_everything,
     to_device,
     get_gpu_info,
     log_and_raise,
 )
-
-__all__ = ["BreakStep"]
 
 
 # https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/
@@ -119,10 +117,12 @@ class BaseModel(torch.nn.Module):
         logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED")
 
     def setup(self):
+
+        logging.getLogger().setLevel(self._logger["level"])
         logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
+        seed_everything(self._hardware.get("seed", None))
 
         self.start_time = time.time()
-
         # we skip optim as we may not need it (see below)
         self.data = hydra.utils.instantiate(self._data, _convert_="object")
         self.networks = hydra.utils.instantiate(self._networks, _convert_="object")
@@ -130,33 +130,57 @@ class BaseModel(torch.nn.Module):
         self.hardware = hydra.utils.instantiate(self._hardware, _convert_="object")
         self.logger = hydra.utils.instantiate(self._logger, _convert_="object")
 
-        seed_everything(self.hardware.get("seed", None))
         self._set_device(self.hardware)
+
         self.objective = self.objective.to(self._device)
 
-        logging.info(f"\t=> Dump path: `{self.logger['dump_path']}`")
-
-        # Use WandB if an entity or project name is provided.
+        logging.info("Logger:")
+        logging.info(f"\t- Dump path: `{self.logger['dump_path']}`")
         if self.logger["wandb"]:
-            logging.info("\t=> Initializing wandb...")
+            logging.info("\t- Wandb:")
             try:
                 wandb.init(
-                    entity=self.logger["entity"],
-                    project=self.logger["project"],
+                    entity=self.logger["wandb"]["entity"],
+                    project=self.logger["wandb"]["project"],
                     config=dict(networks=self._networks, data=self._data),
-                    name=self.logger["run"],
+                    name=self.logger["wandb"]["run"],
                     dir=str(self.logger["dump_path"]),
                     resume="allow",
                 )
+                logging.info(f"\t\t- entity: {wandb.run.entity}")
+                logging.info(f"\t\t- project: {wandb.run.project}")
+                logging.info(f"\t\t- name: {wandb.run.name}")
+                logging.info(f"\t\t- id: {wandb.run.id}")
             except Exception:
                 logging.exception("Failed to initialize wandb.")
                 raise
+        else:
+            logging.info("\t- JSONL")
+
+        # we do metrics before data to allow logging in data
+        logging.info("Metrics:")
+        for m in self.logger["metrics"]:
+            if type(self.logger["metrics"][m]) is dict:
+                self.logger["metrics"][m] = torch.nn.ModuleDict(
+                    self.logger["metrics"][m]
+                )
+        if type(self.logger["metrics"]) is dict:
+            self.logger["metrics"] = torch.nn.ModuleDict(self.logger["metrics"])
+        self.logger["metrics"] = self.logger["metrics"].to(self._device)
 
         # Data
+        logging.info("Data:")
         for name, loader in self.data.items():
             if name[0] == "_":
+                logging.info(f"\t- `{name}` ignored (starts with `_`).")
                 continue
-            logging.info(f"\t=> Found dataloader `{name}` with length {len(loader)}.")
+            train = "train" if name == self.train_on else "eval"
+            logging.info(f"\t- {name}  ({train}):")
+            logging.info(f"\t\t- length: {len(loader)}.")
+            if name in self.logger["metrics"]:
+                logging.info("\t\t- metrics:")
+                for mname in self.logger["metrics"][name]:
+                    logging.info(f"\t\t\t- {mname}.")
             if not len(loader):
                 log_and_raise(ValueError, f"Length of dataset {name} is 0.")
             if self.world_size > 1:
@@ -174,9 +198,9 @@ class BaseModel(torch.nn.Module):
                 self.data[name] = DistributedSamplerWrapper(
                     loader, self.world_size, self.rank
                 )
-            logging.info(
-                f"\t=> New length after DDS on local process `{len(self.data[name])}."
-            )
+                logging.info(
+                    f"\t- Length after DDS on this process `{len(self.data[name])}."
+                )
 
         if not self.eval_only and self.train_on not in self.data:
             log_and_raise(
@@ -184,12 +208,13 @@ class BaseModel(torch.nn.Module):
             )
 
         # Modules and scaler
+        logging.info("Modules:")
         for name, module in self.networks.items():
             # if self.config.model.memory_format == "channels_last":
             #     module.to(memory_format=torch.channels_last)
             if self.world_size > 1:
                 module = torch.nn.SyncBatchNorm.convert_sync_batchnorm(module)
-            module.to(self.this_device)
+            module.to(self.device)
             has_parameters = False
             if sum(p.numel() for p in module.parameters() if p.requires_grad) > 0:
                 has_parameters = True
@@ -201,9 +226,7 @@ class BaseModel(torch.nn.Module):
             trainable = sum(
                 param.numel() for param in module.parameters() if param.requires_grad
             )
-            logging.info(
-                f"\t=> Found module '{name}' with {trainable} trainable parameters."
-            )
+            logging.info(f"\t- {name} with {trainable} trainable parameters.")
         self.networks = torch.nn.ModuleDict(self.networks)
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.hardware["float16"])
 
@@ -219,17 +242,8 @@ class BaseModel(torch.nn.Module):
                 "Mode is eval_only, skipping optimizer and scheduler initializations."
             )
 
-        logging.info(f"\t=> Found metric(s) `{self.logger['metrics']}`.")
-        for m in self.logger["metrics"]:
-            for k in self.logger["metrics"][m]:
-                self.logger["metrics"][m][k] = self.logger["metrics"][m][k].to(
-                    self._device
-                )
-
-        logging.getLogger().setLevel(self.logger["level"])
         self._log_buffer = {}
 
-        logging.info("\tCalling load_checkpoint() method.")
         self.load_checkpoint()
         logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
 
@@ -238,11 +252,11 @@ class BaseModel(torch.nn.Module):
         logger["dump_path"] = logger.get(
             "dump_path", Path(HydraConfig.get().runtime.output_dir)
         )
-        logger["wandb"] = logger.get("wandb", False)
+        logger["wandb"] = logger.get("wandb", None)
         if logger["wandb"]:
-            logger["entity"] = logger.get("entity", None)
-            logger["project"] = logger.get("project", None)
-            logger["run"] = logger.get("run", None)
+            logger["wandb"]["entity"] = logger["wandb"].get("entity", None)
+            logger["wandb"]["project"] = logger["wandb"].get("project", None)
+            logger["wandb"]["run"] = logger["wandb"].get("run", None)
         logger["level"] = logger.get("level", 20)
         logger["metrics"] = logger.get("metrics", {})
         logger["save_final_model"] = logger.get("save_final_model", "final")
@@ -315,7 +329,7 @@ class BaseModel(torch.nn.Module):
                 self.save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
 
         # At the end of training, we (optionally) save the final model.
-        if self.save_final_model:
+        if self.logger["save_final_model"]:
             self.save_checkpoint(
                 f"{self.logger['save_final_model']}.ckpt", model_only=True
             )
@@ -348,7 +362,7 @@ class BaseModel(torch.nn.Module):
             tqdm(loader, total=max_steps, desc=f"Training: {self.epoch}")
         ):
             # set up the data to have easy access throughout the methods
-            self.batch = to_device(data, self.this_device)
+            self.batch = to_device(data, self.device)
 
             self.before_fit_step()
             self.fit_step()
@@ -374,13 +388,12 @@ class BaseModel(torch.nn.Module):
 
         packet = {"epoch": min(self.epoch, self.optim["epochs"] - 1)}
         for name_loader, loader in self.data.items():
-            if name_loader == self.train_on:
-                continue
-            if name_loader[0] == "_":
+            if name_loader == self.train_on or name_loader[0] == "_":
                 continue
             # Reset the metrics for the epoch.
-            for _, v in self.logger["metrics"].get(name_loader, {}).items():
-                v.reset()
+            if name_loader in self.logger["metrics"]:
+                for _, v in self.logger["metrics"][name_loader].items():
+                    v.reset()
 
             try:
                 max_steps = len(loader)
@@ -390,7 +403,7 @@ class BaseModel(torch.nn.Module):
                         total=max_steps,
                         desc=f"Eval {name_loader}: {self.epoch=}",
                     ):
-                        self.batch = to_device(data, self.this_device)
+                        self.batch = to_device(data, self.device)
 
                         # Call any user specified pre-step function.
                         self.before_eval_step()
@@ -412,8 +425,9 @@ class BaseModel(torch.nn.Module):
             # Be sure to clean up to avoid silent bugs.
             self.batch = None
             # Compute the final metrics for the epoch.
-            for name, metric in self.logger["metrics"].get(name_loader, {}).items():
-                packet[f"{name_loader}/{name}"] = metric.compute()
+            if name_loader in self.logger["metrics"]:
+                for name, metric in self.logger["metrics"][name_loader].items():
+                    packet[f"{name_loader}/{name}"] = metric.compute()
         self.log(packet, commit=True)
         # Call any user specified post-epoch function.
         self.after_eval()
@@ -427,6 +441,7 @@ class BaseModel(torch.nn.Module):
             log_and_raise(NanError, "Loss is NaN. Stopping training.")
 
         self.scaler.scale(loss).backward()
+        scale = self.scaler.get_scale()
         if (1 + self.batch_idx) % self.optim["accumulation_steps"] == 0:
             # Unscales the gradients of optimizer's assigned params in-place.
             self.scaler.unscale_(self.optim["optimizer"])
@@ -440,7 +455,11 @@ class BaseModel(torch.nn.Module):
             self.scaler.update()
             self.optim["optimizer"].zero_grad(set_to_none=True)
 
-        self.optim["scheduler"].step()
+        # to avoid warning
+        # see https://discuss.pytorch.org/t/
+        # optimizer-step-before-lr-scheduler-step-error-using-gradscaler/92930/7
+        if scale <= self.scaler.get_scale():
+            self.optim["scheduler"].step()
 
         if self.global_step % self.logger["every_step"] == 0:
             bucket = {}
@@ -451,9 +470,10 @@ class BaseModel(torch.nn.Module):
             self.log(bucket, commit=True)
 
     def eval_step(self, name_loader):
-        output = self.forward(self.batch[0])
-        for metric in self.logger["metrics"][name_loader].values():
-            metric.update(output, self.batch[1])
+        output = self.forward()
+        if name_loader in self.logger["metrics"]:
+            for metric in self.logger["metrics"][name_loader].values():
+                metric.update(output, self.batch[1])
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.
@@ -568,18 +588,14 @@ class BaseModel(torch.nn.Module):
         self._log_buffer = {}
 
     def load_checkpoint(self):
-        if not (self.logger["dump_path"] / "tmp_checkpoint.ckpt").is_file():
-            logging.info(
-                f"\t=> `{self.logger['dump_path'] / 'tmp_checkpoint.ckpt'}` not present"
-            )
-            logging.info("\t=> training from scratch...")
+        logging.info("load_checkpoint:")
+        target = self.logger["dump_path"] / "tmp_checkpoint.ckpt"
+        if not target.is_file():
+            logging.info(f"\t=> `{target}` not present... training from scratch.")
             self.epoch = 0
             return
 
-        logging.info(
-            f"\t=> folder `{self.logger['dump_path']}/tmp_checkpoint.ckpt` exists "
-            "\n\t=> loading it."
-        )
+        logging.info(f"\t=> folder `{target}` exists... loading it.")
         checkpoint = self.logger["dump_path"] / "tmp_checkpoint.ckpt"
 
         ckpt = torch.load(checkpoint, map_location="cpu")
@@ -590,11 +606,14 @@ class BaseModel(torch.nn.Module):
                 continue
             model.load_state_dict(ckpt[name])
             logging.info(f"\t\t=> {name} successfully loaded.")
+        # model and metrics are children of the model so already
+        # handles by the above for loop. But we need special case for
+        # the optimizer(s) and scheduler(s)
         if "optimizer" in ckpt:
             self.optim["optimizer"].load_state_dict(ckpt["optimizer"])
             logging.info("\t\t=> optimizer successfully loaded.")
         if "scheduler" in ckpt:
-            self.scheduler.load_state_dict(ckpt["scheduler"])
+            self.optim["optimizer"].load_state_dict(ckpt["scheduler"])
             logging.info("\t\t=> scheduler successfully loaded.")
         if "epoch" in ckpt:
             self.epoch = ckpt["epoch"]
@@ -616,10 +635,10 @@ class BaseModel(torch.nn.Module):
             torch.save(state, saving_name)
             logging.info(f"Model saved at {saving_name}.")
             return
-        if hasattr(self, "optimizer"):
+        if hasattr(self.optim, "optimizer"):
             state["optimizer"] = self.optim["optimizer"].state_dict()
-        if hasattr(self, "scheduler"):
-            state["scheduler"] = self.scheduler.state_dict()
+        if hasattr(self.optim, "scheduler"):
+            state["scheduler"] = self.optim["scheduler"].state_dict()
         state["epoch"] = self.epoch
 
         torch.save(state, saving_name)
@@ -659,6 +678,10 @@ class BaseModel(torch.nn.Module):
 
         logging.info("Device status after cleaning.")
         get_gpu_info()
+
+    def get_logs(self):
+        if self.logger["wandb"] is None:
+            return reader.jsonl(self.logger["dump_path"])
 
     @property
     def rank(self):
@@ -703,7 +726,7 @@ class BaseModel(torch.nn.Module):
         return self._batch_idx
 
     @property
-    def this_device(self):
+    def device(self):
         return self._device
 
     @epoch.setter

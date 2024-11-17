@@ -17,6 +17,7 @@ def main(cfg):
     )
     trainer.setup()
     trainer.launch()
+    print(trainer.get_logs())
 
 
 if __name__ == "__main__":

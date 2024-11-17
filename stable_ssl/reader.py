@@ -39,7 +39,7 @@ def jsonl_project(folder, num_workers=8):
     with logging_redirect_tqdm():
         args = [run.parent for run in runs]
         with Pool(num_workers) as p:
-            results = list(tqdm(p.imap(jsonl_run, args), total=len(runs)))
+            results = list(tqdm(p.imap(jsonl, args), total=len(runs)))
         for c, v in results:
             configs.append(flatten_config(c))
             values.append(v)
@@ -47,27 +47,35 @@ def jsonl_project(folder, num_workers=8):
     return config, values
 
 
-def jsonl_run(path):
+def jsonl(path):
+    """Load config and values from a single run directory."""
+    _path = Path(path)
+    if not _path.is_dir():
+        raise ValueError(f"The provided path ({path}) is not a directory!")
+
+    values = []
+    # Load the values from logs_rank_* files.
+    logs_files = list(_path.glob("logs_rank_*.jsonl"))
+    logging.info(f"Reading .jsonl files from {_path}")
+    logging.info(f"\t=> {len(logs_files)} ranks detected")
+    for log_file in logs_files:
+        # Extract rank from the filename.
+        rank = int(log_file.stem.split("rank_")[1])
+        for obj in jsonlines.open(log_file).iter(type=dict, skip_invalid=True):
+            obj["rank"] = rank  # Add rank field to each dict.
+            values.append(obj)
+    logging.info(f"\t=> total length of logs: {len(values)}")
+    return values
+
+
+def config(path):
     """Load config and values from a single run directory."""
     _path = Path(path)
     if not _path.is_dir():
         raise ValueError(f"The provided path ({path}) is not a directory!")
     # Load the config file.
-    if not (_path / "hparams.yaml").is_file():
-        raise ValueError(
-            f"The provided path ({path}) must at least contain a `hparams.yaml` file."
-        )
-    config = omegaconf.OmegaConf.load(_path / "hparams.yaml")
-    values = []
-    # Load the values from logs_rank_* files.
-    logs_files = list(_path.glob("logs_rank_*"))
-    for log_file in logs_files:
-        # Extract rank from the filename.
-        rank = int(log_file.name.split("_")[-1])
-        for obj in jsonlines.open(log_file).iter(type=dict, skip_invalid=True):
-            obj["rank"] = rank  # Add rank field to each dict.
-            values.append(obj)
-    return config, values
+    config = omegaconf.OmegaConf.load(_path / ".hydra" / "config.yaml")
+    return config
 
 
 def wandb_project(
