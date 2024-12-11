@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 from .data import DistributedSamplerWrapper
 from . import reader
-from .utils import deactivate_requires_grad, update_momentum
+from .utils import update_momentum
 
 try:
     import wandb
@@ -96,47 +96,64 @@ from .utils import (
 class BaseModel(torch.nn.Module):
     r"""Base class for training a model.
 
+    That method provides a general boilerplate for all the internal operations
+    that always occur no matter the actual application and project. This includes
+    training, evaluation, checkpointing, restarting training, ... the internals
+    can be modified from the configs.
+
+    This class should be subclassed by your specific method (see examples).
+
+    Execution flow when calling `launch`:
+
+    - self.before_fit (nothing by default)
+    - self.fit (executes all the training/intermitent evaluation by default)
+      - for `self.optim["epochs"]` epochs:
+        - self.fit_epoch (one training epoch by default)
+          - self.before_fit_epoch (setup in train mode)
+          - loop over mini-batches
+            - self.before_fit_step (moves data to device)
+            - self.fit_step
+            - self.after_fit_step (nothing by default)
+          - self.after_fit_epoch
+        - self.evaluate (if asked by user config, looping over all non train datasets)
+          - self.before_eval (setup in eval mode)
+          - loop over mini-batches
+            - self.before_eval_step (moves data to device)
+            - self.eval_step
+            - self.after_eval_step (nothing by default)
+          - self.after_eval
+        - save intermitent checkpoint if asked by user config
+      - save final checkpoint if asked by user config
+    - self.after_fit (evaluates by default)
+
     Parameters
     ----------
     data: dict
-        Data configuration.
-    network: dict
-        Network configuration.
+        Data mapper of name->mini-batch. The `train` name is used for training.
+        Any other name is used for validation.
+    modules: dict
+        Modules (NNs) configuration.
     objective: dict
         Objective configuration.
-    train_on: str
-        Name of the dataset to train on.
     hardware: dict
         Hardware configuration.
     optim: dict
         Optimizer configuration.
     logger: dict
         Logger configuration.
-    eval_only: bool, optional
-        Whether to only evaluate the model. Default is False.
     """
 
-    def __init__(
-        self,
-        data,
-        network,
-        objective,
-        train_on,
-        hardware,
-        optim,
-        logger,
-        eval_only=False,
-    ):
+    def __init__(self, data, modules, objective, hardware, optim, logger, **kwargs):
         super().__init__()
         logging.info(f"=> INIT OF {self.__class__.__name__} STARTED")
+        for key, value in kwargs.items():
+            setattr(self, key, value)
         self._data = data
-        self._network = network
+        self._modules = modules
         self._objective = objective
-        self._train_on = train_on
         self._hardware = hardware
         self._optim = optim
         self._logger = logger
-        self._eval_only = eval_only
         self.set_logger_defaults(self._logger)
         self.set_optim_defaults(self._optim)
         c = self.get_config()
@@ -149,16 +166,13 @@ class BaseModel(torch.nn.Module):
 
         logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED")
 
-    def setup(self):
-
-        logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
+    def instanciate(self):
         seed_everything(self._hardware.get("seed", None))
 
         self.start_time = time.time()
         # we skip optim as we may not need it (see below)
         self.data = hydra.utils.instantiate(self._data, _convert_="object")
-        self.network = hydra.utils.instantiate(self._network, _convert_="object")
+        self.modules = hydra.utils.instantiate(self._modules, _convert_="object")
         self.objective = hydra.utils.instantiate(self._objective, _convert_="object")
         self.hardware = hydra.utils.instantiate(self._hardware, _convert_="object")
         self.logger = hydra.utils.instantiate(self._logger, _convert_="object")
@@ -210,8 +224,6 @@ class BaseModel(torch.nn.Module):
             if name[0] == "_":
                 logging.info(f"\t- `{name}` ignored (starts with `_`).")
                 continue
-            train = "train" if name == self.train_on else "eval"
-            logging.info(f"\t- {name}  ({train}):")
             logging.info(f"\t\t- length: {len(loader)}.")
             if name in self.logger["metrics"]:
                 logging.info("\t\t- metrics:")
@@ -238,14 +250,9 @@ class BaseModel(torch.nn.Module):
                     f"\t- Length after DDS on this process `{len(self.data[name])}."
                 )
 
-        if not self.eval_only and self.train_on not in self.data:
-            log_and_raise(
-                ValueError, f"Training data ({self.train_on}) not in {self.data}."
-            )
-
         # Modules and scaler
         logging.info("Modules:")
-        for name, module in self.network.items():
+        for name, module in self.modules.items():
             # if self.config.model.memory_format == "channels_last":
             #     module.to(memory_format=torch.channels_last)
             if self.world_size > 1:
@@ -258,28 +265,32 @@ class BaseModel(torch.nn.Module):
                 module = torch.nn.parallel.DistributedDataParallel(
                     module, device_ids=[self._device]
                 )
-            self.network[name] = module
+            self.modules[name] = module
             trainable = sum(
                 param.numel() for param in module.parameters() if param.requires_grad
             )
             logging.info(f"\t- {name} with {trainable} trainable parameters.")
-        self.network = torch.nn.ModuleDict(self.network)
+        self.modules = torch.nn.ModuleDict(self.modules)
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.hardware["float16"])
 
         self.register_buffer("global_step", torch.zeros((1,), dtype=int))
 
-        if not self.eval_only:
+        if "train" in self.data:
             logging.info("Setting up self.optim.")
             self.optim = hydra.utils.instantiate(self._optim, _convert_="object")
             self.optim["optimizer"] = self.optim["optimizer"](self.parameters())
             self.optim["scheduler"] = self.optim["scheduler"](self.optim["optimizer"])
         else:
             logging.info(
-                "Mode is eval_only, skipping optimizer and scheduler initializations."
+                "No `train` in data, skipping optimizer and scheduler initializations."
             )
 
         self._log_buffer = {}
 
+    def setup(self):
+        logging.getLogger().setLevel(self._logger["level"])
+        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
+        self.instanciate()
         self.load_checkpoint()
         logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
 
@@ -310,7 +321,7 @@ class BaseModel(torch.nn.Module):
         optim["grad_max_norm"] = optim.get("grad_max_norm", None)
 
     def forward(self):
-        return self.network["backbone"](self.batch[0])
+        return self.modules["backbone"](self.batch[0])
 
     def predict(self):
         return self.forward()
@@ -329,7 +340,7 @@ class BaseModel(torch.nn.Module):
         Can be customized by the user to fit the use-cases.
         This is just a boilerplate version that provides minimal things.
         """
-        if self._eval_only:
+        if "train" not in self.data:
             self.evaluate()
             self.cleanup()
             return
@@ -337,7 +348,6 @@ class BaseModel(torch.nn.Module):
             self.before_fit()
             self.fit()
             self.after_fit()
-            self.evaluate()  # always eval the model after training
         except BreakAllEpochs:
             logging.exception("Training stopped by user.")
             raise
@@ -380,6 +390,7 @@ class BaseModel(torch.nn.Module):
         (self.logger["dump_path"] / "tmp_checkpoint.ckpt").unlink(missing_ok=True)
 
     def fit_epoch(self):
+        assert "train" in self.data
         self.before_fit_epoch()
         # We do not ensure that the model is still in train mode to not
         # override any user desired behavior, simply speak out.
@@ -389,7 +400,7 @@ class BaseModel(torch.nn.Module):
                 "train mode after call to before_fit_epoch()."
             )
 
-        loader = self.data[self.train_on]
+        loader = self.data["train"]
         # If max_steps is negative, train on the full dataset.
         if self.optim["max_steps"] < 0:
             max_steps = len(loader)
@@ -400,12 +411,9 @@ class BaseModel(torch.nn.Module):
         else:
             max_steps = min(self.optim["max_steps"], len(loader))
 
-        for self._batch_idx, data in enumerate(
+        for self._batch_idx, self.batch in enumerate(
             tqdm(loader, total=max_steps, desc=f"Training: {self.epoch}")
         ):
-            # set up the data to have easy access throughout the methods
-            self.batch = to_device(data, self.device)
-
             self.before_fit_step()
             self.fit_step()
             self.after_fit_step()
@@ -430,7 +438,7 @@ class BaseModel(torch.nn.Module):
 
         packet = {"epoch": min(self.epoch, self.optim["epochs"] - 1)}
         for name_loader, loader in self.data.items():
-            if name_loader == self.train_on or name_loader[0] == "_":
+            if name_loader == "train" or name_loader[0] == "_":
                 continue
             # Reset the metrics for the epoch.
             if name_loader in self.logger["metrics"]:
@@ -440,12 +448,11 @@ class BaseModel(torch.nn.Module):
             try:
                 max_steps = len(loader)
                 with torch.inference_mode():
-                    for self._batch_idx, data in tqdm(
+                    for self._batch_idx, self.batch in tqdm(
                         enumerate(loader),
                         total=max_steps,
                         desc=f"Eval {name_loader}: {self.epoch=}",
                     ):
-                        self.batch = to_device(data, self.device)
 
                         # Call any user specified pre-step function.
                         self.before_eval_step()
@@ -491,7 +498,7 @@ class BaseModel(torch.nn.Module):
                 "Returned loss must be a float, a list of floats or a dict of floats.",
             )
 
-        if np.isnan(loss.item()):
+        if torch.isnan(loss):
             log_and_raise(NanError, "Loss is NaN. Stopping training.")
 
         self.scaler.scale(loss).backward()
@@ -592,13 +599,11 @@ class BaseModel(torch.nn.Module):
         self.save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
         model = type(self)(
             self._data,
-            self._network,
+            self._modules,
             self._objective,
-            self._train_on,
             self._hardware,
             self._optim,
             self._logger,
-            self._eval_only,
         )
         logging.info("Cleaning up the current task before submitting a new one.")
         self.cleanup()
@@ -637,6 +642,7 @@ class BaseModel(torch.nn.Module):
 
         # Log in jsonl.
         else:
+            self._log_buffer.update(self.generate_logging_default_bucket())
             with jsonlines.open(
                 self.logger["dump_path"] / f"logs_rank_{self.rank}.jsonl", mode="a"
             ) as writer:
@@ -709,12 +715,8 @@ class BaseModel(torch.nn.Module):
     def generate_logging_default_bucket(self):
         cur_time = time.time()
         rel_time = cur_time - self.start_time
-        if self.world_size > 1:
-            rank = torch.distributed.get_rank()
-        else:
-            rank = 0
         bucket = {
-            "rank": rank,
+            "rank": self.rank,
             "timestamp": cur_time,
             "relative_time": rel_time,
             "training": self.training,
@@ -768,14 +770,6 @@ class BaseModel(torch.nn.Module):
         return 1
 
     @property
-    def train_on(self):
-        return self._train_on
-
-    @property
-    def eval_only(self):
-        return self._eval_only
-
-    @property
     def epoch(self):
         if not hasattr(self, "_epoch"):
             return None
@@ -809,18 +803,19 @@ class BaseModel(torch.nn.Module):
         self.epoch = 0
 
     def after_fit(self):
-        pass
+        self.evaluate()
 
     def before_fit_epoch(self):
         self.train()
         if self.world_size > 1:
-            self.data[self._train_on].set_epoch(self.epoch)
+            self.data["train"].set_epoch(self.epoch)
 
     def after_fit_epoch(self):
         pass
 
     def before_fit_step(self):
-        pass
+        # set up the data to have easy access throughout the methods
+        self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
         pass
@@ -832,7 +827,7 @@ class BaseModel(torch.nn.Module):
         pass
 
     def before_eval_step(self):
-        pass
+        self.batch = to_device(self.batch, self.device)
 
     def after_eval_step(self):
         pass
@@ -841,32 +836,53 @@ class BaseModel(torch.nn.Module):
 class JointEmbedding(BaseModel):
     r"""Base class for training a joint-embedding SSL model."""
 
+    def format_views_labels(self):
+        if (
+            len(self.batch) == 2
+            and torch.is_tensor(self.batch[1])
+            and not torch.is_tensor(self.batch[0])
+        ):
+            # we assume the second element are the labels
+            views, labels = self.batch
+        elif (
+            len(self.batch) > 1
+            and all([torch.is_tensor(b) for b in self.batch])
+            and len(set([b.ndim for b in self.batch])) == 1
+        ):
+            # we assume all elements are views
+            views = self.batch
+            labels = None
+        else:
+            msg = """You are using the JointEmbedding class with only 1 view!
+            Make sure to double check your config and datasets definition.
+            Most methods expect 2 views, some can use more."""
+            log_and_raise(ValueError, msg)
+        return views, labels
+
     def predict(self):
-        return self.network["backbone_classifier"](self.forward())
+        return self.modules["backbone_classifier"](self.forward())
 
     def compute_loss(self):
-        embeddings = [self.network["backbone"](view) for view in self.batch[0]]
-        loss_backbone_classifier = sum(
-            [
-                F.cross_entropy(
-                    self.network["backbone_classifier"](embed.detach()), self.batch[1]
-                )
-                for embed in embeddings
-            ]
-        )
-
-        projections = [self.network["projector"](embed) for embed in embeddings]
-        loss_proj_classifier = sum(
-            [
-                F.cross_entropy(
-                    self.network["projector_classifier"](proj.detach()), self.batch[1]
-                )
-                for proj in projections
-            ]
-        )
+        views, labels = self.format_views_labels()
+        embeddings = [self.modules["backbone"](view) for view in views]
+        projections = [self.modules["projector"](embed) for embed in embeddings]
 
         loss_ssl = self.objective(*projections)
 
+        # classifiers, but only if given labels
+        if labels is not None:
+            loss_backbone_classifier = 0
+            loss_proj_classifier = 0
+            for embed, proj in zip(embeddings, projections):
+                loss_backbone_classifier += F.cross_entropy(
+                    self.modules["backbone_classifier"](embed.detach()), labels
+                )
+                loss_proj_classifier += F.cross_entropy(
+                    self.modules["projector_classifier"](proj.detach()), labels
+                )
+        else:
+            loss_backbone_classifier = 0
+            loss_proj_classifier = 0
         return {
             "train/loss_ssl": loss_ssl,
             "train/loss_backbone_classifier": loss_backbone_classifier,
@@ -877,13 +893,17 @@ class JointEmbedding(BaseModel):
 class SelfDistillation(JointEmbedding):
     r"""Base class for training a self-distillation SSL model."""
 
-    def initialize_modules(self):
-        super().initialize_modules()
-        self.network["backbone_target"] = copy.deepcopy(self.network["backbone"])
-        self.network["projector_target"] = copy.deepcopy(self.network["projector"])
+    def setup(self):
+        logging.getLogger().setLevel(self._logger["level"])
+        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
+        self.instanciate()
+        self.modules["backbone_target"] = copy.deepcopy(self.modules["backbone"])
+        self.modules["projector_target"] = copy.deepcopy(self.modules["projector"])
 
-        deactivate_requires_grad(self.network["backbone_target"])
-        deactivate_requires_grad(self.network["projector_target"])
+        self.modules["backbone_target"].requires_grad_(False)
+        self.modules["projector_target"].requires_grad_(False)
+        self.load_checkpoint()
+        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
 
     def before_fit_step(self):
         """Update the target parameters as EMA of the online model parameters."""
