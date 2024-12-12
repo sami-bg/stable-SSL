@@ -66,20 +66,28 @@ At its core, ``stable-SSL`` provides a ``BaseModel`` class that sequentially cal
 
 .. code-block:: text
 
-   1. INITIALIZATION PHASE:
-     - seed_everything()
-     - initialize_modules()
-     - load_checkpoint()
+   - self.before_fit (nothing by default)
+   - self.fit (executes all the training/intermitent evaluation by default)
+      - for `self.optim["epochs"]` epochs:
+         - self.fit_epoch (one training epoch by default)
+            - self.before_fit_epoch (setup in train mode)
+            - loop over mini-batches
+               - self.before_fit_step (moves data to device)
+               - self.fit_step (computes loss and performs optimization step)
+               - self.after_fit_step (nothing by default)
+            - self.after_fit_epoch (nothing by default)
+         - self.evaluate (if asked by user config, looping over all non train datasets)
+            - self.before_eval (setup in eval mode)
+            - loop over mini-batches
+               - self.before_eval_step (moves data to device)
+               - self.eval_step (computes eval metrics)
+               - self.after_eval_step (nothing by default)
+            - self.after_eval (nothing by default)
+         - save intermitent checkpoint if asked by user config
+      - save final checkpoint if asked by user config
+   - self.after_fit (evaluates by default)
 
-   2. TRAIN/EVAL PHASE:
-     - before_fit_epoch()
-     - for batch in train_loader:
-       - before_fit_step()
-       - fit_step(batch)
-       - after_fit_step()
-     - after_fit_epoch()
-
-While the organization is similar to that of ``PyTorch Lightning``, the goal of ``stable-SSL`` is to significantly reduce codebase complexity without sacrificing performance. Think of ``PyTorch Lightning`` as industry-driven (abstracting everything away), whereas ``stable-SSL`` is academia-driven (bringing everything to the forefront for the user).
+While the organization is similar to that of ``PyTorch Lightning``, the goal of ``stable-SSL`` is to significantly reduce codebase complexity without sacrificing performance. Think of ``PyTorch Lightning`` as industry-driven (abstracting everything away), whereas ``stable-SSL`` is academia-driven (providing users with complete visibility into every aspect).
 
 
 How to launch runs
@@ -89,18 +97,15 @@ How to launch runs
 
 When using ``stable-SSL``, we recommend relying on configuration files to specify the parameters, typically using ``Hydra`` (see `Hydra documentation <https://hydra.cc/>`_).
 
-The parameters are organized into the following groups:
+The parameters are organized into the following groups (more details in the `User Guide <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html>`_):
 
-* ``data``: Defines the dataset, loading, and augmentation pipelines. Only the dataset specified by ``train_on`` is used for training.
-* ``networks``: Specifies the neural network modules, with a required ``backbone`` as the model's core.
-* ``objective``: Defines the model's loss function.
-* ``optim``: Contains optimization parameters, including ``epochs``, ``max_steps`` (per epoch), and ``optimizer`` / ``scheduler`` settings.
-* ``hardware``: Specifies the hardware used, including the number of GPUs, CPUs, etc.
-* ``logger``: Configures model performance monitoring. APIs like `WandB <https://wandb.ai/home>`_ are supported.
+* ``data``: Defines the dataset, loading, and augmentation pipelines. Only the dataset called ``train`` is used for training. If there is no dataset named ``train``, the model runs in evaluation mode. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#data>`_.
+* ``modules``: Specifies the neural network modules, with a required ``backbone`` as the model's core. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#module>`_.
+* ``objective``: Defines the model's loss function. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#objective>`_.
+* ``optim``: Contains optimization parameters, including ``epochs``, ``max_steps`` (per epoch), and ``optimizer`` / ``scheduler`` settings. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#optim>`_.
+* ``hardware``: Specifies the hardware used, including the number of GPUs, CPUs, etc. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#hardware>`_.
+* ``logger``: Configures model performance monitoring. APIs like `WandB <https://wandb.ai/home>`_ are supported. `Example <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html#logger>`_.
 
-Additionally, the parameter ``eval_only`` specifies whether the model should run in evaluation mode only, without training.
-
-For more details about configurations, we refer to the `User Guide <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html>`_ section of the documentation.
 
 Then, create a Python script that will load the configuration and launch the run. Here is an example with Hydra:
 
@@ -110,7 +115,7 @@ Then, create a Python script that will load the configuration and launch the run
    import hydra
    from omegaconf import OmegaConf
 
-   OmegaConf.register_new_resolver("eval", eval)
+   OmegaConf.register_new_resolver("eval", eval) # to evaluate expressions in the config file
 
    @hydra.main(version_base="1.2")
    def main(cfg):
@@ -139,8 +144,8 @@ In this example, to launch the run using the configuration file ``default_config
     :target: https://github.com/rbalestr-lab/stable-SSL/tree/main/benchmarks
 .. |CircleCI| image:: https://dl.circleci.com/status-badge/img/gh/rbalestr-lab/stable-SSL/tree/main.svg?style=svg
     :target: https://dl.circleci.com/status-badge/redirect/gh/rbalestr-lab/stable-SSL/tree/main
-.. |Pytorch| image:: https://img.shields.io/badge/PyTorch_1.8+-ee4c2c?logo=pytorch&logoColor=white
-    :target: https://pytorch.org/get-started/locally/
+.. |Pytorch| image:: https://img.shields.io/badge/PyTorch-ee4c2c?logo=pytorch&logoColor=white
+   :target: https://pytorch.org/get-started/locally/
 .. |Black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
     :target: https://github.com/psf/black
 .. |License| image:: https://img.shields.io/badge/License-MIT-yellow.svg
