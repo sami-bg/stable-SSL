@@ -14,18 +14,20 @@ import gc
 import numpy as np
 import submitit
 import jsonlines
-from pathlib import Path
 from tqdm import tqdm
 import subprocess
 import os
 import omegaconf
 import copy
+from dataclasses import asdict
+
 import torch
 import torch.nn.functional as F
 
 from .data import DistributedSamplerWrapper
 from . import reader
 from .utils import update_momentum
+from .config import LoggerConfig, WandbConfig
 
 try:
     import wandb
@@ -34,7 +36,6 @@ except ModuleNotFoundError:
         "Wandb module is not installed, make sure not to use wandb for logging "
         "or an error will be thrown."
     )
-from hydra.core.hydra_config import HydraConfig
 from .utils import (
     BreakAllEpochs,
     BreakEpoch,
@@ -46,60 +47,13 @@ from .utils import (
 )
 
 
-# https://github.com/Lightning-AI/pytorch-lightning/blob/master/src/
-# lightning/pytorch/overrides/distributed.py#L224
-# class UnrepeatedDistributedSampler(DistributedSampler):
-#     def __init__(self, *args: Any, **kwargs: Any) -> None:
-#         super().__init__(*args, **kwargs)
-#         if not isinstance(self.dataset, Sized):
-#             raise TypeError("The given dataset must implement the `__len__` method.")
-#         self.num_samples = len(range(self.rank, len(self.dataset), self.num_replicas))
-#         self.total_size = len(self.dataset)
-#         # If any process has at least one batch, every other process needs to
-#         # have at least one batch, or the DistributedDataParallel could lock up.
-#         assert self.num_samples >= 1 or self.total_size == 0
-
-#     @override
-#     def __iter__(self) -> Iterator[List[int]]:
-#         if not isinstance(self.dataset, Sized):
-#             raise TypeError("The given dataset must implement the `__len__` method.")
-#         if self.shuffle:
-#             # deterministically shuffle based on epoch
-#             g = torch.Generator()
-#             g.manual_seed(self.epoch)
-#             indices = torch.randperm(len(self.dataset), generator=g).tolist()
-#         else:
-#             indices = list(range(len(self.dataset)))
-
-#         assert len(indices) == self.total_size
-
-#         # subsample
-#         indices = indices[self.rank : self.total_size : self.num_replicas]
-#         assert len(indices) == self.num_samples
-
-#         return iter(indices)
-
-
-# class UnrepeatedDistributedSamplerWrapper(UnrepeatedDistributedSampler):
-
-#     def __init__(
-#         self, sampler: Union[Sampler, Iterable], *args: Any, **kwargs: Any
-#     ) -> None:
-#         super().__init__(_DatasetSamplerWrapper(sampler), *args, **kwargs)
-
-#     @override
-#     def __iter__(self) -> Iterator:
-#         self.dataset.reset()
-#         return (self.dataset[index] for index in super().__iter__())
-
-
 class BaseModel(torch.nn.Module):
     r"""Base class for training a model.
 
     That method provides a general boilerplate for all the internal operations
     that always occur no matter the actual application and project. This includes
-    training, evaluation, checkpointing, restarting training, ... the internals
-    can be modified from the configs.
+    training, evaluation, checkpointing, restarting training, ...
+    The internals can be modified from the configs.
 
     This class should be subclassed by your specific method (see examples).
 
@@ -129,8 +83,8 @@ class BaseModel(torch.nn.Module):
     Parameters
     ----------
     data: dict
-        Data mapper of name->mini-batch. The `train` name is used for training.
-        Any other name is used for validation.
+        Data mapper of name->mini-batch. The dataset named `train` is used for training.
+        Any other dataset is used for validation.
     module: dict
         Module (NNs) configuration.
     objective: dict
@@ -154,7 +108,14 @@ class BaseModel(torch.nn.Module):
         self._hardware = hardware
         self._optim = optim
         self._logger = logger
-        self.set_logger_defaults(self._logger)
+
+        # Set the logger defaults.
+        self._logger = asdict(LoggerConfig(**self._logger))
+        if type(self._logger["wandb"]) is bool and self._logger["wandb"] is True:
+            self._logger["wandb"] = {}
+        if isinstance(self._logger.get("wandb"), dict) and self.rank == 0:
+            self._logger["wandb"] = asdict(WandbConfig(**self._logger["wandb"]))
+
         self.set_optim_defaults(self._optim)
         c = self.get_config()
         c["trainer"]["logger"] = self._logger
@@ -196,7 +157,7 @@ class BaseModel(torch.nn.Module):
                 self.logger["wandb"]["entity"] = wandb.run.entity
                 self.logger["wandb"]["project"] = wandb.run.project
                 self.logger["wandb"]["name"] = wandb.run.name
-                self.logger["wandb"]["id"] = wandb.run.id
+                self.logger["wandb"]["ID"] = wandb.run.id
                 logging.info(f"\t\t- entity: {wandb.run.entity}")
                 logging.info(f"\t\t- project: {wandb.run.project}")
                 logging.info(f"\t\t- name: {wandb.run.name}")
@@ -294,27 +255,6 @@ class BaseModel(torch.nn.Module):
         self.load_checkpoint()
         logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
 
-    def set_logger_defaults(self, logger):
-        logger["dump_path"] = logger.get(
-            "dump_path", Path(HydraConfig.get().runtime.output_dir)
-        )
-        logger["wandb"] = logger.get("wandb", None)
-        if type(logger["wandb"]) is bool and logger["wandb"] is True:
-            logger["wandb"] = {}
-        if logger["wandb"] is not None and self.rank == 0:
-            logger["wandb"]["entity"] = logger["wandb"].get("entity", None)
-            logger["wandb"]["project"] = logger["wandb"].get("project", None)
-            logger["wandb"]["name"] = logger["wandb"].get("name", None)
-            logger["wandb"]["id"] = logger["wandb"].get("id", None)
-
-        logger["level"] = logger.get("level", 20)
-        logger["metrics"] = logger.get("metrics", {})
-        logger["save_final_model"] = logger.get("save_final_model", "final")
-        logger["eval_every_epoch"] = logger.get("eval_every_epoch", 1)
-        logger["every_step"] = logger.get("every_step", 1)
-        logger["checkpoint_frequency"] = logger.get("checkpoint_frequency", 10)
-        logger["checkpoint_model_only"] = logger.get("checkpoint_model_only", True)
-
     @staticmethod
     def set_optim_defaults(optim):
         optim["accumulation_steps"] = optim.get("accumulation_steps", 1)
@@ -334,7 +274,7 @@ class BaseModel(torch.nn.Module):
         self.launch()
 
     def launch(self):
-        """Routine that is launchd after the class is initialized.
+        """Routine that is launched after the class is initialized.
 
         This will commonly consist of training + evaluation.
         Can be customized by the user to fit the use-cases.
@@ -746,7 +686,7 @@ class BaseModel(torch.nn.Module):
             return reader.wandb(
                 self.logger["wandb"]["entity"],
                 self.logger["wandb"]["project"],
-                self.logger["wandb"]["id"],
+                self.logger["wandb"]["ID"],
                 keys=keys,
             )
 
@@ -883,6 +823,7 @@ class JointEmbedding(BaseModel):
         else:
             loss_backbone_classifier = 0
             loss_proj_classifier = 0
+
         return {
             "train/loss_ssl": loss_ssl,
             "train/loss_backbone_classifier": loss_backbone_classifier,
