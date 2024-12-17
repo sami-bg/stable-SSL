@@ -14,10 +14,10 @@ from .utils import (
     off_diagonal,
     get_open_port,
     get_gpu_info,
-    deactivate_requires_grad,
     update_momentum,
     log_and_raise,
     str_to_dtype,
+    all_reduce,
 )
 from .optim import LARS
 from .exceptions import BreakEpoch, BreakStep, NanError, BreakAllEpochs
@@ -40,7 +40,7 @@ __all__ = [
     "off_diagonal",
     "get_open_port",
     "get_gpu_info",
-    "deactivate_requires_grad",
     "update_momentum",
     "log_and_raise",
+    "all_reduce",
 ]

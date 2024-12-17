@@ -18,15 +18,13 @@ from tqdm import tqdm
 import subprocess
 import os
 import omegaconf
-import copy
+
 from dataclasses import asdict
 
 import torch
-import torch.nn.functional as F
 
 from .data import DistributedSamplerWrapper
 from . import reader
-from .utils import update_momentum
 from .config import LoggerConfig, WandbConfig, HardwareConfig, OptimConfig
 
 try:
@@ -99,7 +97,7 @@ class BaseModel(torch.nn.Module):
 
     def __init__(self, data, module, objective, hardware, optim, logger, **kwargs):
         super().__init__()
-        logging.info(f"=> INIT OF {self.__class__.__name__} STARTED")
+        logging.info(f"=> INIT OF {self.__class__.__name__} STARTED.")
         for key, value in kwargs.items():
             setattr(self, key, value)
         self._data = data
@@ -130,7 +128,7 @@ class BaseModel(torch.nn.Module):
         with open(self._logger["dump_path"] / ".hydra" / "config.yaml", "w") as f:
             omegaconf.OmegaConf.save(c, f)
 
-        logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED")
+        logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED.")
 
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
@@ -191,10 +189,19 @@ class BaseModel(torch.nn.Module):
                 logging.info(f"\t- `{name}` ignored (starts with `_`).")
                 continue
             logging.info(f"\t\t- length: {len(loader)}.")
+
             if name in self.logger["metrics"]:
                 logging.info("\t\t- metrics:")
                 for mname in self.logger["metrics"][name]:
                     logging.info(f"\t\t\t- {mname}.")
+            else:
+                if name != "train":
+                    log_and_raise(
+                        ValueError,
+                        f"Metrics for dataset {name} are not defined in the config. "
+                        "All datasets which are not `train` must have metrics defined.",
+                    )
+
             if not len(loader):
                 log_and_raise(ValueError, f"Length of dataset {name} is 0.")
             if self.world_size > 1:
@@ -205,10 +212,11 @@ class BaseModel(torch.nn.Module):
                         torch.utils.data.RandomSampler,
                     ),
                 ):
-                    logging.warn(
-                        "Custom sampler with distributed version is not supported"
+                    log_and_raise(
+                        ValueError,
+                        "Custom sampler with distributed version is not supported.",
                     )
-                    raise ValueError("ERROR")
+
                 self.data[name] = DistributedSamplerWrapper(
                     loader, self.world_size, self.rank
                 )
@@ -255,10 +263,10 @@ class BaseModel(torch.nn.Module):
 
     def setup(self):
         logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
+        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
         self._instanciate()
         self._load_checkpoint()
-        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
+        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
 
     def forward(self):
         return self.module["backbone"](self.batch[0])
@@ -314,7 +322,10 @@ class BaseModel(torch.nn.Module):
                 self._evaluate()
             self.epoch = self.epoch + 1
 
-            if self.epoch % self.logger["checkpoint_frequency"] == 0:
+            if (
+                self.logger["checkpoint_frequency"]
+                and self.epoch % self.logger["checkpoint_frequency"] == 0
+            ):
                 self._save_checkpoint(
                     f"checkpoint_{self.epoch}.ckpt",
                     model_only=self.logger["checkpoint_model_only"],
@@ -770,86 +781,3 @@ class BaseModel(torch.nn.Module):
 
     def after_eval_step(self):
         pass
-
-
-class JointEmbedding(BaseModel):
-    r"""Base class for training a joint-embedding SSL model."""
-
-    def _format_views_labels(self):
-        if (
-            len(self.batch) == 2
-            and torch.is_tensor(self.batch[1])
-            and not torch.is_tensor(self.batch[0])
-        ):
-            # we assume the second element are the labels
-            views, labels = self.batch
-        elif (
-            len(self.batch) > 1
-            and all([torch.is_tensor(b) for b in self.batch])
-            and len(set([b.ndim for b in self.batch])) == 1
-        ):
-            # we assume all elements are views
-            views = self.batch
-            labels = None
-        else:
-            msg = """You are using the JointEmbedding class with only 1 view!
-            Make sure to double check your config and datasets definition.
-            Most methods expect 2 views, some can use more."""
-            log_and_raise(ValueError, msg)
-        return views, labels
-
-    def predict(self):
-        return self.module["backbone_classifier"](self.forward())
-
-    def compute_loss(self):
-        views, labels = self._format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        projections = [self.module["projector"](embed) for embed in embeddings]
-
-        loss_ssl = self.objective(*projections)
-
-        # classifiers, but only if given labels
-        if labels is not None:
-            loss_backbone_classifier = 0
-            loss_proj_classifier = 0
-            for embed, proj in zip(embeddings, projections):
-                loss_backbone_classifier += F.cross_entropy(
-                    self.module["backbone_classifier"](embed.detach()), labels
-                )
-                loss_proj_classifier += F.cross_entropy(
-                    self.module["projector_classifier"](proj.detach()), labels
-                )
-        else:
-            loss_backbone_classifier = 0
-            loss_proj_classifier = 0
-
-        return {
-            "train/loss_ssl": loss_ssl,
-            "train/loss_backbone_classifier": loss_backbone_classifier,
-            "train/loss_projector_classifier": loss_proj_classifier,
-        }
-
-
-class SelfDistillation(JointEmbedding):
-    r"""Base class for training a self-distillation SSL model."""
-
-    def setup(self):
-        logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED")
-        self._instanciate()
-        self.module["backbone_target"] = copy.deepcopy(self.module["backbone"])
-        self.module["projector_target"] = copy.deepcopy(self.module["projector"])
-
-        self.module["backbone_target"].requires_grad_(False)
-        self.module["projector_target"].requires_grad_(False)
-        self._load_checkpoint()
-        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED")
-
-    def before_fit_step(self):
-        """Update the target parameters as EMA of the online model parameters."""
-        update_momentum(
-            self.backbone, self.backbone_target, m=self.config.model.momentum
-        )
-        update_momentum(
-            self.projector, self.projector_target, m=self.config.model.momentum
-        )

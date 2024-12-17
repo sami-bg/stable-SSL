@@ -44,6 +44,16 @@ def gather(x: torch.Tensor):
         return torch.cat(GatherLayer.apply(x), dim=0)
 
 
+def all_reduce(x: torch.Tensor):
+    """Reduce tensors from all processes if DDP is initialized."""
+    if not (dist.is_available() and dist.is_initialized()):
+        return x
+    else:
+        x = x / dist.get_world_size()
+        dist.all_reduce(x)
+        return x
+
+
 def str_to_dtype(v: str) -> torch.dtype:
     """Convert a string to a pytorch dtype.
 
@@ -200,12 +210,6 @@ def get_gpu_info():
         logging.info(f"\t{complete_process.stdout}")
     except subprocess.SubprocessError as e:
         logging.info("nvidia-smi failed.", exc_info=e)
-
-
-def deactivate_requires_grad(model: torch.nn.Module):
-    """Deactivates the requires_grad flag for all parameters of a model."""
-    for param in model.parameters():
-        param.requires_grad = False
 
 
 @torch.no_grad()

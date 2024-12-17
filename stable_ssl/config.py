@@ -59,10 +59,10 @@ class LoggerConfig:
         The logging level. Determines the threshold for what gets logged. Default is 20.
     metrics : dict, optional
         A dictionary to store and log various metrics. Default is an empty dict.
-    save_final_model : str, optional
+    save_final_model : str or bool, optional
         Specifies whether to save the final trained model.
         If a name is provided, the final model will be saved with that name.
-        Default is "final".
+        Default is False.
     eval_every_epoch : int, optional
         The frequency (in epochs) at which the model will be evaluated.
         For example, if set to 1, evaluation occurs every epoch. Default is 1.
@@ -71,7 +71,8 @@ class LoggerConfig:
         For example, if set to 1, logs occur every step. Default is 1.
     checkpoint_frequency : int, optional
         The frequency (in epochs) at which model checkpoints are saved.
-        For example, if set to 10, a checkpoint is saved every 10 epochs. Default is 10.
+        For example, if set to 10, a checkpoint is saved every 10 epochs.
+        Default is None.
     checkpoint_model_only : bool, optional
         Whether to save only the model weights (True) or save additional training state
         (False) during checkpointing. Default is True.
@@ -85,10 +86,10 @@ class LoggerConfig:
 
     level: int = 20
     metrics: dict = field(default_factory=dict)
-    save_final_model: str = "final"
+    save_final_model: Union[str, bool] = False
     eval_every_epoch: int = 1
     every_step: int = 1
-    checkpoint_frequency: int = 10
+    checkpoint_frequency: Optional[int] = None
     checkpoint_model_only: bool = True
     dump_path: Path = field(
         default_factory=lambda: Path(HydraConfig.get().runtime.output_dir)
@@ -131,7 +132,7 @@ class OptimConfig:
     epochs : int, optional
         Number of epochs to train the model. Default is 1000.
     max_steps : int, optional
-        Maximum number of steps to train the model. Default is None.
+        Maximum number of steps to train the model. Default is -1.
     accumulation_steps : int, optional
         Number of steps to accumulate gradients before updating the model.
         Default is 1.
@@ -143,6 +144,6 @@ class OptimConfig:
     optimizer: dict
     scheduler: dict
     epochs: int = 1000
-    max_steps: Optional[int] = None
+    max_steps: int = -1
     accumulation_steps: int = 1
     grad_max_norm: Optional[float] = None

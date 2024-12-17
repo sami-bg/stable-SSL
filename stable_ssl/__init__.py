@@ -13,8 +13,9 @@ from .__about__ import (
     __license__,
 )
 
-from .base import BaseModel, JointEmbedding, SelfDistillation
-from .losses import NTXEntLoss, BYOLLoss, VICRegLoss, BarlowTwinsLoss
+from .base import BaseModel
+from .template import JointEmbedding, SelfDistillation
+from .losses import NTXEntLoss, VICRegLoss, BarlowTwinsLoss, NegativeCosineSimilarity
 from .config import instanciate_config
 
 __all__ = [
@@ -28,8 +29,8 @@ __all__ = [
     "JointEmbedding",
     "SelfDistillation",
     "NTXEntLoss",
-    "BYOLLoss",
     "VICRegLoss",
     "BarlowTwinsLoss",
+    "NegativeCosineSimilarity",
     "instanciate_config",
 ]

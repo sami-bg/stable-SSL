@@ -7,11 +7,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import logging
 import torch
 import torch.nn.functional as F
 
-from stable_ssl.utils import gather, off_diagonal
+from stable_ssl.utils import gather, off_diagonal, all_reduce
 
 
 class NTXEntLoss(torch.nn.Module):
@@ -60,10 +59,10 @@ class NTXEntLoss(torch.nn.Module):
         sim_i_j = torch.diag(sim, N // 2)
         sim_j_i = torch.diag(sim, -N // 2)
 
-        positive_samples = torch.cat((sim_i_j, sim_j_i), dim=0)  # shape (N)
+        positive_samples = torch.cat((sim_i_j, sim_j_i), dim=0)
 
         mask = torch.eye(N, dtype=bool).to(z_i.device)
-        negative_samples = sim[~mask].reshape(N, -1)  # shape (N, N-1)
+        negative_samples = sim[~mask].reshape(N, -1)
 
         attraction = -positive_samples.mean()
         repulsion = torch.logsumexp(negative_samples, dim=1).mean()
@@ -71,45 +70,57 @@ class NTXEntLoss(torch.nn.Module):
         return attraction + repulsion
 
 
-class BYOLLoss(torch.nn.Module):
-    """SSL objective used in BYOL [GSA+20]_.
+class NegativeCosineSimilarity(torch.nn.Module):
+    """Negative cosine similarity objective.
+
+    This objective is used for instance in BYOL [GSA+20]_ or SimSiam [CH21]_.
 
     Reference
     ---------
     .. [GSA+20] Grill, J. B., Strub, F., Altché, ... & Valko, M. (2020).
             Bootstrap Your Own Latent-A New Approach To Self-Supervised Learning.
             Advances in neural information processing systems, 33, 21271-21284.
+    .. [CH21] Chen, X., & He, K. (2021).
+            Exploring simple siamese representation learning.
+            IEEE/CVF conference on Computer Vision and Pattern Recognition.
     """
 
-    def forward(self, predictions, projections_target):
+    def forward(self, z_i, z_j):
         """Compute the loss of the BYOL model.
 
         Parameters
         ----------
-        predictions : list of torch.Tensor
-            Predictions of the different augmented views from the online network.
-        projections_target : list of torch.Tensor
-            Projections of the corresponding augmented views from the target network.
+        z_i : torch.Tensor
+            Latent representation of the first augmented view of the batch.
+        z_j : torch.Tensor
+            Latent representation of the second augmented view of the batch.
 
         Returns
         -------
         float
             The computed loss.
         """
-        if len(predictions) > 2 or len(projections_target) > 2:
-            logging.warning(
-                "BYOL only supports two views. Only the first two views will be used."
-            )
-
         sim = torch.nn.CosineSimilarity(dim=1)
-        return -0.5 * (
-            sim(predictions[0], projections_target[1]).mean()
-            + sim(predictions[1], projections_target[0]).mean()
-        )
+        return -sim(z_i, z_j).mean()
 
 
 class VICRegLoss(torch.nn.Module):
     """SSL objective used in VICReg [BPL21]_.
+
+    Parameters
+    ----------
+    sim_coeff : float, optional
+        The weight of the similarity loss (attractive term).
+        Default is 25.
+    std_coeff : float, optional
+        The weight of the standard deviation loss.
+        Default is 25.
+    cov_coeff : float, optional
+        The weight of the covariance loss.
+        Default is 1.
+    epsilon : float, optional
+        Small value to avoid division by zero.
+        Default is 1e-4.
 
     Reference
     ---------
@@ -119,7 +130,13 @@ class VICRegLoss(torch.nn.Module):
             International Conference on Learning Representations (ICLR).
     """
 
-    def __init__(self, sim_coeff, std_coeff, cov_coeff, epsilon):
+    def __init__(
+        self,
+        sim_coeff: float = 25,
+        std_coeff: float = 25,
+        cov_coeff: float = 1,
+        epsilon: float = 1e-4,
+    ):
         super().__init__()
         self.sim_coeff = sim_coeff
         self.std_coeff = std_coeff
@@ -170,6 +187,12 @@ class VICRegLoss(torch.nn.Module):
 class BarlowTwinsLoss(torch.nn.Module):
     """SSL objective used in [ZJM+21]_.
 
+    Parameters
+    ----------
+    lambd : float, optional
+        The weight of the off-diagonal terms in the loss.
+        Default is 5e-3.
+
     Reference
     ---------
     .. [ZJM+21] Zbontar, J., Jing, L., Misra, I., LeCun, Y., & Deny, S. (2021).
@@ -177,11 +200,12 @@ class BarlowTwinsLoss(torch.nn.Module):
             In International conference on machine learning (pp. 12310-12320). PMLR.
     """
 
-    def __init__(self, lamb: 0.1):
-        self.lamb = lamb
+    def __init__(self, lambd: float = 5e-3):
+        super().__init__()
+        self.lambd = lambd
         self.bn = torch.nn.LazyBatchNorm1d()
 
-    def compute_ssl_loss(self, z_i, z_j):
+    def forward(self, z_i, z_j):
         """Compute the loss of the Barlow Twins model.
 
         Parameters
@@ -196,14 +220,11 @@ class BarlowTwinsLoss(torch.nn.Module):
         float
             The computed loss.
         """
-        # Empirical cross-correlation matrix.
-        c = self.bn(z_i).T @ self.bn(z_j)
+        c = self.bn(z_i).T @ self.bn(z_j)  # normalize along the batch dimension
+        c = c / z_i.size(0)
+        all_reduce(c)
 
-        # Sum the cross-correlation matrix between all gpus.
-        c.div_(self.config.data.train_dataset.batch_size)
-        torch.distributed.all_reduce(c)
-
-        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        off_diag = off_diagonal(c).pow_(2).sum()
-        loss = on_diag + self.config.model.lambd * off_diag
+        on_diag = (torch.diagonal(c) - 1).pow(2).sum()
+        off_diag = off_diagonal(c).pow(2).sum()
+        loss = on_diag + self.lambd * off_diag
         return loss

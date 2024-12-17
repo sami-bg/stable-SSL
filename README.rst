@@ -137,6 +137,27 @@ In this example, to launch the run using the configuration file ``default_config
    python run.py --config-name default_config --config-path configs/
 
 
+Examples of Methods
+~~~~~~~~~~~~~~~~~~
+
++---------------+-----------+-------------------+--------------------------+
+| Methods       | Predictor | Self-distillation | Loss                     |
++---------------+-----------+-------------------+--------------------------+
+| Barlow Twins  | ❌        | ❌                | BarlowTwinsLoss          |
++---------------+-----------+-------------------+--------------------------+
+| BYOL          | ✅        | ✅                | NegativeCosineSimilarity |
++---------------+-----------+-------------------+--------------------------+
+| MoCo          | ❌        | ✅                | NTXEntLoss               |
++---------------+-----------+-------------------+--------------------------+
+| SimCLR        | ❌        | ❌                | NTXEntLoss               |
++---------------+-----------+-------------------+--------------------------+
+| SimSiam       | ✅        | ❌                | NegativeCosineSimilarity |
++---------------+-----------+-------------------+--------------------------+
+| VICReg        | ✅        | ✅                | VICRegLoss               |
++---------------+-----------+-------------------+--------------------------+
+
+
+
 
 .. |Documentation| image:: https://img.shields.io/badge/Documentation-blue.svg
     :target: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/
