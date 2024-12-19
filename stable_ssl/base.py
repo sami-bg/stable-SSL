@@ -255,6 +255,27 @@ class BaseTrainer(torch.nn.Module):
         # set up the data to have easy access throughout the methods
         self.batch = to_device(self.batch, self.device)
 
+    def after_fit_step(self):
+        if 'train' in self.logger['monitors']:
+            for metric in self.logger["monitors"]["train"].values():
+                metric: Monitor
+                score = metric.compute(self._latest_forward)
+                if self.global_step % self.logger["every_step"] == 0:
+                    self._log({f"train/{metric.name}": score})
+
+    def before_eval(self):
+        self.eval()
+
+    def after_eval(self):
+        pass
+
+    def before_eval_step(self):
+        self.batch = to_device(self.batch, self.device)
+
+    def after_eval_step(self):
+        pass
+
+
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
 
@@ -792,23 +813,3 @@ class BaseTrainer(torch.nn.Module):
     def latest_forward(self, value):
         self._latest_forward = value
 
-
-    def after_fit_step(self):
-        if 'train' in self.logger['monitors']:
-            for metric in self.logger["monitors"]["train"].values():
-                metric: Monitor
-                score = metric.compute(self._latest_forward)
-                if self.global_step % self.logger["every_step"] == 0:
-                    self._log({f"train/{metric.name}": score})
-
-    def before_eval(self):
-        self.eval()
-
-    def after_eval(self):
-        pass
-
-    def before_eval_step(self):
-        self.batch = to_device(self.batch, self.device)
-
-    def after_eval_step(self):
-        pass
