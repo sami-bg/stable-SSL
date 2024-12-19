@@ -12,11 +12,24 @@ from functools import cache
 from collections import deque
 
 import torch
+import torch.distributed as dist
 
-from .utils import gather
 
 @cache
 def warn_once(warning: str): logging.warning(warning)
+
+
+def gather_to_rank0(x: torch.Tensor):
+    if not (dist.is_available() and dist.is_initialized()) \
+        or (world_size := dist.get_world_size()) == 1:
+        return x
+    
+    if dist.get_rank() == 0:
+        output = [torch.zeros_like(x) for _ in range(world_size)]
+        dist.gather(x, output, dst=0)
+        return torch.cat(output, dim=0)
+    else:
+        return x
 
 
 class Monitor:
@@ -24,15 +37,11 @@ class Monitor:
     Base class for metrics that are monitored at the end of each step, for example:
         - RankMe
         - GradNorm
-        - BatchDiversity
 
-    Inheritors must implement a `compute` method, that calculates the metric, and a `name` attribute for logging.
+    Inheritors must implement a `compute` method, that calculates the metric,
+    and a `name` attribute for logging.
     """
-
     name: str = "monitor"
-    
-    def __init__(self):
-        pass
 
     def compute(self, x):
         """
@@ -44,11 +53,21 @@ class Monitor:
 class RankMe(Monitor):
     name = "rankme"
     
-    def __init__(self, limit: int=12, epsilon: float=1e-7):
+    def __init__(self, limit: int=8, epsilon: float=1e-7):
         super().__init__()
-        self.limit = limit
+        self.global_limit = limit
+        
+        num_devices = 1 
+        if dist.is_available() and dist.is_initialized():
+            num_devices = dist.get_world_size()
+        
+        assert self.global_limit % num_devices == 0, \
+            f'RankMe {limit=} must be divisible by {num_devices=}'
+        self.device_limit = self.global_limit // num_devices
+
         self.epsilon = epsilon
-        self.bounded_queue = deque(maxlen=self.limit)
+        self.bounded_queue = deque(maxlen=self.device_limit)
+
 
     @staticmethod
     def _calculate_rankme(x: torch.Tensor, epsilon: float) -> torch.Tensor:
@@ -67,7 +86,7 @@ class RankMe(Monitor):
         self.bounded_queue.append(encoding.reshape(batch_size, -1))
 
         encoding = torch.cat(list(self.bounded_queue), dim=0)
-        encoding = gather(encoding)
+        encoding = gather_to_rank0(encoding)
 
         return RankMe._calculate_rankme(encoding, self.epsilon)
 

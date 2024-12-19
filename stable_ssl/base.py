@@ -495,7 +495,7 @@ class BaseModel(torch.nn.Module):
         if name_loader in self.logger["monitors"]:
             for metric in self.logger["monitors"][name_loader].values():
                 metric: Monitor
-                # NOTE To make this more general (e.g. for BatchDiversity, GradNorm, etc.)
+                # NOTE To make this more general (e.g. for GradNorm, etc.)
                 # we should pass in the BaseModel in its entirety and let the compute method use
                 # what it needs. 
                 score = metric.compute(output)
