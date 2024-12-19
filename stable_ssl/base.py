@@ -26,6 +26,7 @@ import torch
 from .data import DistributedSamplerWrapper
 from . import reader
 from .config import LoggerConfig, WandbConfig, HardwareConfig, OptimConfig
+from .monitors import Monitor
 
 try:
     import wandb
@@ -65,7 +66,7 @@ class BaseModel(torch.nn.Module):
           - loop over mini-batches
             - self.before_fit_step (moves data to device)
             - self.fit_step (computes loss and performs optimization step)
-            - self.after_fit_step (nothing by default)
+            - self.after_fit_step (computes tracking metrics)
           - self.after_fit_epoch (nothing by default)
         - self.evaluate (if asked by user config, looping over all non train datasets)
           - self.before_eval (setup in eval mode)
@@ -269,7 +270,8 @@ class BaseModel(torch.nn.Module):
         logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
 
     def forward(self):
-        return self.module["backbone"](self.batch[0])
+        self.latest_forward = self.module["backbone"](self.batch[0])
+        return self.latest_forward
 
     def predict(self):
         return self.forward()
@@ -489,6 +491,12 @@ class BaseModel(torch.nn.Module):
         if name_loader in self.logger["metrics"]:
             for metric in self.logger["metrics"][name_loader].values():
                 metric.update(output, self.batch[1])
+
+        if name_loader in self.logger["monitors"]:
+            for metric in self.logger["monitors"][name_loader].values():
+                metric: Monitor
+                score = metric.compute(output)
+                self._log({f'{name_loader}/{metric.name}': score})
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.
@@ -741,6 +749,12 @@ class BaseModel(torch.nn.Module):
     def device(self):
         return self._device
 
+    @property
+    def latest_forward(self):
+        if not hasattr(self, 'latest_forward'):
+            return None
+        return self.latest_forward
+
     @epoch.setter
     def epoch(self, value):
         self._epoch = value
@@ -748,6 +762,10 @@ class BaseModel(torch.nn.Module):
     @step.setter
     def step(self, value):
         self._step = value
+
+    @latest_forward.setter
+    def latest_forward(self, value):
+        self._latest_embeddings = value
 
     def before_fit(self):
         self.epoch = 0
@@ -768,7 +786,11 @@ class BaseModel(torch.nn.Module):
         self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        pass
+        if 'train' in self.logger['tracking']:
+            for metric in self.logger["monitors"]["train"].values():
+                metric: Monitor
+                score = metric.compute(self.latest_forward)
+                self._log({f"train/{metric.name}": score})
 
     def before_eval(self):
         self.eval()
