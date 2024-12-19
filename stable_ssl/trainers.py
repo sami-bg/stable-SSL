@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Template classes to easily instanciate SSL models."""
+"""Template classes to easily instanciate Supervised or SSL trainers."""
 #
 # Author: Hugues Van Assel <vanasselhugues@gmail.com>
 #         Randall Balestriero <randallbalestriero@gmail.com>
@@ -13,11 +13,22 @@ import logging
 import torch
 import torch.nn.functional as F
 
-from .base import BaseModel
+from .base import BaseTrainer
 from .utils import update_momentum, log_and_raise
 
 
-class JointEmbedding(BaseModel):
+class SupervisedTrainer(BaseTrainer):
+    r"""Base class for training a supervised model."""
+
+    def predict(self):
+        return self.forward()
+
+    def compute_loss(self):
+        loss = self.loss(self.predict(), self.batch[1])
+        return {"train/loss": loss}
+
+
+class JointEmbeddingTrainer(BaseTrainer):
     r"""Base class for training a joint-embedding SSL model."""
 
     def format_views_labels(self):
@@ -44,29 +55,16 @@ class JointEmbedding(BaseModel):
         return views, labels
 
     def predict(self):
-        return self.module["backbone_classifier"](self.forward())
+        return self.module["backbone_classifier"](self.module["backbone"](self.batch[0]))
+
 
     def compute_loss(self):
         views, labels = self.format_views_labels()
         embeddings = [self.module["backbone"](view) for view in views]
+        self.latest_forward = embeddings
         projections = [self.module["projector"](embed) for embed in embeddings]
 
-        if "predictor" in self.module:
-
-            if len(projections) > 2:
-                logging.warning(
-                    "Only the first two views are used when there is a predictor."
-                )
-
-                predictions = [self.module["predictor"](proj) for proj in projections]
-                detached_projections = [proj.detach() for proj in projections]
-
-                loss_ssl = 0.5 * (
-                    self.objective(predictions[0], detached_projections[1])
-                    + self.objective(predictions[1], detached_projections[0])
-                )
-        else:
-            loss_ssl = self.objective(*projections)
+        loss_ssl = self.loss(*projections)
 
         classifier_losses = self.compute_loss_classifiers(
             embeddings, projections, labels
@@ -93,7 +91,7 @@ class JointEmbedding(BaseModel):
         }
 
 
-class SelfDistillation(JointEmbedding):
+class SelfDistillationTrainer(JointEmbeddingTrainer):
     r"""Base class for training a self-distillation SSL model."""
 
     def setup(self):
@@ -132,8 +130,37 @@ class SelfDistillation(JointEmbedding):
         ]
 
         loss_ssl = 0.5 * (
-            self.objective(projections[0], projections_target[1])
-            + self.objective(projections[1], projections_target[0])
+            self.loss(projections[0], projections_target[1])
+            + self.loss(projections[1], projections_target[0])
+        )
+
+        classifier_losses = self.compute_loss_classifiers(
+            embeddings, projections, labels
+        )
+
+        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+
+
+class SimSiamTrainer(JointEmbeddingTrainer):
+    r"""Base class for training a SimSiam SSL model."""
+
+    def compute_loss(self):
+        views, labels = self.format_views_labels()
+        embeddings = [self.module["backbone"](view) for view in views]
+        projections = [self.module["projector"](embed) for embed in embeddings]
+
+        if len(projections) > 2:
+            logging.warning("Only the first two views are used when using SimSiam.")
+
+        if not hasattr(self.module, "predictor"):
+            log_and_raise(ValueError, "SimSiam requires a predictor module.")
+
+        predictions = [self.module["predictor"](proj) for proj in projections]
+        detached_projections = [proj.detach() for proj in projections]
+
+        loss_ssl = 0.5 * (
+            self.loss(predictions[0], detached_projections[1])
+            + self.loss(predictions[1], detached_projections[0])
         )
 
         classifier_losses = self.compute_loss_classifiers(

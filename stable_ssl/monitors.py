@@ -81,9 +81,15 @@ class RankMe(Monitor):
         entropy = -torch.sum(p * torch.log(p))
         return torch.exp(entropy)
     
-    def compute(self, encoding: torch.Tensor) -> float:
+    def compute(self, encoding: list | torch.Tensor) -> float:
+        if isinstance(encoding, list):
+            # assume a list is of views, where each view is batch_size on the 0th dim (as per JointEmbeddng)
+            return [self.compute(batch) for batch in encoding][-1]
+        
         batch_size, *_ = encoding.shape
-        self.bounded_queue.append(encoding.reshape(batch_size, -1))
+        encoding = encoding.reshape(batch_size, -1)
+        
+        self.bounded_queue.append(encoding)
 
         encoding = torch.cat(list(self.bounded_queue), dim=0)
         encoding = gather_to_rank0(encoding)

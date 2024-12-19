@@ -15,7 +15,9 @@
     :maxdepth: 1
     :caption: API
 
+    trainers
     losses
+    modules
     optimizers
     schedulers
 

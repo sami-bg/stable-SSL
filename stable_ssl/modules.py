@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Neural network models."""
+"""Neural network modules."""
 #
 # Author: Randall Balestriero <randallbalestriero@gmail.com>
 #         Hugues Van Assel <vanasselhugues@gmail.com>
@@ -10,21 +10,18 @@
 import torchvision
 import torch.nn as nn
 
+import logging
+
 
 def get_backbone_dim(
     name,
-    num_classes,
 ):
-    """Load a neural network model with a given backbone.
+    """Get the number of features in the last layer of a backbone model.
 
     Parameters
     ----------
     name : str
         Name of the backbone model.
-    num_classes : int
-        Number of classes in the dataset.
-        If None, the model is loaded without the classifier.
-        Default is None.
 
     Returns
     -------
@@ -33,7 +30,7 @@ def get_backbone_dim(
     """
     # Load the name.
     if name == "resnet9":
-        model = resnet9()
+        model = Resnet9()
     elif name == "ConvMixer":
         model = ConvMixer()
     else:
@@ -42,29 +39,18 @@ def get_backbone_dim(
         except KeyError:
             raise ValueError(f"Unknown model: {name}.")
 
-    # Adapt the last layer, either linear or identity.
-    def last_layer(num_classes, in_features):
-        if num_classes is not None:
-            return nn.Linear(in_features, num_classes)
-        else:
-            return nn.Identity()
-
     # For models like ResNet.
     if hasattr(model, "fc"):
         in_features = model.fc.in_features
-        model.fc = last_layer(num_classes, in_features)
     # For models like VGG or AlexNet.
     elif hasattr(model, "classifier"):
         in_features = model.classifier[-1].in_features
-        model.classifier[-1] = last_layer(num_classes, in_features)
     # For models like ViT.
     elif hasattr(model, "heads"):
         in_features = model.heads.head.in_features
-        model.heads.head = last_layer(num_classes, in_features)
     # For models like Swin Transformer.
     elif hasattr(model, "head"):
         in_features = model.head.in_features
-        model.head = last_layer(num_classes, in_features)
     else:
         raise ValueError(f"Unknown model structure for : '{name}'.")
 
@@ -72,12 +58,18 @@ def get_backbone_dim(
 
 
 def load_backbone(name, num_classes, weights=None, low_resolution=False, **kwargs):
-    """Load a neural network model with a given backbone.
+    """Load a backbone model.
+
+    If num_classes is provided, the last layer is replaced by a linear layer of
+    output size num_classes. Otherwise, the last layer is replaced by an identity layer.
 
     Parameters
     ----------
     name : str
-        Name of the backbone model.
+        Name of the backbone model. Supported models are:
+        - Any model from torchvision.models
+        - "resnet9"
+        - "ConvMixer"
     num_classes : int
         Number of classes in the dataset.
         If None, the model is loaded without the classifier.
@@ -93,12 +85,10 @@ def load_backbone(name, num_classes, weights=None, low_resolution=False, **kwarg
     -------
     torch.nn.Module
         The neural network model.
-    int
-        The number of features in the last layer.
     """
     # Load the name.
     if name == "resnet9":
-        model = resnet9(**kwargs)
+        model = Resnet9(**kwargs)
     elif name == "ConvMixer":
         model = ConvMixer(**kwargs)
     else:
@@ -133,17 +123,20 @@ def load_backbone(name, num_classes, weights=None, low_resolution=False, **kwarg
     else:
         raise ValueError(f"Unknown model structure for : '{name}'.")
 
-    if low_resolution and "resnet" in name and name != "resnet9":
-        model.conv1 = nn.Conv2d(
-            3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
-        )
-        model.maxpool = nn.Identity()
+    if low_resolution:  # reduce resolution, for instance for CIFAR
+        if hasattr(model, "conv1"):
+            model.conv1 = nn.Conv2d(
+                3, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False
+            )
+            model.maxpool = nn.Identity()
+        else:
+            logging.warning(f"Cannot adapt resolution for model: {name}.")
 
     return model
 
 
 class MLP(nn.Module):
-    """Create a multi-layer perceptron."""
+    """Multi-layer perceptron."""
 
     def __init__(self, sizes, activation="ReLU", batch_norm=True):
         super().__init__()
@@ -157,10 +150,11 @@ class MLP(nn.Module):
         self.layers = nn.Sequential(layers)
 
     def forward(self, x):
+        """Forward pass."""
         return self.layers(x)
 
 
-class resnet9(nn.Module):
+class Resnet9(nn.Module):
     """ResNet-9 model."""
 
     def __init__(self, in_channels=3, num_classes=10):
@@ -193,6 +187,7 @@ class resnet9(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, xb):
+        """Forward pass."""
         out = self.conv1(xb)
         out = self.conv2(out)
         out = self.res1(out) + out
@@ -206,13 +201,7 @@ class resnet9(nn.Module):
 
 
 class ConvMixer(nn.Module):
-    """ConvMixer model from [TK22]_.
-
-    References
-    ----------
-    .. [TK22]  Trockman, A., & Kolter, J. Z. (2022).
-            Patches are all you need?. arXiv preprint arXiv:2201.09792.
-    """
+    """ConvMixer model from :cite:`trockman2022patches`."""
 
     def __init__(
         self,
@@ -253,6 +242,7 @@ class ConvMixer(nn.Module):
         self.fc = nn.Linear(dim, num_classes)
 
     def forward(self, xb):
+        """Forward pass."""
         out = self.conv1(xb)
         for a, b in zip(self.blocks_a, self.blocks_b):
             out = out + a(out)

@@ -18,6 +18,7 @@ from tqdm import tqdm
 import subprocess
 import os
 import omegaconf
+from abc import abstractmethod
 
 from dataclasses import asdict
 
@@ -46,7 +47,7 @@ from .utils import (
 )
 
 
-class BaseModel(torch.nn.Module):
+class BaseTrainer(torch.nn.Module):
     r"""Base class for training a model.
 
     That method provides a general boilerplate for all the internal operations
@@ -66,7 +67,7 @@ class BaseModel(torch.nn.Module):
           - loop over mini-batches
             - self.before_fit_step (moves data to device)
             - self.fit_step (computes loss and performs optimization step)
-            - self.after_fit_step (computes tracking metrics)
+            - self.after_fit_step (computes per-step monitoring metrics)
           - self.after_fit_epoch (nothing by default)
         - self.evaluate (if asked by user config, looping over all non train datasets)
           - self.before_eval (setup in eval mode)
@@ -87,7 +88,7 @@ class BaseModel(torch.nn.Module):
     module: dict
         Module (NNs) configuration.
     loss: dict
-        loss configuration.
+        Loss configuration.
     hardware: dict
         Hardware configuration.
     optim: dict
@@ -130,6 +131,129 @@ class BaseModel(torch.nn.Module):
             omegaconf.OmegaConf.save(c, f)
 
         logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED.")
+
+    def __call__(self):
+        self.setup()
+        self.launch()
+
+    def setup(self):
+        logging.getLogger().setLevel(self._logger["level"])
+        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
+        self._instanciate()
+        self._load_checkpoint()
+        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
+
+    def launch(self):
+        """Routine that is launched after the class is initialized.
+
+        This will commonly consist of training + evaluation.
+        Can be customized by the user to fit the use-cases.
+        This is just a boilerplate version that provides minimal things.
+        """
+        if "train" not in self.data:
+            self._evaluate()
+            self._cleanup()
+            return
+        try:
+            self.before_fit()
+            self._fit()
+            self.after_fit()
+        except BreakAllEpochs:
+            logging.exception("Training stopped by user.")
+            raise
+        if self.logger["wandb"]:
+            wandb.finish()
+        self._cleanup()
+
+    @abstractmethod
+    def forward(self):
+        pass
+
+    @abstractmethod
+    def predict(self):
+        pass
+
+    @abstractmethod
+    def compute_loss(self):
+        pass
+
+    def get_logs(self, keys=None):
+        if self.logger["wandb"] is None:
+            return reader.jsonl(self.logger["dump_path"])
+        else:
+            return reader.wandb(
+                self.logger["wandb"]["entity"],
+                self.logger["wandb"]["project"],
+                self.logger["wandb"]["ID"],
+                keys=keys,
+            )
+
+    def get_config(self):
+        # Load the config file.
+        config = omegaconf.OmegaConf.load(
+            self._logger["dump_path"] / ".hydra" / "config.yaml"
+        )
+        return config
+
+    @property
+    def rank(self):
+        if self.world_size > 1:
+            return torch.distributed.get_rank()
+        return 0
+
+    @property
+    def world_size(self):
+        if torch.distributed.is_initialized():
+            return torch.distributed.get_world_size()
+        return 1
+
+    @property
+    def epoch(self):
+        if not hasattr(self, "_epoch"):
+            return None
+        return self._epoch
+
+    @property
+    def step(self):
+        if not hasattr(self, "_step"):
+            return None
+        return self._step
+
+    @property
+    def batch_idx(self):
+        if not hasattr(self, "_batch_idx"):
+            return None
+        return self._batch_idx
+
+    @property
+    def device(self):
+        return self._device
+
+    @epoch.setter
+    def epoch(self, value):
+        self._epoch = value
+
+    @step.setter
+    def step(self, value):
+        self._step = value
+
+    def before_fit(self):
+        self.epoch = 0
+
+    def after_fit(self):
+        self._evaluate()
+
+    def before_fit_epoch(self):
+        self.train()
+        if self.world_size > 1:
+            self.data["train"].set_epoch(self.epoch)
+
+    def after_fit_epoch(self):
+        pass
+
+    def before_fit_step(self):
+        # set up the data to have easy access throughout the methods
+        self.batch = to_device(self.batch, self.device)
 
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
@@ -262,49 +386,6 @@ class BaseModel(torch.nn.Module):
 
         self._log_buffer = {}
 
-    def setup(self):
-        logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
-        self._instanciate()
-        self._load_checkpoint()
-        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
-
-    def forward(self):
-        self.latest_forward = self.module["backbone"](self.batch[0])
-        return self.latest_forward
-
-    def predict(self):
-        return self.forward()
-
-    def compute_loss(self):
-        return self.loss(self.predict(), self.batch[1])
-
-    def __call__(self):
-        self.setup()
-        self.launch()
-
-    def launch(self):
-        """Routine that is launched after the class is initialized.
-
-        This will commonly consist of training + evaluation.
-        Can be customized by the user to fit the use-cases.
-        This is just a boilerplate version that provides minimal things.
-        """
-        if "train" not in self.data:
-            self._evaluate()
-            self._cleanup()
-            return
-        try:
-            self.before_fit()
-            self._fit()
-            self.after_fit()
-        except BreakAllEpochs:
-            logging.exception("Training stopped by user.")
-            raise
-        if self.logger["wandb"]:
-            wandb.finish()
-        self._cleanup()
-
     def _fit(self):
         while self.epoch < self.optim["epochs"]:
             try:
@@ -434,7 +515,6 @@ class BaseModel(torch.nn.Module):
         self.after_eval()
 
     def _fit_step(self):
-
         with torch.amp.autocast("cuda", enabled=self.hardware["float16"]):
             returned_loss = self.compute_loss()
 
@@ -499,7 +579,8 @@ class BaseModel(torch.nn.Module):
                 # we should pass in the BaseModel in its entirety and let the compute method use
                 # what it needs. 
                 score = metric.compute(output)
-                self._log({f'{name_loader}/{metric.name}': score})
+                if self.global_step % self.logger["every_step"]== 0:
+                    self._log({f'{name_loader}/{metric.name}': score})
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.
@@ -550,25 +631,6 @@ class BaseModel(torch.nn.Module):
 
         # Set the CUDA device.
         torch.cuda.set_device(self._device)
-
-    def checkpoint(self) -> submitit.helpers.DelayedSubmission:
-        # the checkpoint method is called asynchroneously when the slurm manager
-        # sends a preemption signal, with the same arguments as the __call__ method
-        # "self" is your callable, at its current state.
-        # "self" therefore holds the current version of the model:
-        logging.info("Requeuing the task...")
-        self._save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
-        model = type(self)(
-            self._data,
-            self._module,
-            self._loss,
-            self._hardware,
-            self._optim,
-            self._logger,
-        )
-        logging.info("Cleaning up the current task before submitting a new one.")
-        self._cleanup()
-        return submitit.helpers.DelayedSubmission(model)
 
     def _log(self, packet=None, commit=True):
         # Update the log buffer with the new packet.
@@ -700,100 +762,44 @@ class BaseModel(torch.nn.Module):
         logging.info("Device status after cleaning.")
         get_gpu_info()
 
-    def get_logs(self, keys=None):
-        if self.logger["wandb"] is None:
-            return reader.jsonl(self.logger["dump_path"])
-        else:
-            return reader.wandb(
-                self.logger["wandb"]["entity"],
-                self.logger["wandb"]["project"],
-                self.logger["wandb"]["ID"],
-                keys=keys,
-            )
-
-    def get_config(self):
-        # Load the config file.
-        config = omegaconf.OmegaConf.load(
-            self._logger["dump_path"] / ".hydra" / "config.yaml"
+    def checkpoint(self) -> submitit.helpers.DelayedSubmission:
+        # the checkpoint method is called asynchroneously when the slurm manager
+        # sends a preemption signal, with the same arguments as the __call__ method
+        # "self" is your callable, at its current state.
+        # "self" therefore holds the current version of the model:
+        logging.info("Requeuing the task...")
+        self._save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
+        model = type(self)(
+            self._data,
+            self._module,
+            self._loss,
+            self._hardware,
+            self._optim,
+            self._logger,
         )
-        return config
+        logging.info("Cleaning up the current task before submitting a new one.")
+        self._cleanup()
+        return submitit.helpers.DelayedSubmission(model)
 
-    @property
-    def rank(self):
-        if self.world_size > 1:
-            return torch.distributed.get_rank()
-        return 0
-
-    @property
-    def world_size(self):
-        if torch.distributed.is_initialized():
-            return torch.distributed.get_world_size()
-        return 1
-
-    @property
-    def epoch(self):
-        if not hasattr(self, "_epoch"):
-            return None
-        return self._epoch
-
-    @property
-    def step(self):
-        if not hasattr(self, "_step"):
-            return None
-        return self._step
-
-    @property
-    def batch_idx(self):
-        if not hasattr(self, "_batch_idx"):
-            return None
-        return self._batch_idx
-
-    @property
-    def device(self):
-        return self._device
 
     @property
     def latest_forward(self):
-        if not hasattr(self, 'latest_forward'):
+        if not hasattr(self, '_latest_forward'):
             return None
-        return self.latest_forward
-
-    @epoch.setter
-    def epoch(self, value):
-        self._epoch = value
-
-    @step.setter
-    def step(self, value):
-        self._step = value
+        return self._latest_forward
 
     @latest_forward.setter
     def latest_forward(self, value):
-        self._latest_embeddings = value
+        self._latest_forward = value
 
-    def before_fit(self):
-        self.epoch = 0
-
-    def after_fit(self):
-        self._evaluate()
-
-    def before_fit_epoch(self):
-        self.train()
-        if self.world_size > 1:
-            self.data["train"].set_epoch(self.epoch)
-
-    def after_fit_epoch(self):
-        pass
-
-    def before_fit_step(self):
-        # set up the data to have easy access throughout the methods
-        self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        if 'train' in self.logger['tracking']:
+        if 'train' in self.logger['monitors']:
             for metric in self.logger["monitors"]["train"].values():
                 metric: Monitor
-                score = metric.compute(self.latest_forward)
-                self._log({f"train/{metric.name}": score})
+                score = metric.compute(self._latest_forward)
+                if self.global_step % self.logger["every_step"] == 0:
+                    self._log({f"train/{metric.name}": score})
 
     def before_eval(self):
         self.eval()

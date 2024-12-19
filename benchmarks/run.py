@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 OmegaConf.register_new_resolver("eval", eval)
 
 
-@hydra.main(version_base="1.2", config_path="config", config_name="default")
+@hydra.main(version_base="1.2", config_path="config", config_name="rankme_test")
 def main(cfg):
     """Load the configuration and launch the run."""
     trainer = stable_ssl.instanciate_config(cfg)
