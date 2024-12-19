@@ -34,9 +34,9 @@ class Monitor:
     def __init__(self):
         pass
 
-    def compute(self, x):
+    def compute(self, x: BaseModel):
         """
-        Abstract method that calculates a score given a model output. 
+        Abstract method that calculates a score given a model. 
         """
         pass
 
