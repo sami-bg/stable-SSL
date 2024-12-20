@@ -55,37 +55,13 @@ Or you can also run:
 Minimal Documentation
 ---------------------
 
-
 Library Design
 ~~~~~~~~~~~~~~
 
 .. _design:
 
 ``stable-SSL`` provides all the boilerplate to quickly get started with AI research, focusing on Self-Supervised Learning (SSL), albeit other applications can certainly build upon ``stable-SSL``.
-At its core, ``stable-SSL`` provides a ``BaseTrainer`` class that sequentially calls the following methods:
-
-.. code-block:: text
-
-   - self.before_fit (nothing by default)
-   - self.fit (executes all the training/intermitent evaluation by default)
-      - for `self.optim["epochs"]` epochs:
-         - self.fit_epoch (one training epoch by default)
-            - self.before_fit_epoch (setup in train mode)
-            - loop over mini-batches
-               - self.before_fit_step (moves data to device)
-               - self.fit_step (computes loss and performs optimization step)
-               - self.after_fit_step (nothing by default)
-            - self.after_fit_epoch (nothing by default)
-         - self.evaluate (if asked by user config, looping over all non train datasets)
-            - self.before_eval (setup in eval mode)
-            - loop over mini-batches
-               - self.before_eval_step (moves data to device)
-               - self.eval_step (computes eval metrics)
-               - self.after_eval_step (nothing by default)
-            - self.after_eval (nothing by default)
-         - save intermitent checkpoint if asked by user config
-      - save final checkpoint if asked by user config
-   - self.after_fit (evaluates by default)
+At its core, ``stable-SSL`` provides a `BaseTrainer <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.BaseTrainer.html#stable_ssl.BaseTrainer>`_ class that provides all the essential methods required to train and evaluate your model effectively. This class is intended to be subclassed for specific training needs (see these `trainers <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/trainers.html>`_ as examples). For detailed instructions on configuring the trainers' input parameters, refer to the `User Guide <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html>`_.
 
 While the organization is similar to that of ``PyTorch Lightning``, the goal of ``stable-SSL`` is to significantly reduce codebase complexity without sacrificing performance. Think of ``PyTorch Lightning`` as industry-driven (abstracting everything away), whereas ``stable-SSL`` is academia-driven (providing users with complete visibility into every aspect).
 
@@ -134,7 +110,7 @@ In this example, to launch the run using the configuration file ``default_config
 
 .. code-block:: bash
 
-   python run.py --config-name default_config --config-path configs/
+   python run.py -m --config-name default_config --config-path configs/
 
 
 Examples of Methods
