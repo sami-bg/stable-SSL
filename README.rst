@@ -55,37 +55,13 @@ Or you can also run:
 Minimal Documentation
 ---------------------
 
-
 Library Design
 ~~~~~~~~~~~~~~
 
 .. _design:
 
 ``stable-SSL`` provides all the boilerplate to quickly get started with AI research, focusing on Self-Supervised Learning (SSL), albeit other applications can certainly build upon ``stable-SSL``.
-At its core, ``stable-SSL`` provides a ``BaseTrainer`` class that sequentially calls the following methods:
-
-.. code-block:: text
-
-   - self.before_fit (nothing by default)
-   - self.fit (executes all the training/intermitent evaluation by default)
-      - for `self.optim["epochs"]` epochs:
-         - self.fit_epoch (one training epoch by default)
-            - self.before_fit_epoch (setup in train mode)
-            - loop over mini-batches
-               - self.before_fit_step (moves data to device)
-               - self.fit_step (computes loss and performs optimization step)
-               - self.after_fit_step (nothing by default)
-            - self.after_fit_epoch (nothing by default)
-         - self.evaluate (if asked by user config, looping over all non train datasets)
-            - self.before_eval (setup in eval mode)
-            - loop over mini-batches
-               - self.before_eval_step (moves data to device)
-               - self.eval_step (computes eval metrics)
-               - self.after_eval_step (nothing by default)
-            - self.after_eval (nothing by default)
-         - save intermitent checkpoint if asked by user config
-      - save final checkpoint if asked by user config
-   - self.after_fit (evaluates by default)
+At its core, ``stable-SSL`` provides a `BaseTrainer <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.BaseTrainer.html#stable_ssl.BaseTrainer>`_ class that provides all the essential methods required to train and evaluate your model effectively. This class is intended to be subclassed for specific training needs (see these `trainers <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/trainers.html>`_ as examples). For detailed instructions on configuring the trainers' input parameters, refer to the `User Guide <https://rbalestr-lab.github.io/stable-SSL.github.io/dev/user_guide.html>`_.
 
 While the organization is similar to that of ``PyTorch Lightning``, the goal of ``stable-SSL`` is to significantly reduce codebase complexity without sacrificing performance. Think of ``PyTorch Lightning`` as industry-driven (abstracting everything away), whereas ``stable-SSL`` is academia-driven (providing users with complete visibility into every aspect).
 
@@ -134,30 +110,39 @@ In this example, to launch the run using the configuration file ``default_config
 
 .. code-block:: bash
 
-   python run.py --config-name default_config --config-path configs/
+   python run.py -m --config-name default_config --config-path configs/
 
 
 Examples of Methods
 ~~~~~~~~~~~~~~~~~~~
 
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| Methods                                          | Predictor   | Self-distillation   | Loss                                     |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| Barlow Twins                                     | ❌          | ❌                  | BarlowTwinsLoss                          |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| BYOL                                             | ✅          | ✅                  | NegativeCosineSimilarity                 |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| MoCo                                             | ❌          | ✅                  | NTXEntLoss                               |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| SimCLR (`config example <exsimclr_>`_)           | ❌          | ❌                  | NTXEntLoss                               |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| SimSiam                                          | ✅          | ❌                  | NegativeCosineSimilarity                 |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
-| VICReg                                           | ❌          | ❌                  | VICRegLoss                               |
-+--------------------------------------------------+-------------+---------------------+------------------------------------------+
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| **Method**                                       | **Trainer**                                | **Loss**                                 |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| Barlow Twins                                     | `JointEmbeddingTrainer <jointembed_>`_     | `BarlowTwinsLoss <barlow_>`_             |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| BYOL                                             | `SelfDistillationTrainer <selfdistill_>`_  | `NegativeCosineSimilarity <negcosine_>`_ |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| MoCo                                             | `SelfDistillationTrainer <selfdistill_>`_  | `NTXEntLoss <ntxent_>`_                  |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| SimCLR (`config example <exsimclr_>`_)           | `JointEmbeddingTrainer <jointembed_>`_     | `NTXEntLoss <ntxent_>`_                  |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| SimSiam                                          | `SimSiamTrainer <simsiam_>`_               | `NegativeCosineSimilarity <negcosine_>`_ |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
+| VICReg                                           | `JointEmbeddingTrainer <jointembed_>`_     | `VICRegLoss <vicreg_>`_                  |
++--------------------------------------------------+-------------+------------------------------+------------------------------------------+
 
-.. _exsimclr: https://github.com/rbalestr-lab/stable-SSL/blob/main/examples/simclr_cifar10_full.yaml
 
+.. _exsimclr: _github_url/blob/main/examples/simclr_cifar10_full.yaml
+
+.. _ntxent: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.losses.NTXEntLoss.html#stable_ssl.losses.NTXEntLoss
+.. _barlow: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.losses.BarlowTwinsLoss.html#stable_ssl.losses.BarlowTwinsLoss
+.. _negcosine: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.losses.NegativeCosineSimilarity.html
+.. _vicreg: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.losses.VICRegLoss.html
+
+.. _jointembed: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.JointEmbeddingTrainer.html
+.. _selfdistill: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.SelfDistillationTrainer.html#stable_ssl.trainers.SelfDistillationTrainer
+.. _simsiam: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.SimSiamTrainer.html#stable_ssl.trainers.SimSiamTrainer
 
 
 .. |Documentation| image:: https://img.shields.io/badge/Documentation-blue.svg
