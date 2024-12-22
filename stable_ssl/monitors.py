@@ -16,12 +16,16 @@ import torch.distributed as dist
 
 
 @cache
-def warn_once(warning: str): logging.warning(warning)
+def _warn_once(warning: str):
+    logging.warning(warning)
 
 
 def gather_to_rank0(x: torch.Tensor):
-    if not (dist.is_available() and dist.is_initialized()) \
-            or (world_size := dist.get_world_size()) == 1:
+    """Gathers a tensor to the rank0 device."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or (world_size := dist.get_world_size()) == 1
+    ):
         return x
 
     if dist.get_rank() == 0:
@@ -33,24 +37,31 @@ def gather_to_rank0(x: torch.Tensor):
 
 
 class Monitor:
-    """
-    Base class for metrics that are monitored at the end of each step, for example:
+    """Base class for metrics that are monitored at the end of each step.
+
+    For example:
+
         - RankMe
         - GradNorm
 
     Inheritors must implement a `compute` method, that calculates the metric,
     and a `name` attribute for logging.
     """
+
     name: str = "monitor"
 
     def compute(self, x):
-        """
-        Abstract method that calculates a score given a model.
-        """
+        """Abstract method that calculates a score given a model."""
         pass
 
 
 class RankMe(Monitor):
+    """Unsupervised criterion that calculates effective rank of \
+        learned joint-embedding representations.
+
+    As introduced in https://arxiv.org/pdf/2210.02885
+    """
+
     name = "rankme"
 
     def __init__(self, limit: int = 8, epsilon: float = 1e-7):
@@ -61,8 +72,9 @@ class RankMe(Monitor):
         if dist.is_available() and dist.is_initialized():
             num_devices = dist.get_world_size()
 
-        assert self.global_limit % num_devices == 0, \
-            f'RankMe {limit=} must be divisible by {num_devices=}'
+        assert (
+            self.global_limit % num_devices == 0
+        ), f"RankMe {limit=} must be divisible by {num_devices=}"
         self.device_limit = self.global_limit // num_devices
 
         self.epsilon = epsilon
@@ -72,9 +84,11 @@ class RankMe(Monitor):
     def _calculate_rankme(x: torch.Tensor, epsilon: float) -> torch.Tensor:
         # NOTE torch.linalg.svd only supports torch.float32 for now
         if x.dtype != torch.float32:
-            warn_once(f'RankMe expected tensors of type {torch.float32}, '
-                      f'but received {x.dtype}, will convert '
-                      f'{x.dtype}->{torch.float32}')
+            _warn_once(
+                f"RankMe expected tensors of type {torch.float32}, "
+                f"but received {x.dtype}, will convert "
+                f"{x.dtype}->{torch.float32}"
+            )
             x = x.to(torch.float32)
 
         _u, s, _vh = torch.linalg.svd(x, full_matrices=False)
@@ -101,11 +115,9 @@ class RankMe(Monitor):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+
     rankme = RankMe()
-    rankmes = [
-        rankme.compute(torch.randn((8, 16, 16, 14)))
-        for _ in range(25)
-    ]
+    rankmes = [rankme.compute(torch.randn((8, 16, 16, 14))) for _ in range(25)]
 
     plt.plot(rankmes)
     plt.show()

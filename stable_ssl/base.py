@@ -244,7 +244,7 @@ class BaseTrainer(torch.nn.Module):
 
     def after_fit_step(self):
         """Handle post-step tasks after a training step, such as per-step monitoring."""
-        if 'train' in self.logger['monitors']:
+        if "train" in self.logger["monitors"]:
             for metric in self.logger["monitors"]["train"].values():
                 metric: Monitor
                 score = metric.compute(self._latest_forward)
@@ -660,7 +660,7 @@ class BaseTrainer(torch.nn.Module):
                 # compute method use what it needs.
                 score = metric.compute(output)
                 if self.global_step % self.logger["every_step"] == 0:
-                    self._log({f'{name_loader}/{metric.name}': score})
+                    self._log({f"{name_loader}/{metric.name}": score})
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.
@@ -844,7 +844,7 @@ class BaseTrainer(torch.nn.Module):
 
     @property
     def latest_forward(self):
-        if not hasattr(self, '_latest_forward'):
+        if not hasattr(self, "_latest_forward"):
             return None
         return self._latest_forward
 
