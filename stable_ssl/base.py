@@ -50,51 +50,61 @@ from .utils import (
 class BaseTrainer(torch.nn.Module):
     r"""Base class for training a model.
 
-    That method provides a general boilerplate for all the internal operations
-    that always occur no matter the actual application and project. This includes
-    training, evaluation, checkpointing, restarting training, ...
-    The internals can be modified from the configs.
+    This class provides a general boilerplate for common operations that
+    occur during the training lifecycle.
+    These operations include training, evaluation, checkpointing, and training restart.
 
-    This class should be subclassed by your specific method (see examples).
+    The class is highly configurable, enabling customization of its internal workflows
+    to suit diverse project requirements and use cases.
+
+    This class is intended to be subclassed for specific training methods
+    (see examples for more details). For each subclass, the following methods must
+    be implemented: `forward`, `predict`, and `compute_loss`.
 
     Execution flow when calling `launch`:
-
-    - self.before_fit (nothing by default)
-    - self.fit (executes all the training/intermitent evaluation by default)
-      - for `self.optim["epochs"]` epochs:
-        - self.fit_epoch (one training epoch by default)
-          - self.before_fit_epoch (setup in train mode)
-          - loop over mini-batches
-            - self.before_fit_step (moves data to device)
-            - self.fit_step (computes loss and performs optimization step)
-            - self.after_fit_step (computes per-step monitoring metrics)
-          - self.after_fit_epoch (nothing by default)
-        - self.evaluate (if asked by user config, looping over all non train datasets)
-          - self.before_eval (setup in eval mode)
-          - loop over mini-batches
-            - self.before_eval_step (moves data to device)
-            - self.eval_step (computes eval metrics)
-            - self.after_eval_step (nothing by default)
-          - self.after_eval (nothing by default)
-        - save intermitent checkpoint if asked by user config
-      - save final checkpoint if asked by user config
-    - self.after_fit (evaluates by default)
+            - `self.before_fit` (nothing by default)
+            - `self._fit` (executes all the training/intermittent evaluation by default)
+                - for `self.optim["epochs"]` epochs:
+                    - `self.before_fit_epoch` (setup in train mode)
+                    - `self._fit_epoch` (one training epoch by default)
+                        - loop over mini-batches
+                            - `self.before_fit_step` (moves data to device)
+                            - `self._fit_step` (optimization step)
+                            - `self.after_fit_step` (computes per-step monitoring metrics)
+                    - `self.after_fit_epoch` (nothing by default)
+                    - `self._evaluate` (if asked, looping over all non-train datasets)
+                        - `self.before_eval` (setup in eval mode)
+                        - loop over mini-batches
+                            - `self.before_eval_step` (moves data to device)
+                            - `self._eval_step` (computes eval metrics)
+                            - `self.after_eval_step` (nothing by default)
+                        - `self.after_eval` (nothing by default)
+                    - Save intermittent checkpoint if asked by user config
+                - Save final checkpoint if asked by user config
+            - `self.after_fit` (evaluates by default)
 
     Parameters
     ----------
     data: dict
-        Data mapper of name->mini-batch. The dataset named `train` is used for training.
+        Names and construction of the dataloaders with their transform pipelines.
+        The dataset named `train` is used for training.
         Any other dataset is used for validation.
     module: dict
-        Module (NNs) configuration.
+        Names and definition of the modules (neural networks).
+        See :mod:`stable_ssl.modules` for examples of available modules.
     loss: dict
-        Loss configuration.
+        Loss function used in the final criterion to be minimized.
+        See :mod:`stable_ssl.losses` for examples.
     hardware: dict
-        Hardware configuration.
+        Hardware parameters. See :mod:`stable_ssl.config.HardwareConfig`
+        for the full list of parameters and their defaults.
     optim: dict
-        Optimizer configuration.
+        Optimization parameters. See :mod:`stable_ssl.config.OptimConfig`
+        for the full list of parameters and their defaults.
     logger: dict
-        Logger configuration.
+        Logging and checkpointing parameters.
+        See :mod:`stable_ssl.config.LoggerConfig`
+        for the full list of parameters and their defaults.
     """
 
     def __init__(self, data, module, loss, hardware, optim, logger, **kwargs):
@@ -133,10 +143,12 @@ class BaseTrainer(torch.nn.Module):
         logging.info(f"=> INIT OF {self.__class__.__name__} COMPLETED.")
 
     def __call__(self):
+        """Call the setup and launch methods."""
         self.setup()
         self.launch()
 
     def setup(self):
+        """Instantiate components and load the checkpoint (if applicable)."""
         logging.getLogger().setLevel(self._logger["level"])
         logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
         self._instanciate()
@@ -144,11 +156,20 @@ class BaseTrainer(torch.nn.Module):
         logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
 
     def launch(self):
-        """Routine that is launched after the class is initialized.
+        """Execute the core training and evaluation routine.
 
-        This will commonly consist of training + evaluation.
-        Can be customized by the user to fit the use-cases.
-        This is just a boilerplate version that provides minimal things.
+        This method runs the training and evaluation process,
+        with a customizable boilerplate structure.
+
+        The default flow includes:
+        - Running evaluation and cleanup if no "train" dataset is found in `self.data`.
+        - Otherwise performing pre-training, training, and post-training tasks.
+
+        Exceptions
+        ----------
+        BreakAllEpochs
+            Raised if the training is interrupted by the user.
+
         """
         if "train" not in self.data:
             self._evaluate()
@@ -167,17 +188,21 @@ class BaseTrainer(torch.nn.Module):
 
     @abstractmethod
     def forward(self):
+        """Forward pass of the model."""
         pass
 
     @abstractmethod
     def predict(self):
+        """Prediction of the model used for evaluation."""
         pass
 
     @abstractmethod
     def compute_loss(self):
+        """Compute the global loss to be minimized."""
         pass
 
     def get_logs(self, keys=None):
+        """Retrieve the logs from the logger."""
         if self.logger["wandb"] is None:
             return reader.jsonl(self.logger["dump_path"])
         else:
@@ -189,11 +214,85 @@ class BaseTrainer(torch.nn.Module):
             )
 
     def get_config(self):
-        # Load the config file.
+        """Retrieve the configuration file of the trainer."""
         config = omegaconf.OmegaConf.load(
             self._logger["dump_path"] / ".hydra" / "config.yaml"
         )
         return config
+
+    def before_fit(self):
+        """Initialize training by setting the starting epoch."""
+        self.epoch = 0
+
+    def after_fit(self):
+        """Evaluate the model after completing the training process."""
+        self._evaluate()
+
+    def before_fit_epoch(self):
+        """Prepare the training state and set the epoch for distributed training."""
+        self.train()
+        if self.world_size > 1:
+            self.data["train"].set_epoch(self.epoch)
+
+    def after_fit_epoch(self):
+        """Handle post-epoch tasks after training (currently does nothing)."""
+        pass
+
+    def before_fit_step(self):
+        """Prepare batch for training step by moving it to the appropriate device."""
+        self.batch = to_device(self.batch, self.device)
+
+    def after_fit_step(self):
+        """Handle post-step tasks after a training step, such as per-step monitoring."""
+        if 'train' in self.logger['monitors']:
+            for metric in self.logger["monitors"]["train"].values():
+                metric: Monitor
+                score = metric.compute(self._latest_forward)
+                if self.global_step % self.logger["every_step"] == 0:
+                    self._log({f"train/{metric.name}": score})
+
+
+    def before_eval(self):
+        """Set the model to evaluation mode before validation/testing."""
+        self.eval()
+
+    def after_eval(self):
+        """Handle tasks after completing evaluation (currently does nothing)."""
+        pass
+
+    def before_eval_step(self):
+        """Prepare batch for evaluation step by moving it to the appropriate device."""
+        self.batch = to_device(self.batch, self.device)
+
+    def after_eval_step(self):
+        """Handle post-step tasks after an evaluation step (currently does nothing)."""
+        pass
+
+    def checkpoint(self) -> submitit.helpers.DelayedSubmission:
+        """Create a checkpoint of the current state of the model.
+
+        This method is called asynchronously when the SLURM manager sends a
+        preemption signal. It is invoked with the same arguments as the `__call__`
+        method. At this point, `self` represents the current state of the model.
+
+        Returns
+        -------
+        submitit.helpers.DelayedSubmission: A delayed submission object
+            representing the requeued task with the current model state.
+        """
+        logging.info("Requeuing the task...")
+        self._save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
+        model = type(self)(
+            self._data,
+            self._module,
+            self._loss,
+            self._hardware,
+            self._optim,
+            self._logger,
+        )
+        logging.info("Cleaning up the current task before submitting a new one.")
+        self._cleanup()
+        return submitit.helpers.DelayedSubmission(model)
 
     @property
     def rank(self):
@@ -236,45 +335,6 @@ class BaseTrainer(torch.nn.Module):
     @step.setter
     def step(self, value):
         self._step = value
-
-    def before_fit(self):
-        self.epoch = 0
-
-    def after_fit(self):
-        self._evaluate()
-
-    def before_fit_epoch(self):
-        self.train()
-        if self.world_size > 1:
-            self.data["train"].set_epoch(self.epoch)
-
-    def after_fit_epoch(self):
-        pass
-
-    def before_fit_step(self):
-        # set up the data to have easy access throughout the methods
-        self.batch = to_device(self.batch, self.device)
-
-    def after_fit_step(self):
-        if 'train' in self.logger['monitors']:
-            for metric in self.logger["monitors"]["train"].values():
-                metric: Monitor
-                score = metric.compute(self._latest_forward)
-                if self.global_step % self.logger["every_step"] == 0:
-                    self._log({f"train/{metric.name}": score})
-
-    def before_eval(self):
-        self.eval()
-
-    def after_eval(self):
-        pass
-
-    def before_eval_step(self):
-        self.batch = to_device(self.batch, self.device)
-
-    def after_eval_step(self):
-        pass
-
 
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
@@ -783,26 +843,6 @@ class BaseTrainer(torch.nn.Module):
         logging.info("Device status after cleaning.")
         get_gpu_info()
 
-    def checkpoint(self) -> submitit.helpers.DelayedSubmission:
-        # the checkpoint method is called asynchroneously when the slurm manager
-        # sends a preemption signal, with the same arguments as the __call__ method
-        # "self" is your callable, at its current state.
-        # "self" therefore holds the current version of the model:
-        logging.info("Requeuing the task...")
-        self._save_checkpoint("tmp_checkpoint.ckpt", model_only=False)
-        model = type(self)(
-            self._data,
-            self._module,
-            self._loss,
-            self._hardware,
-            self._optim,
-            self._logger,
-        )
-        logging.info("Cleaning up the current task before submitting a new one.")
-        self._cleanup()
-        return submitit.helpers.DelayedSubmission(model)
-
-
     @property
     def latest_forward(self):
         if not hasattr(self, '_latest_forward'):
@@ -812,4 +852,3 @@ class BaseTrainer(torch.nn.Module):
     @latest_forward.setter
     def latest_forward(self, value):
         self._latest_forward = value
-

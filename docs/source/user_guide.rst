@@ -14,37 +14,28 @@ This guide provides instructions for launching runs with ``stable-SSL``.
 
 To make the process streamlined and efficient, we recommend using configuration files to define parameters and utilizing `Hydra <https://hydra.cc/>`_ to manage these configurations.
 
-**General Idea.** ``stable-SSL`` is designed to minimize boilerplate code, providing a highly flexible framework with minimal hardcoded utilities. Modules in the pipeline can instantiate objects from various sources, including ``stable-SSL``, ``PyTorch``, ``TorchMetrics``, or even custom objects provided by the user. This allows you to seamlessly integrate your own components into the pipeline while leveraging the capabilities of ``stable-SSL``.
+**General Idea.** ``stable-SSL`` provides a highly flexible framework with minimal hardcoded utilities. Modules in the pipeline can instantiate objects from various sources, including ``stable-SSL``, ``PyTorch``, ``TorchMetrics``, or even custom objects provided by the user. This allows you to seamlessly integrate your own components into the pipeline while leveraging the capabilities of ``stable-SSL``.
 
 .. _trainer:
 
 trainer
 ~~~~~~~
 
-In ``stable-SSL``, the main ``trainer`` object must inherit from the ``BaseModel`` class. This class serves as the primary entry point for the training loop and provides all the essential methods required to train and evaluate your model effectively.
+In ``stable-SSL``, the main ``trainer`` object must inherit from the ``BaseTrainer`` class. This class serves as the primary entry point for the training loop and provides all the essential methods required to train and evaluate your model effectively.
 
 .. autosummary::
    :toctree: gen_modules/
    :template: myclass_template.rst
 
-   BaseModel
+   BaseTrainer
 
+:mod:`stable_ssl.trainers` provides default trainer classes for various self-supervised learning approaches. 
 
-More specifically, if you want to train a self-supervised learning model, you can inherit from the following classes, depending on the type of model you are interested in:
-
-.. autosummary::
-   :toctree: gen_modules/
-   :template: myclass_template.rst
-
-   JointEmbedding
-   SelfDistillation
-
-
-Here is what this instantiation looks like in the YAML configuration file:
+Here is what instantiating an SSL trainer class from ``stable_ssl.trainers`` looks like in the YAML configuration file:
 
 .. code-block:: yaml
 
-   _target_: stable_ssl.JointEmbedding
+   _target_: stable_ssl.trainers.JointEmbeddingTrainer
 
 
 .. _loss:
@@ -52,51 +43,17 @@ Here is what this instantiation looks like in the YAML configuration file:
 loss
 ~~~~
 
-The ``loss`` keyword is used to define the loss function for your model. ``stable-SSL`` offers a variety of loss functions to suit different training needs. Below is a list of the available loss functions:
+The ``loss`` keyword is used to define the loss function for your model.
 
-.. autosummary::
-   :toctree: gen_modules/
-   :template: myclass_template.rst
-
-   NTXEntLoss
-   BYOLLoss
-   VICRegLoss
-   BarlowTwinsLoss
+:mod:`stable_ssl.losses` offers a variety of loss functions for SSL.
 
 Here's an example of how to define the `loss` section in your YAML file:
 
 .. code-block:: yaml
 
    loss:
-      _target_: stable_ssl.NTXEntLoss
+      _target_: stable_ssl.losses.NTXEntLoss
       temperature: 0.5
-
-
-.. _optim:
-
-optim
-~~~~~
-
-The ``optim`` keyword is used to define the optimization settings for your model. It allows users to specify both the ``optimizer`` object and the ``scheduler``. 
-
-Example:
-
-.. code-block:: yaml
-
-   optim:
-      epochs: 1000
-      max_steps: 1000
-      optimizer: 
-         _target_: torch.optim.AdamW
-         _partial_: True
-         lr: 0.01
-         weight_decay: 1e-6
-      scheduler:
-         _target_: torch.optim.lr_scheduler.OneCycleLR
-         _partial_: True
-         max_lr: 0.01
-         epochs: ${trainer.optim.epochs}
-         steps_per_epoch: ${eval:'${trainer.data._num_samples} // ${trainer.data.${trainer.train_on}.batch_size}'}
 
 
 .. _data:
@@ -144,7 +101,7 @@ Example:
                         _args_: [float32]
                      scale: True
                - ${trainer.data.base.dataset.transform.transforms.0}
-      test_out:
+      test:
          _target_: torch.utils.data.DataLoader
          batch_size: 256
          num_workers: ${trainer.hardware.cpus_per_task}
@@ -170,29 +127,34 @@ module
 
 The ``module`` keyword is used to define the settings of all the neural networks used, including the architecture of the backbone, projectors etc. 
 
+:mod:`stable_ssl.modules` provides a variety of utility functions that can be used to load specific architectures and pre-trained models.
+
 Example:
 
 .. code-block:: yaml
 
    module:
       backbone:
-         _target_: stable_ssl.utils.load_backbone
+         _target_: stable_ssl.modules.load_backbone
          name: resnet18
-         dataset: "CIFAR10"
+         low_resolution: True
+         num_classes: null
       projector:
          _target_: torch.nn.Sequential
          _args_:
             - _target_: torch.nn.Linear
-            in_features: 512
-            out_features: 2048
-            bias: False
+               in_features: 512
+               out_features: 2048
+               bias: False
             - _target_: torch.nn.BatchNorm1d
-            num_features: ${trainer.network.projector._args_.0.out_features}
+               num_features: ${trainer.module.projector._args_.0.out_features}
             - _target_: torch.nn.ReLU
             - _target_: torch.nn.Linear
-            in_features: ${trainer.network.projector._args_.0.out_features}
-            out_features: 128
-            bias: False
+               in_features: ${trainer.module.projector._args_.0.out_features}
+               out_features: 128
+               bias: False
+            - _target_: torch.nn.BatchNorm1d
+               num_features: ${trainer.module.projector._args_.3.out_features}
       projector_classifier:
          _target_: torch.nn.Linear
          in_features: 128
@@ -205,6 +167,42 @@ Example:
 The various components defined above can be accessed through the dictionary ``self.module`` in your trainer class. This allows the user to define the forward pass, compute losses, and specify evaluation metrics efficiently.
 
 
+.. _optim:
+
+optim
+~~~~~
+
+The ``optim`` keyword is used to define the optimization settings for your model. It allows users to specify both the ``optimizer`` object and the ``scheduler``.
+
+The default parameters associated with the ``optim`` keyword are defined in the following:
+
+.. autosummary::
+   :toctree: gen_modules/
+   :template: myclass_template.rst
+
+   config.OptimConfig
+
+
+:mod:`stable_ssl.optimizers` and :mod:`stable_ssl.schedulers` provide additional modules that are not available in ``PyTorch``.
+
+
+Example:
+
+.. code-block:: yaml
+
+   optim:
+    epochs: 1000
+    optimizer: 
+      _target_: stable_ssl.optimizers.LARS
+      _partial_: True
+      lr: 5
+      weight_decay: 1e-6
+    scheduler:
+      _target_: stable_ssl.scheduler.LinearWarmupCosineAnnealing
+      _partial_: True
+      total_steps: ${eval:'${trainer.optim.epochs} * ${trainer.data._num_samples} // ${trainer.data.train.batch_size}'}
+
+
 .. _logger:
 
 logger
@@ -213,6 +211,15 @@ logger
 The ``logger`` keyword is used to configure the logging settings for your run. 
 
 One important section is ``metrics``, which lets you define the evaluation metrics to track during training. Metrics can be specified for each dataset.
+
+The default parameters associated with ``logger`` are defined in the following:
+
+.. autosummary::
+   :toctree: gen_modules/
+   :template: myclass_template.rst
+
+   config.LoggerConfig
+
 
 Example:
 
@@ -224,16 +231,7 @@ Example:
       checkpoint_frequency: 1
       every_step: 1
       metrics:
-         train:
-            acc1:
-            _target_: torchmetrics.classification.MulticlassAccuracy
-            num_classes: ${trainer.data._num_classes}
-            top_k: 1
-            acc5:
-            _target_: torchmetrics.classification.MulticlassAccuracy
-            num_classes: ${trainer.data._num_classes}
-            top_k: 5
-         test_out:
+         test:
             acc1:
             _target_: torchmetrics.classification.MulticlassAccuracy
             num_classes: ${trainer.data._num_classes}
@@ -251,6 +249,15 @@ hardware
 
 Use the ``hardware`` keyword to configure hardware-related settings such as device, world_size (number of GPUs) or CPUs per task.
 
+The default parameters associated with ``hardware`` are defined in the following:
+
+.. autosummary::
+   :toctree: gen_modules/
+   :template: myclass_template.rst
+
+   config.HardwareConfig
+
+
 Example:
 
 .. code-block:: yaml
@@ -260,4 +267,3 @@ Example:
       float16: true
       device: "cuda:0"
       world_size: 1
-      cpus_per_task: 8
