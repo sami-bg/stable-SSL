@@ -55,8 +55,9 @@ class JointEmbeddingTrainer(BaseTrainer):
         return views, labels
 
     def predict(self):
-        return self.module["backbone_classifier"](self.module["backbone"](self.batch[0]))
-
+        return self.module["backbone_classifier"](
+            self.module["backbone"](self.batch[0])
+        )
 
     def compute_loss(self):
         views, labels = self.format_views_labels()

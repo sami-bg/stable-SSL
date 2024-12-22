@@ -275,7 +275,6 @@ class BaseTrainer(torch.nn.Module):
     def after_eval_step(self):
         pass
 
-
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
 
@@ -597,10 +596,10 @@ class BaseTrainer(torch.nn.Module):
             for metric in self.logger["monitors"][name_loader].values():
                 metric: Monitor
                 # NOTE To make this more general (e.g. for GradNorm, etc.)
-                # we should pass in the BaseModel in its entirety and let the compute method use
-                # what it needs. 
+                # we should pass in the BaseModel in its entirety and let the
+                # compute method use what it needs.
                 score = metric.compute(output)
-                if self.global_step % self.logger["every_step"]== 0:
+                if self.global_step % self.logger["every_step"] == 0:
                     self._log({f'{name_loader}/{metric.name}': score})
 
     def _set_device(self, hardware):
@@ -802,7 +801,6 @@ class BaseTrainer(torch.nn.Module):
         self._cleanup()
         return submitit.helpers.DelayedSubmission(model)
 
-
     @property
     def latest_forward(self):
         if not hasattr(self, '_latest_forward'):
@@ -812,4 +810,3 @@ class BaseTrainer(torch.nn.Module):
     @latest_forward.setter
     def latest_forward(self, value):
         self._latest_forward = value
-

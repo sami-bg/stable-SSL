@@ -21,9 +21,9 @@ def warn_once(warning: str): logging.warning(warning)
 
 def gather_to_rank0(x: torch.Tensor):
     if not (dist.is_available() and dist.is_initialized()) \
-        or (world_size := dist.get_world_size()) == 1:
+            or (world_size := dist.get_world_size()) == 1:
         return x
-    
+
     if dist.get_rank() == 0:
         output = [torch.zeros_like(x) for _ in range(world_size)]
         dist.gather(x, output, dst=0)
@@ -45,22 +45,22 @@ class Monitor:
 
     def compute(self, x):
         """
-        Abstract method that calculates a score given a model. 
+        Abstract method that calculates a score given a model.
         """
         pass
 
 
 class RankMe(Monitor):
     name = "rankme"
-    
-    def __init__(self, limit: int=8, epsilon: float=1e-7):
+
+    def __init__(self, limit: int = 8, epsilon: float = 1e-7):
         super().__init__()
         self.global_limit = limit
-        
-        num_devices = 1 
+
+        num_devices = 1
         if dist.is_available() and dist.is_initialized():
             num_devices = dist.get_world_size()
-        
+
         assert self.global_limit % num_devices == 0, \
             f'RankMe {limit=} must be divisible by {num_devices=}'
         self.device_limit = self.global_limit // num_devices
@@ -68,27 +68,29 @@ class RankMe(Monitor):
         self.epsilon = epsilon
         self.bounded_queue = deque(maxlen=self.device_limit)
 
-
     @staticmethod
     def _calculate_rankme(x: torch.Tensor, epsilon: float) -> torch.Tensor:
-        if x.dtype != torch.float32:  # NOTE torch.linalg.svd only supports torch.float32 for now
+        # NOTE torch.linalg.svd only supports torch.float32 for now
+        if x.dtype != torch.float32:
             warn_once(f'RankMe expected tensors of type {torch.float32}, '
-                        f'but received {x.dtype}, will convert {x.dtype}->{torch.float32}')
+                      f'but received {x.dtype}, will convert '
+                      f'{x.dtype}->{torch.float32}')
             x = x.to(torch.float32)
-        
+
         _u, s, _vh = torch.linalg.svd(x, full_matrices=False)
         p = (s / torch.sum(s, axis=0)) + epsilon
         entropy = -torch.sum(p * torch.log(p))
         return torch.exp(entropy)
-    
+
     def compute(self, encoding: list | torch.Tensor) -> float:
         if isinstance(encoding, list):
-            # assume a list is of views, where each view is batch_size on the 0th dim (as per JointEmbeddng)
+            # assume a list is of views, where each view is batch_size on the 0th dim
+            # (as per JointEmbeddng)
             return [self.compute(batch) for batch in encoding][-1]
-        
+
         batch_size, *_ = encoding.shape
         encoding = encoding.reshape(batch_size, -1)
-        
+
         self.bounded_queue.append(encoding)
 
         encoding = torch.cat(list(self.bounded_queue), dim=0)

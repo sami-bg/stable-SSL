@@ -60,7 +60,8 @@ class LoggerConfig:
     metrics : dict, optional
         A dictionary to store and log various metrics. Default is an empty dict.
     monitors : dict, optional
-        A dictionary to store and log various monitoring statistics. Default is an empty dict.
+        A dictionary to store and log various monitoring statistics.
+        Default is an empty dict
     save_final_model : str or bool, optional
         Specifies whether to save the final trained model.
         If a name is provided, the final model will be saved with that name.
