@@ -27,6 +27,7 @@ import torch
 from .data import DistributedSamplerWrapper
 from . import reader
 from .config import LoggerConfig, WandbConfig, HardwareConfig, OptimConfig
+from .monitors import Monitor
 
 try:
     import wandb
@@ -61,7 +62,6 @@ class BaseTrainer(torch.nn.Module):
     be implemented: `forward`, `predict`, and `compute_loss`.
 
     Execution flow when calling `launch`:
-
             - `self.before_fit` (nothing by default)
             - `self._fit` (executes all the training/intermittent evaluation by default)
                 - for `self.optim["epochs"]` epochs:
@@ -70,7 +70,7 @@ class BaseTrainer(torch.nn.Module):
                         - loop over mini-batches
                             - `self.before_fit_step` (moves data to device)
                             - `self._fit_step` (optimization step)
-                            - `self.after_fit_step` (nothing by default)
+                            - `self.after_fit_step` (computes per-step monitoring)
                     - `self.after_fit_epoch` (nothing by default)
                     - `self._evaluate` (if asked, looping over all non-train datasets)
                         - `self.before_eval` (setup in eval mode)
@@ -82,7 +82,6 @@ class BaseTrainer(torch.nn.Module):
                     - Save intermittent checkpoint if asked by user config
                 - Save final checkpoint if asked by user config
             - `self.after_fit` (evaluates by default)
-
 
     Parameters
     ----------
@@ -244,8 +243,13 @@ class BaseTrainer(torch.nn.Module):
         self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        """Handle post-step tasks after a training step (currently does nothing)."""
-        pass
+        """Handle per-step monitoring. See eg :mod:`stable_ssl.monitors`."""
+        if "train" in self.logger["monitors"]:
+            for metric in self.logger["monitors"]["train"].values():
+                metric: Monitor
+                score = metric.compute(self._latest_forward)
+                if self.global_step % self.logger["every_step"] == 0:
+                    self._log({f"train/{metric.name}": score})
 
     def before_eval(self):
         """Set the model to evaluation mode before validation/testing."""
@@ -302,6 +306,16 @@ class BaseTrainer(torch.nn.Module):
         return 1
 
     @property
+    def batch_idx(self):
+        if not hasattr(self, "_batch_idx"):
+            return None
+        return self._batch_idx
+
+    @property
+    def device(self):
+        return self._device
+
+    @property
     def epoch(self):
         if not hasattr(self, "_epoch"):
             return None
@@ -314,14 +328,10 @@ class BaseTrainer(torch.nn.Module):
         return self._step
 
     @property
-    def batch_idx(self):
-        if not hasattr(self, "_batch_idx"):
+    def latest_forward(self):
+        if not hasattr(self, "_latest_forward"):
             return None
-        return self._batch_idx
-
-    @property
-    def device(self):
-        return self._device
+        return self._latest_forward
 
     @epoch.setter
     def epoch(self, value):
@@ -330,6 +340,10 @@ class BaseTrainer(torch.nn.Module):
     @step.setter
     def step(self, value):
         self._step = value
+
+    @latest_forward.setter
+    def latest_forward(self, value):
+        self._latest_forward = value
 
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
@@ -647,6 +661,16 @@ class BaseTrainer(torch.nn.Module):
         if name_loader in self.logger["metrics"]:
             for metric in self.logger["metrics"][name_loader].values():
                 metric.update(output, self.batch[1])
+
+        if name_loader in self.logger["monitors"]:
+            for metric in self.logger["monitors"][name_loader].values():
+                metric: Monitor
+                # NOTE To make this more general (e.g. for GradNorm, etc.)
+                # we should pass in the BaseModel in its entirety and let the
+                # compute method use what it needs.
+                score = metric.compute(output)
+                if self.global_step % self.logger["every_step"] == 0:
+                    self._log({f"{name_loader}/{metric.name}": score})
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.

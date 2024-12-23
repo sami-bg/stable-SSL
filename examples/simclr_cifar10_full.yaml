@@ -17,7 +17,7 @@ hydra:
 
 trainer:
   # ===== Base Trainer =====
-  _target_: stable_ssl.JointEmbedding
+  _target_: stable_ssl.JointEmbeddingTrainer
 
   # ===== loss Parameters =====
   loss:

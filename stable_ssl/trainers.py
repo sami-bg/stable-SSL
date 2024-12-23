@@ -66,6 +66,7 @@ class JointEmbeddingTrainer(BaseTrainer):
     def compute_loss(self):
         views, labels = self.format_views_labels()
         embeddings = [self.module["backbone"](view) for view in views]
+        self.latest_forward = embeddings
         projections = [self.module["projector"](embed) for embed in embeddings]
 
         loss_ssl = self.loss(*projections)
