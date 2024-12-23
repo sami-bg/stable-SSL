@@ -7,6 +7,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from collections import deque
+from typing import Union
 
 import torch
 import torch.distributed as dist
@@ -68,7 +69,7 @@ class RankMe(Monitor):
         entropy = -torch.sum(p * torch.log(p))
         return torch.exp(entropy)
 
-    def compute(self, encoding: list | torch.Tensor) -> float:
+    def compute(self, encoding: Union[list, torch.Tensor]) -> float:
         if isinstance(encoding, list):
             # assume a list is of views, where each view is batch_size on the 0th dim
             # (as per JointEmbeddng)

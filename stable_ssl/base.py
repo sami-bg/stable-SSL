@@ -306,6 +306,16 @@ class BaseTrainer(torch.nn.Module):
         return 1
 
     @property
+    def batch_idx(self):
+        if not hasattr(self, "_batch_idx"):
+            return None
+        return self._batch_idx
+
+    @property
+    def device(self):
+        return self._device
+
+    @property
     def epoch(self):
         if not hasattr(self, "_epoch"):
             return None
@@ -318,14 +328,10 @@ class BaseTrainer(torch.nn.Module):
         return self._step
 
     @property
-    def batch_idx(self):
-        if not hasattr(self, "_batch_idx"):
+    def latest_forward(self):
+        if not hasattr(self, "_latest_forward"):
             return None
-        return self._batch_idx
-
-    @property
-    def device(self):
-        return self._device
+        return self._latest_forward
 
     @epoch.setter
     def epoch(self, value):
@@ -334,6 +340,10 @@ class BaseTrainer(torch.nn.Module):
     @step.setter
     def step(self, value):
         self._step = value
+
+    @latest_forward.setter
+    def latest_forward(self, value):
+        self._latest_forward = value
 
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
@@ -842,13 +852,3 @@ class BaseTrainer(torch.nn.Module):
 
         logging.info("Device status after cleaning.")
         get_gpu_info()
-
-    @property
-    def latest_forward(self):
-        if not hasattr(self, "_latest_forward"):
-            return None
-        return self._latest_forward
-
-    @latest_forward.setter
-    def latest_forward(self, value):
-        self._latest_forward = value
