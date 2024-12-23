@@ -45,20 +45,20 @@ def gather(x: torch.Tensor):
         return torch.cat(GatherLayer.apply(x), dim=0)
 
 
-# def gather_to_rank0(x: torch.Tensor):
-#     """Gather tensors from all processes in the distributed environment to rank 0."""
-#     if (
-#         not (dist.is_available() and dist.is_initialized())
-#         or (world_size := dist.get_world_size()) == 1
-#     ):
-#         return x
+def gather_to_rank0(x: torch.Tensor):
+    """Gather tensors from all processes in the distributed environment to rank 0."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or (world_size := dist.get_world_size()) == 1
+    ):
+        return x
 
-#     if dist.get_rank() == 0:
-#         output = [torch.zeros_like(x) for _ in range(world_size)]
-#         dist.gather(x, output, dst=0)
-#         return torch.cat(output, dim=0)
-#     else:
-#         return x
+    if dist.get_rank() == 0:
+        output = [torch.zeros_like(x) for _ in range(world_size)]
+        dist.gather(x, output, dst=0)
+        return torch.cat(output, dim=0)
+    else:
+        return x
 
 
 def all_reduce(x: torch.Tensor):
