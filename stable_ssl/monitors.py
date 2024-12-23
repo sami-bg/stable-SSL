@@ -1,46 +1,26 @@
 # -*- coding: utf-8 -*-
 """Training/evaluation metrics that are computed at the end of each step."""
 #
-# Author: Randall Balestriero <randallbalestriero@gmail.com>
-#         Hugues Van Assel <vanasselhugues@gmail.com>
+# Author: @sami-bg
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import logging
-from functools import cache
 from collections import deque
 
 import torch
 import torch.distributed as dist
 
-
-@cache
-def warn_once(warning: str): logging.warning(warning)
-
-
-def gather_to_rank0(x: torch.Tensor):
-    if not (dist.is_available() and dist.is_initialized()) \
-            or (world_size := dist.get_world_size()) == 1:
-        return x
-
-    if dist.get_rank() == 0:
-        output = [torch.zeros_like(x) for _ in range(world_size)]
-        dist.gather(x, output, dst=0)
-        return torch.cat(output, dim=0)
-    else:
-        return x
+from stable_ssl.utils import gather, warn_once
 
 
 class Monitor:
-    """
-    Base class for metrics that are monitored at the end of each step, for example:
-        - RankMe
-        - GradNorm
+    """Base class for metrics that are monitored at the end of each step.
 
     Inheritors must implement a `compute` method, that calculates the metric,
     and a `name` attribute for logging.
     """
+
     name: str = "monitor"
 
     def compute(self, x):
@@ -61,8 +41,9 @@ class RankMe(Monitor):
         if dist.is_available() and dist.is_initialized():
             num_devices = dist.get_world_size()
 
-        assert self.global_limit % num_devices == 0, \
-            f'RankMe {limit=} must be divisible by {num_devices=}'
+        assert (
+            self.global_limit % num_devices == 0
+        ), f"RankMe {limit=} must be divisible by {num_devices=}"
         self.device_limit = self.global_limit // num_devices
 
         self.epsilon = epsilon
@@ -72,9 +53,11 @@ class RankMe(Monitor):
     def _calculate_rankme(x: torch.Tensor, epsilon: float) -> torch.Tensor:
         # NOTE torch.linalg.svd only supports torch.float32 for now
         if x.dtype != torch.float32:
-            warn_once(f'RankMe expected tensors of type {torch.float32}, '
-                      f'but received {x.dtype}, will convert '
-                      f'{x.dtype}->{torch.float32}')
+            warn_once(
+                f"RankMe expected tensors of type {torch.float32}, "
+                f"but received {x.dtype}, will convert "
+                f"{x.dtype}->{torch.float32}"
+            )
             x = x.to(torch.float32)
 
         _u, s, _vh = torch.linalg.svd(x, full_matrices=False)
@@ -94,18 +77,6 @@ class RankMe(Monitor):
         self.bounded_queue.append(encoding)
 
         encoding = torch.cat(list(self.bounded_queue), dim=0)
-        encoding = gather_to_rank0(encoding)
+        encoding = gather(encoding)
 
         return RankMe._calculate_rankme(encoding, self.epsilon)
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    rankme = RankMe()
-    rankmes = [
-        rankme.compute(torch.randn((8, 16, 16, 14)))
-        for _ in range(25)
-    ]
-
-    plt.plot(rankmes)
-    plt.show()
