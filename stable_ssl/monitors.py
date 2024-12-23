@@ -29,11 +29,7 @@ class Monitor:
 
 
 class RankMe(Monitor):
-    """Unsupervised criterion that calculates effective rank of \
-        learned joint-embedding representations.
-
-    As introduced in https://arxiv.org/pdf/2210.02885
-    """
+    """RankMe (effective rank) monitor from :cite:`garrido2023rankme`."""
 
     name = "rankme"
 

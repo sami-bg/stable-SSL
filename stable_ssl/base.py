@@ -846,7 +846,6 @@ class BaseTrainer(torch.nn.Module):
     @property
     def latest_forward(self):
         if not hasattr(self, "_latest_forward"):
-        if not hasattr(self, "_latest_forward"):
             return None
         return self._latest_forward
 
