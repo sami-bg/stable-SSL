@@ -243,7 +243,7 @@ class BaseTrainer(torch.nn.Module):
         self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        """Handle post-step tasks after a training step, such as per-step monitoring"""
+        """Handle per-step monitoring. See eg :mod:`stable_ssl.monitors`."""
         if "train" in self.logger["monitors"]:
             for metric in self.logger["monitors"]["train"].values():
                 metric: Monitor
