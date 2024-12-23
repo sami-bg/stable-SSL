@@ -24,13 +24,17 @@ class Monitor:
     name: str = "monitor"
 
     def compute(self, x):
-        """
-        Abstract method that calculates a score given a model.
-        """
+        """Abstract method that calculates a score given a model."""
         pass
 
 
 class RankMe(Monitor):
+    """Unsupervised criterion that calculates effective rank of \
+        learned joint-embedding representations.
+
+    As introduced in https://arxiv.org/pdf/2210.02885
+    """
+
     name = "rankme"
 
     def __init__(self, limit: int = 8, epsilon: float = 1e-7):
@@ -41,6 +45,9 @@ class RankMe(Monitor):
         if dist.is_available() and dist.is_initialized():
             num_devices = dist.get_world_size()
 
+        assert (
+            self.global_limit % num_devices == 0
+        ), f"RankMe {limit=} must be divisible by {num_devices=}"
         assert (
             self.global_limit % num_devices == 0
         ), f"RankMe {limit=} must be divisible by {num_devices=}"

@@ -661,6 +661,7 @@ class BaseTrainer(torch.nn.Module):
                 score = metric.compute(output)
                 if self.global_step % self.logger["every_step"] == 0:
                     self._log({f"{name_loader}/{metric.name}": score})
+                    self._log({f"{name_loader}/{metric.name}": score})
 
     def _set_device(self, hardware):
         # Check if CUDA is available, otherwise set to CPU.
@@ -844,6 +845,7 @@ class BaseTrainer(torch.nn.Module):
 
     @property
     def latest_forward(self):
+        if not hasattr(self, "_latest_forward"):
         if not hasattr(self, "_latest_forward"):
             return None
         return self._latest_forward
