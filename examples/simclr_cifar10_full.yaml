@@ -146,8 +146,8 @@ trainer:
   logger:
     level: 20
     checkpoint_frequency: 10
-    every_step: 1
-    metrics:
+    log_every_step: 1
+    metric:
       test:
         acc1:
           _target_: torchmetrics.classification.MulticlassAccuracy

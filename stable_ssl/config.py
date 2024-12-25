@@ -1,6 +1,6 @@
 # # -*- coding: utf-8 -*-
-# """Configuration classes specifying default parameters for stable-SSL."""
-# #
+"""Configuration classes specifying default parameters for stable-SSL."""
+
 # # Author: Hugues Van Assel <vanasselhugues@gmail.com>
 # #         Randall Balestriero <randallbalestriero@gmail.com>
 # #
@@ -68,9 +68,9 @@ class LoggerConfig:
     ----------
     level : int, optional
         The logging level. Determines the threshold for what gets logged. Default is 20.
-    metrics : dict, optional
+    metric : dict, optional
         A dictionary to store and log various metrics. Default is an empty dict.
-    monitors : dict, optional
+    monitor : dict, optional
         A dictionary to store and log various monitoring statistics.
         Default is an empty dict
     save_final_model : str or bool, optional
@@ -80,7 +80,7 @@ class LoggerConfig:
     eval_every_epoch : int, optional
         The frequency (in epochs) at which the model will be evaluated.
         For example, if set to 1, evaluation occurs every epoch. Default is 1.
-    every_step : int, optional
+    log_every_step : int, optional
         The frequency (in training steps) at which to log intermediate metrics.
         For example, if set to 1, logs occur every step. Default is 1.
     checkpoint_frequency : int, optional
@@ -99,11 +99,11 @@ class LoggerConfig:
     """
 
     level: int = 20
-    metrics: dict = field(default_factory=dict)
-    monitors: dict = field(default_factory=dict)
+    metric: dict = field(default_factory=dict)
+    monitor: dict = field(default_factory=dict)
     save_final_model: Union[str, bool] = False
     eval_every_epoch: int = 1
-    every_step: int = 1
+    log_every_step: int = 1
     checkpoint_frequency: Optional[int] = None
     checkpoint_model_only: bool = True
     dump_path: Path = field(
@@ -118,18 +118,24 @@ class WandbConfig:
 
     Parameters
     ----------
+    dir : pathlib.Path, optional
+        The path where output is dumped. Defaults to Hydra's runtime output directory.
     entity : str, optional
         Name of the (Weights & Biases) entity. Default is None.
     project : str, optional
         Name of the (Weights & Biases) project. Default is None.
     name : str, optional
         Name of the Weights & Biases run. Default is None.
-    ID : str, optional
+    id : str, optional
         ID of the Weights & Biases run. Default is None.
+    tags : list, optional
+        List of tags for the Weights & Biases run. Default is None.
+    group : str, optional
+        Group for the Weights & Biases run. Default is None.
     """
 
-    dir: Path = field(
-        default_factory=lambda: Path(HydraConfig.get().runtime.output_dir)
+    dir: str = field(
+        default_factory=lambda: str(Path(HydraConfig.get().runtime.output_dir))
     )
     entity: Optional[str] = None
     project: Optional[str] = None
