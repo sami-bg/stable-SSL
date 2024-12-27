@@ -7,26 +7,36 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import copy
-import logging
-
 import torch
 import torch.nn.functional as F
 
 from .base import BaseTrainer
-from .utils import update_momentum, log_and_raise
+from .utils import log_and_raise
+from .modules import TeacherStudentModule
 
 
 class SupervisedTrainer(BaseTrainer):
     r"""Base class for training a supervised model."""
 
-    def forward(self, x):
-        return self.module["backbone"](x)
+    def check_module(self):
+        """Check if a 'backbone' module is defined."""
+        if "backbone" not in self.module:
+            log_and_raise(
+                ValueError,
+                "A `backbone` module needs to be defined when "
+                f"using the {self.__class__.__name__} trainer.",
+            )
+
+    def forward(self, *args, **kwargs):
+        """Forward pass. By default, it simply calls the 'backbone' module."""
+        return self.module["backbone"](*args, **kwargs)
 
     def predict(self):
+        """Call the forward pass of current batch."""
         return self.forward(self.batch[0])
 
     def compute_loss(self):
+        """Compute the loss of the model using the `loss` provided in the config."""
         loss = self.loss(self.predict(), self.batch[1])
         return {"loss": loss}
 
@@ -57,13 +67,33 @@ class JointEmbeddingTrainer(BaseTrainer):
             log_and_raise(ValueError, msg)
         return views, labels
 
-    def forward(self, x):
-        return self.module["backbone"](x)
+    def check_module(self):
+        """Check if 'backbone', 'projector' and their classifiers are defined."""
+        required_modules = [
+            "backbone",
+            "projector",
+            "backbone_classifier",
+            "projector_classifier",
+        ]
+
+        for module_name in required_modules:
+            if module_name not in self.module:
+                log_and_raise(
+                    ValueError,
+                    f"A `{module_name}` module needs to be defined when "
+                    f"using the {self.__class__.__name__} trainer.",
+                )
+
+    def forward(self, *args, **kwargs):
+        """Forward pass. By default, it simply calls the 'backbone' module."""
+        return self.module["backbone"](*args, **kwargs)
 
     def predict(self):
+        """Call the backbone classifier on the forward pass of current batch."""
         return self.module["backbone_classifier"](self.forward(self.batch[0]))
 
     def compute_loss(self):
+        """Compute final loss as sum of SSL loss and classifier losses."""
         views, labels = self.format_views_labels()
         embeddings = [self.module["backbone"](view) for view in views]
         self.latest_forward = embeddings
@@ -78,6 +108,7 @@ class JointEmbeddingTrainer(BaseTrainer):
         return {"loss_ssl": loss_ssl, **classifier_losses}
 
     def compute_loss_classifiers(self, embeddings, projections, labels):
+        """Compute the classifier loss for both backbone and projector."""
         loss_backbone_classifier = 0
         loss_projector_classifier = 0
 
@@ -99,77 +130,54 @@ class JointEmbeddingTrainer(BaseTrainer):
 class SelfDistillationTrainer(JointEmbeddingTrainer):
     r"""Base class for training a self-distillation SSL model."""
 
-    def setup(self):
-        logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
-        self._instanciate()
-        self.module["backbone_target"] = copy.deepcopy(self.module["backbone"])
-        self.module["projector_target"] = copy.deepcopy(self.module["projector"])
+    def check_module(self):
+        """Check if 'backbone', 'projector', classifiers and teachers are defined."""
+        super().check_module()  # check 'backbone', 'projector' and classifiers
 
-        self.module["backbone_target"].requires_grad_(False)
-        self.module["projector_target"].requires_grad_(False)
-        self._load_checkpoint()
-        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
-
-    def before_fit_step(self):
-        """Update the target parameters as EMA of the online model parameters."""
-        update_momentum(
-            self.backbone, self.backbone_target, m=self.config.model.momentum
-        )
-        update_momentum(
-            self.projector, self.projector_target, m=self.config.model.momentum
-        )
+        for name in ("backbone", "projector"):
+            if not isinstance(self.module[name], TeacherStudentModule):
+                log_and_raise(
+                    ValueError,
+                    f"The '{name}' module needs to be a `TeacherStudentModule`",
+                )
 
     def compute_loss(self):
+        """Compute final loss as sum of SSL loss and classifier losses."""
         views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        projections = [self.module["projector"](embed) for embed in embeddings]
+        embeddings = [self.module["backbone"].forward_student(view) for view in views]
+        self.latest_forward = embeddings
+        projections = [
+            self.module["projector"].forward_student(embed) for embed in embeddings
+        ]
 
-        # If a predictor is used, it is generally applied to the online projections.
+        # If a predictor is used, it is applied to the student projections.
         if "predictor" in self.module:
             projections = [self.module["predictor"](proj) for proj in projections]
 
-        projections_target = [
-            self.module["projector_target"](self.module["backbone_target"](view))
+        projections_teacher = [
+            self.module["projector"].forward_teacher(
+                self.module["backbone"].forward_teacher(view)
+            )
             for view in views
         ]
 
         loss_ssl = 0.5 * (
-            self.loss(projections[0], projections_target[1])
-            + self.loss(projections[1], projections_target[0])
+            self.loss(projections[0], projections_teacher[1])
+            + self.loss(projections[1], projections_teacher[0])
         )
 
         classifier_losses = self.compute_loss_classifiers(
             embeddings, projections, labels
         )
 
-        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+        return {"loss_ssl": loss_ssl, **classifier_losses}
 
 
-class SimSiamTrainer(JointEmbeddingTrainer):
-    r"""Base class for training a SimSiam SSL model."""
-
-    def compute_loss(self):
-        views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        projections = [self.module["projector"](embed) for embed in embeddings]
-
-        if len(projections) > 2:
-            logging.warning("Only the first two views are used when using SimSiam.")
-
-        if not hasattr(self.module, "predictor"):
-            log_and_raise(ValueError, "SimSiam requires a predictor module.")
-
-        predictions = [self.module["predictor"](proj) for proj in projections]
-        detached_projections = [proj.detach() for proj in projections]
-
-        loss_ssl = 0.5 * (
-            self.loss(predictions[0], detached_projections[1])
-            + self.loss(predictions[1], detached_projections[0])
-        )
-
-        classifier_losses = self.compute_loss_classifiers(
-            embeddings, projections, labels
-        )
-
-        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+# @torch.no_grad()
+# def center_mean(x: Tensor, dim: Tuple[int, ...]) -> Tensor:
+#     """Returns the center of the input tensor by calculating the mean."""
+#     batch_center = torch.mean(x, dim=dim, keepdim=True)
+#     if dist.is_available() and dist.is_initialized():
+#         dist.all_reduce(batch_center)
+#         batch_center = batch_center / dist.get_world_size()
+#     return batch_center

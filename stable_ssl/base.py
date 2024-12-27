@@ -28,6 +28,7 @@ from .data import DistributedSamplerWrapper
 from . import reader
 from .config import LoggerConfig, WandbConfig, HardwareConfig, OptimConfig
 from .monitors import Monitor
+from .modules import TeacherStudentModule
 
 try:
     import wandb
@@ -70,7 +71,7 @@ class BaseTrainer(torch.nn.Module):
                         - loop over mini-batches
                             - `self.before_fit_step` (moves data to device)
                             - `self._fit_step` (optimization step)
-                            - `self.after_fit_step` (computes per-step monitoring)
+                            - `self.after_fit_step` (perf monitoring and teacher update)
                     - `self.after_fit_epoch` (nothing by default)
                     - `self._evaluate` (if asked, looping over all non-train datasets)
                         - `self.before_eval` (setup in eval mode)
@@ -220,6 +221,10 @@ class BaseTrainer(torch.nn.Module):
         )
         return config
 
+    def check_module(self):
+        """Check if modules are compatible with trainer. Specific to each trainer."""
+        pass
+
     def before_fit(self):
         """Initialize training by setting the starting epoch."""
         self.epoch = 0
@@ -243,13 +248,19 @@ class BaseTrainer(torch.nn.Module):
         self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        """Handle per-step monitoring. See eg :mod:`stable_ssl.monitors`."""
+        """Handle per-step monitoring and teacher update (if applicable)."""
+        # Compute and log the monitoring metrics.
         if "train" in self.logger["monitor"]:
             for metric in self.logger["monitor"]["train"].values():
                 metric: Monitor
                 score = metric.compute(self._latest_forward)
                 if self.global_step % self.logger["log_every_step"] == 0:
                     self._log({f"train/{metric.name}": score})
+
+        # Update the teacher network if there is one.
+        for m in self.modules():
+            if isinstance(m, TeacherStudentModule):
+                m.update_teacher()
 
     def before_eval(self):
         """Set the model to evaluation mode before validation/testing."""
@@ -349,7 +360,7 @@ class BaseTrainer(torch.nn.Module):
         seed_everything(self._hardware.get("seed", None))
 
         self.start_time = time.time()
-        # we skip optim as we may not need it (see below)
+        # We skip optim as we may not need it (see below).
         self.data = hydra.utils.instantiate(self._data, _convert_="object")
         self.module = hydra.utils.instantiate(self._module, _convert_="object")
         self.loss = hydra.utils.instantiate(self._loss, _convert_="object")
@@ -452,6 +463,7 @@ class BaseTrainer(torch.nn.Module):
             )
             logging.info(f"\t- {name} with {trainable} trainable parameters.")
         self.module = torch.nn.ModuleDict(self.module)
+        self.check_module()
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.hardware["float16"])
 
         self.register_buffer("global_step", torch.zeros((1,), dtype=int))

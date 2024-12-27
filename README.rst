@@ -116,21 +116,21 @@ In this example, to launch the run using the configuration file ``default_config
 Examples of Methods
 ~~~~~~~~~~~~~~~~~~~
 
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| **Method**                                       | **Trainer**                                | **Loss**                                 |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| Barlow Twins                                     | `JointEmbeddingTrainer <jointembed_>`_     | `BarlowTwinsLoss <barlow_>`_             |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| BYOL                                             | `SelfDistillationTrainer <selfdistill_>`_  | `NegativeCosineSimilarity <negcosine_>`_ |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| MoCo                                             | `SelfDistillationTrainer <selfdistill_>`_  | `NTXEntLoss <ntxent_>`_                  |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| SimCLR (`config example <exsimclr_>`_)           | `JointEmbeddingTrainer <jointembed_>`_     | `NTXEntLoss <ntxent_>`_                  |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| SimSiam                                          | `SimSiamTrainer <simsiam_>`_               | `NegativeCosineSimilarity <negcosine_>`_ |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
-| VICReg                                           | `JointEmbeddingTrainer <jointembed_>`_     | `VICRegLoss <vicreg_>`_                  |
-+--------------------------------------------------+-------------+------------------------------+------------------------------------------+
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| **Method**     | **Trainer**                                | **Loss**                                 | **Example Config**              |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| Barlow Twins   | `JointEmbeddingTrainer <jointembed_>`_     | `BarlowTwinsLoss <barlow_>`_             |                                 |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| BYOL           | `SelfDistillationTrainer <selfdistill_>`_  | `NegativeCosineSimilarity <negcosine_>`_ |                                 |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| MoCo           | `SelfDistillationTrainer <selfdistill_>`_  | `NTXEntLoss <ntxent_>`_                  |                                 |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| SimCLR         | `JointEmbeddingTrainer <jointembed_>`_     | `NTXEntLoss <ntxent_>`_                  | `link <exsimclr_>`_             |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| SimSiam        | `SelfDistillationTrainer <selfdistill_>`_  | `NegativeCosineSimilarity <negcosine_>`_ |                                 |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
+| VICReg         | `JointEmbeddingTrainer <jointembed_>`_     | `VICRegLoss <vicreg_>`_                  |                                 |
++----------------+--------------------------------------------+------------------------------------------+---------------------------------+
 
 
 .. _exsimclr: _github_url/blob/main/examples/simclr_cifar10_full.yaml
@@ -142,7 +142,7 @@ Examples of Methods
 
 .. _jointembed: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.JointEmbeddingTrainer.html
 .. _selfdistill: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.SelfDistillationTrainer.html#stable_ssl.trainers.SelfDistillationTrainer
-.. _simsiam: https://rbalestr-lab.github.io/stable-SSL.github.io/dev/gen_modules/stable_ssl.trainers.SimSiamTrainer.html#stable_ssl.trainers.SimSiamTrainer
+
 
 
 .. |Documentation| image:: https://img.shields.io/badge/Documentation-blue.svg
@@ -159,3 +159,4 @@ Examples of Methods
    :target: https://opensource.org/licenses/MIT
 .. |WandB| image:: https://raw.githubusercontent.com/wandb/assets/main/wandb-github-badge-gradient.svg
    :target: https://wandb.ai/site
+   
