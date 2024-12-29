@@ -35,6 +35,13 @@ class SupervisedTrainer(BaseTrainer):
 
     def compute_loss(self):
         """Compute the loss of the model using the `loss` provided in the config."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
         loss = self.loss(self.predict(), self.batch[1])
         return {"loss": loss}
 
@@ -82,6 +89,14 @@ class JointEmbeddingTrainer(BaseTrainer):
 
     def compute_loss(self):
         """Compute final loss as sum of SSL loss and classifier losses."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
+
         views, labels = self.format_views_labels()
         embeddings = [self.module["backbone"](view) for view in views]
         self.latest_forward = embeddings
@@ -100,6 +115,7 @@ class JointEmbeddingTrainer(BaseTrainer):
         loss_backbone_classifier = 0
         loss_projector_classifier = 0
 
+        # Inputs are detached to avoid backprop through backbone and projector.
         if labels is not None:
             for embed, proj in zip(embeddings, projections):
                 loss_backbone_classifier += F.cross_entropy(
@@ -127,6 +143,14 @@ class SelfDistillationTrainer(JointEmbeddingTrainer):
 
     def compute_loss(self):
         """Compute final loss as sum of SSL loss and classifier losses."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
+
         views, labels = self.format_views_labels()
 
         embeddings_student = [
@@ -265,12 +289,11 @@ class DINOTrainer(SelfDistillationTrainer):
         # Compute the cross entropy loss between the student and teacher probabilities.
         probs_teacher_flat = probs_teacher.flatten(start_dim=1)
         log_probs_student_flat = log_probs_student.flatten(start_dim=1)
-        loss_ssl = probs_teacher_flat @ log_probs_student_flat.T
+        loss_ssl = -probs_teacher_flat @ log_probs_student_flat.T
         loss_ssl.fill_diagonal_(0)
 
         # Normalize the loss.
-        N = loss_ssl.size(0)
-        n_terms = N * (N - 1)
+        n_terms = loss_ssl.numel() - loss_ssl.diagonal().numel()
         batch_size = stacked_projections_teacher.shape[1]
         loss_ssl = loss_ssl.sum() / (n_terms * batch_size)
 

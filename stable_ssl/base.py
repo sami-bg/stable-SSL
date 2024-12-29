@@ -66,7 +66,8 @@ class BaseTrainer(torch.nn.Module):
 
     This class is intended to be subclassed for specific training methods
     (see examples for more details). For each subclass, the following methods must
-    be implemented: ``forward``, ``predict``, and ``compute_loss``.
+    be implemented: ``forward``, ``predict`` (used for supervised evaluation) and
+    ``compute_loss`` (used for training).
 
     Execution flow when calling `launch`:
             - `self.before_fit` (nothing by default)
@@ -99,9 +100,6 @@ class BaseTrainer(torch.nn.Module):
     module: dict
         Names and definition of the modules (neural networks).
         See :mod:`stable_ssl.modules` for examples of available modules.
-    loss: dict
-        Loss function used in the final criterion to be minimized.
-        See :mod:`stable_ssl.losses` for examples.
     hardware: dict
         Hardware parameters. See :mod:`stable_ssl.config.HardwareConfig`
         for the full list of parameters and their defaults.
@@ -112,21 +110,26 @@ class BaseTrainer(torch.nn.Module):
         Logging and checkpointing parameters.
         See :mod:`stable_ssl.config.LoggerConfig`
         for the full list of parameters and their defaults.
+    loss: dict, optional
+        Loss function used in the final criterion to be minimized.
+        See :mod:`stable_ssl.losses` for examples.
+        Defaults to None.
     **kwargs
         Additional arguments to be set as attributes of the class.
     """
 
-    def __init__(self, data, module, loss, hardware, optim, logger, **kwargs):
+    def __init__(self, data, module, hardware, optim, logger, loss=None, **kwargs):
         super().__init__()
         logging.info(f"=> INIT OF {self.__class__.__name__} STARTED.")
         for key, value in kwargs.items():
             setattr(self, key, value)
         self._data = data
         self._module = module
-        self._loss = loss
         self._hardware = hardware
         self._optim = optim
         self._logger = logger
+        self._loss = loss
+        self._kwargs = kwargs  # Save kwargs for checkpointing.
 
         # Set the logger defaults.
         self._logger = asdict(LoggerConfig(**self._logger))
@@ -178,7 +181,6 @@ class BaseTrainer(torch.nn.Module):
         ----------
         BreakAllEpochs
             Raised if the training is interrupted by the user.
-
         """
         if "train" not in self.data:
             self._evaluate()
@@ -202,12 +204,34 @@ class BaseTrainer(torch.nn.Module):
 
     @abstractmethod
     def predict(self):
-        """Prediction of the model used for evaluation."""
+        """Generate model predictions for evaluation purposes.
+
+        Supervised and Self-Supervised models are typically evaluated using
+        predictions over discrete labels. This method should return the output
+        of this classification used for evaluation.
+
+        In SSL, this typically involves using a classifier head on top of the backbone,
+        thus turning the SSL model into a supervised model for evaluation.
+
+        **See Also**:
+            :mod:`stable_ssl.trainers` for concrete examples of implementations.
+        """
         pass
 
     @abstractmethod
     def compute_loss(self):
-        """Compute the global loss to be minimized."""
+        """Calculate the global loss to be minimized during training.
+
+        Compute the total loss that the model aims to minimize.
+        Implementations can utilize the ``loss`` function provided during the
+        trainer's initialization to calculate loss based on the current batch.
+
+        Note that it can return a list or dictionary of losses. The various losses
+        are logged independently and summed to compute the final loss.
+
+        **See Also**:
+            :mod:`stable_ssl.trainers` for concrete examples of implementations.
+        """
         pass
 
     def get_logs(self, keys=None):
@@ -299,10 +323,11 @@ class BaseTrainer(torch.nn.Module):
         model = type(self)(
             self._data,
             self._module,
-            self._loss,
             self._hardware,
             self._optim,
             self._logger,
+            self._loss,
+            **self._kwargs,
         )
         logging.info("Cleaning up the current task before submitting a new one.")
         self._cleanup()
@@ -367,13 +392,16 @@ class BaseTrainer(torch.nn.Module):
         # We skip optim as we may not need it (see below).
         self.data = hydra.utils.instantiate(self._data, _convert_="object")
         self.module = hydra.utils.instantiate(self._module, _convert_="object")
-        self.loss = hydra.utils.instantiate(self._loss, _convert_="object")
         self.hardware = hydra.utils.instantiate(self._hardware, _convert_="object")
         self.logger = hydra.utils.instantiate(self._logger, _convert_="partial")
 
         self._set_device(self.hardware)
 
-        self.loss = self.loss.to(self._device)
+        if self._loss is not None:
+            self.loss = hydra.utils.instantiate(self._loss, _convert_="object")
+            self.loss = self.loss.to(self._device)
+        else:
+            self.loss = None
 
         logging.info("Logger:")
         logging.info(f"\t- Dump path: `{self.logger['dump_path']}`")
