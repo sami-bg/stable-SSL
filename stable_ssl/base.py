@@ -247,7 +247,7 @@ class BaseTrainer(torch.nn.Module):
         if "train" in self.logger["monitors"]:
             for metric in self.logger["monitors"]["train"].values():
                 metric: Monitor
-                score = metric.compute(self._latest_forward)
+                score = metric.compute(self)
                 if self.global_step % self.logger["every_step"] == 0:
                     self._log({f"train/{metric.name}": score})
 
@@ -841,13 +841,13 @@ class BaseTrainer(torch.nn.Module):
 
         logging.info("Device status after cleaning.")
         get_gpu_info()
-
+    
     @property
-    def latest_forward(self):
-        if not hasattr(self, "_latest_forward"):
+    def latest_representations(self):
+        if not hasattr(self, "_latest_representations"):
             return None
-        return self._latest_forward
+        return self._latest_representations
 
-    @latest_forward.setter
-    def latest_forward(self, value):
-        self._latest_forward = value
+    @latest_representations.setter
+    def latest_representations(self, value):
+        self._latest_representations = value

@@ -65,14 +65,16 @@ class JointEmbeddingTrainer(BaseTrainer):
 
     def compute_loss(self):
         views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        self.latest_forward = embeddings
-        projections = [self.module["projector"](embed) for embed in embeddings]
-
-        loss_ssl = self.loss(*projections)
+        representations = [self.module["backbone"](view) for view in views]
+        self._latest_representations = representations
+        
+        embeddings = [self.module["projector"](_repr) for _repr in representations]
+        self._latest_embeddings = embeddings
+        
+        loss_ssl = self.loss(*embeddings)
 
         classifier_losses = self.compute_loss_classifiers(
-            embeddings, projections, labels
+            representations, embeddings, labels
         )
 
         return {"train/loss_ssl": loss_ssl, **classifier_losses}
@@ -94,6 +96,23 @@ class JointEmbeddingTrainer(BaseTrainer):
             "train/loss_backbone_classifier": loss_backbone_classifier,
             "train/loss_projector_classifier": loss_projector_classifier,
         }
+    
+    # NOTE From the LiDAR paper:
+    # We adopt the terminology in (Garrido et al., 2022), and refer to the
+    # output of the encoder f as a representation, and the output of the composed encoder and projector
+    # e = ψ◦f as an embedding
+    # My assumption is that all SSL methods have `representations` but only `JEA` draws the distinction between `representations` and
+    # `embeddings`.
+    @property
+    def latest_embeddings(self):
+        if not hasattr(self, "_latest_embeddings"):
+            return None
+        return self._latest_embeddings
+
+    @latest_embeddings.setter
+    def latest_embeddings(self, value):
+        self._latest_embeddings = value
+
 
 
 class SelfDistillationTrainer(JointEmbeddingTrainer):
