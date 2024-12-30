@@ -189,6 +189,7 @@ class LiDAR(Monitor):
 
         # gather queue to [N, q, D] where N is the grand mean between-class
         embeddings: torch.Tensor = torch.cat(list(self.queue), dim=0)
+        # NOTE Do we have to gather here? Can we not do any computations on-device first?
         embeddings = gather_to_rank0(embeddings)
 
         n, q, d = embeddings.shape
