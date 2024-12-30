@@ -5,9 +5,12 @@
     :maxdepth: 1
     :hidden:
     :caption: Contents:
-    
+
     self
     user_guide
+    releases
+    contributing
+    bibliography
 
 .. currentmodule:: stable_ssl
 
@@ -20,9 +23,4 @@
     modules
     optimizers
     schedulers
-
-.. toctree::
-    :maxdepth: 1
-    :caption: References
-
-    bibliography
+    monitors

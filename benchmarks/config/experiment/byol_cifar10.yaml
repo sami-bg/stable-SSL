@@ -2,17 +2,17 @@
 
 trainer:
   # ===== Base Trainer =====
-  _target_: stable_ssl.SupervisedTrainer
+  _target_: stable_ssl.trainers.SelfDistillationTrainer
 
   # ===== loss Parameters =====
   loss:
-    _target_: torch.nn.CrossEntropyLoss
+    _target_: stable_ssl.losses.NegativeCosineSimilarity
 
   # ===== Data Parameters =====
   data:
     _num_classes: 10
     _num_samples: 50000
-    train: # training dataset as indicated by name
+    train: # training dataset as indicated by name 'train'
       _target_: torch.utils.data.DataLoader
       batch_size: 256
       drop_last: True
@@ -55,7 +55,7 @@ trainer:
                     _target_: stable_ssl.utils.str_to_dtype
                     _args_: [float32]
                   scale: True
-            # - ${trainer.data.train.dataset.transform.transforms.0}
+            - ${trainer.data.train.dataset.transform.transforms.0}
     test: # can be any name
       _target_: torch.utils.data.DataLoader
       batch_size: 256
@@ -77,10 +77,30 @@ trainer:
   # ===== Module Parameters =====
   module:
     backbone:
-      _target_: stable_ssl.modules.load_backbone
-      name: resnet18
-      low_resolution: True
-      num_classes: ${trainer.data._num_classes}
+      _target_: stable_ssl.modules.TeacherStudentModule
+      student:
+        _target_: stable_ssl.modules.load_backbone
+        name: resnet50
+        low_resolution: True
+        num_classes: null
+      ema_coefficient: 0.999
+    projector:
+      _target_: stable_ssl.modules.TeacherStudentModule
+      student:
+        _target_: stable_ssl.modules.MLP
+        sizes: [2048, 2048, 128]
+      ema_coefficient: 0.999
+    predictor:
+      _target_: stable_ssl.modules.MLP
+      sizes: [128, 2048, 128]
+    projector_classifier:
+      _target_: torch.nn.Linear
+      in_features: 128
+      out_features: ${trainer.data._num_classes}
+    backbone_classifier:
+      _target_: torch.nn.Linear
+      in_features: 2048
+      out_features: ${trainer.data._num_classes}
 
   # ===== Optim Parameters =====
   optim:

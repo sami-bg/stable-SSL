@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 """Utility functions."""
+
 #
 # Author: Randall Balestriero <randallbalestriero@gmail.com>
 #         Hugues Van Assel <vanasselhugues@gmail.com>
@@ -7,15 +7,17 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import random
-import os
-import time
-import subprocess
 import logging
-from contextlib import closing
+import os
+import random
 import socket
-import numpy as np
+import subprocess
+import time
+from contextlib import closing
+from functools import cache
+from typing import Tuple, Union
 
+import numpy as np
 import torch
 import torch.distributed as dist
 
@@ -52,6 +54,27 @@ def all_reduce(x: torch.Tensor):
         x = x / dist.get_world_size()
         dist.all_reduce(x)
         return x
+
+
+@torch.no_grad()
+def compute_global_mean(
+    x: torch.Tensor,
+    dim: Union[int, Tuple[int, ...]],
+    keepdim: bool = True,
+    sync: bool = True,
+) -> torch.Tensor:
+    """Compute the mean of the input tensor across specified dimension(s).
+
+    If running in a distributed environment (and `sync=True`), this function
+    synchronizes the mean across all processes, effectively computing a global mean.
+    """
+    mean = torch.mean(x, dim=dim, keepdim=keepdim)
+
+    if sync and dist.is_available() and dist.is_initialized():
+        dist.all_reduce(mean, op=dist.ReduceOp.SUM)
+        mean = mean / dist.get_world_size()
+
+    return mean
 
 
 def str_to_dtype(v: str) -> torch.dtype:
@@ -159,7 +182,7 @@ def off_diagonal(x):
 
 
 def get_open_port():
-    """Request the OS for any unusued port."""
+    """Request the OS for any unused port."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -212,14 +235,13 @@ def get_gpu_info():
         logging.info("nvidia-smi failed.", exc_info=e)
 
 
-@torch.no_grad()
-def update_momentum(model: torch.nn.Module, model_ema: torch.nn.Module, m: float):
-    """Update parameters of `model_ema` with Exponential Moving Average of `model`."""
-    for model_ema, model in zip(model_ema.parameters(), model.parameters()):
-        model_ema.data = model_ema.data * m + model.data * (1.0 - m)
-
-
 def log_and_raise(exception_class, message):
     """Log an error message and raise an exception."""
     logging.error(message)
     raise exception_class(message)
+
+
+@cache
+def warn_once(warning: str):
+    """Cache the warning message to avoid spamming the logs."""
+    logging.warning(warning)

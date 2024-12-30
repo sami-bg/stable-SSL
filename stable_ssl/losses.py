@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """SSL losses."""
 #
 # Author: Hugues Van Assel <vanasselhugues@gmail.com>
@@ -10,7 +9,7 @@
 import torch
 import torch.nn.functional as F
 
-from stable_ssl.utils import gather, off_diagonal, all_reduce
+from stable_ssl.utils import all_reduce, gather, off_diagonal
 
 
 class NTXEntLoss(torch.nn.Module):
@@ -24,7 +23,6 @@ class NTXEntLoss(torch.nn.Module):
     temperature : float, optional
         The temperature scaling factor.
         Default is 0.5.
-
     """
 
     def __init__(self, temperature: float = 0.5):
@@ -74,7 +72,6 @@ class NegativeCosineSimilarity(torch.nn.Module):
 
     This objective is used for instance in BYOL :cite:`grill2020bootstrap`
     or SimSiam :cite:`chen2021exploring`.
-
     """
 
     def forward(self, z_i, z_j):
@@ -113,7 +110,6 @@ class VICRegLoss(torch.nn.Module):
     epsilon : float, optional
         Small value to avoid division by zero.
         Default is 1e-4.
-
     """
 
     def __init__(
@@ -178,7 +174,6 @@ class BarlowTwinsLoss(torch.nn.Module):
     lambd : float, optional
         The weight of the off-diagonal terms in the loss.
         Default is 5e-3.
-
     """
 
     def __init__(self, lambd: float = 5e-3):

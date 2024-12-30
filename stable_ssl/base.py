@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Base class for training a model."""
 #
 # Author: Hugues Van Assel <vanasselhugues@gmail.com>
@@ -7,26 +6,32 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import logging
-import time
-import hydra
 import gc
-import numpy as np
-import submitit
-import jsonlines
-from tqdm import tqdm
-import subprocess
+import logging
 import os
-import omegaconf
+import subprocess
+import time
 from abc import abstractmethod
-
 from dataclasses import asdict
 
+import hydra
+import jsonlines
+import numpy as np
+import omegaconf
+import submitit
 import torch
+from tqdm import tqdm
 
-from .data import DistributedSamplerWrapper
 from . import reader
-from .config import LoggerConfig, WandbConfig, HardwareConfig, OptimConfig
+from .config import (
+    HardwareConfig,
+    LoggerConfig,
+    OptimConfig,
+    WandbConfig,
+    collapse_nested_dict,
+)
+from .data import DistributedSamplerWrapper
+from .modules import TeacherStudentModule
 from .monitors import Monitor
 
 try:
@@ -40,10 +45,10 @@ from .utils import (
     BreakAllEpochs,
     BreakEpoch,
     NanError,
-    seed_everything,
-    to_device,
     get_gpu_info,
     log_and_raise,
+    seed_everything,
+    to_device,
 )
 
 
@@ -59,7 +64,8 @@ class BaseTrainer(torch.nn.Module):
 
     This class is intended to be subclassed for specific training methods
     (see examples for more details). For each subclass, the following methods must
-    be implemented: `forward`, `predict`, and `compute_loss`.
+    be implemented: ``forward``, ``predict`` (used for supervised evaluation) and
+    ``compute_loss`` (used for training).
 
     Execution flow when calling `launch`:
             - `self.before_fit` (nothing by default)
@@ -70,13 +76,13 @@ class BaseTrainer(torch.nn.Module):
                         - loop over mini-batches
                             - `self.before_fit_step` (moves data to device)
                             - `self._fit_step` (optimization step)
-                            - `self.after_fit_step` (computes per-step monitoring)
+                            - `self.after_fit_step` (perf monitoring and teacher update)
                     - `self.after_fit_epoch` (nothing by default)
                     - `self._evaluate` (if asked, looping over all non-train datasets)
                         - `self.before_eval` (setup in eval mode)
                         - loop over mini-batches
                             - `self.before_eval_step` (moves data to device)
-                            - `self._eval_step` (computes eval metrics)
+                            - `self._eval_step` (computes eval metric)
                             - `self.after_eval_step` (nothing by default)
                         - `self.after_eval` (nothing by default)
                     - Save intermittent checkpoint if asked by user config
@@ -92,9 +98,6 @@ class BaseTrainer(torch.nn.Module):
     module: dict
         Names and definition of the modules (neural networks).
         See :mod:`stable_ssl.modules` for examples of available modules.
-    loss: dict
-        Loss function used in the final criterion to be minimized.
-        See :mod:`stable_ssl.losses` for examples.
     hardware: dict
         Hardware parameters. See :mod:`stable_ssl.config.HardwareConfig`
         for the full list of parameters and their defaults.
@@ -105,19 +108,26 @@ class BaseTrainer(torch.nn.Module):
         Logging and checkpointing parameters.
         See :mod:`stable_ssl.config.LoggerConfig`
         for the full list of parameters and their defaults.
+    loss: dict, optional
+        Loss function used in the final criterion to be minimized.
+        See :mod:`stable_ssl.losses` for examples.
+        Defaults to None.
+    **kwargs
+        Additional arguments to be set as attributes of the class.
     """
 
-    def __init__(self, data, module, loss, hardware, optim, logger, **kwargs):
+    def __init__(self, data, module, hardware, optim, logger, loss=None, **kwargs):
         super().__init__()
         logging.info(f"=> INIT OF {self.__class__.__name__} STARTED.")
         for key, value in kwargs.items():
             setattr(self, key, value)
         self._data = data
         self._module = module
-        self._loss = loss
         self._hardware = hardware
         self._optim = optim
         self._logger = logger
+        self._loss = loss
+        self._kwargs = kwargs  # Save kwargs for checkpointing.
 
         # Set the logger defaults.
         self._logger = asdict(LoggerConfig(**self._logger))
@@ -169,7 +179,6 @@ class BaseTrainer(torch.nn.Module):
         ----------
         BreakAllEpochs
             Raised if the training is interrupted by the user.
-
         """
         if "train" not in self.data:
             self._evaluate()
@@ -193,12 +202,34 @@ class BaseTrainer(torch.nn.Module):
 
     @abstractmethod
     def predict(self):
-        """Prediction of the model used for evaluation."""
+        """Generate model predictions for evaluation purposes.
+
+        Supervised and Self-Supervised models are typically evaluated using
+        predictions over discrete labels. This method should return the output
+        of this classification used for evaluation.
+
+        In SSL, this typically involves using a classifier head on top of the backbone,
+        thus turning the SSL model into a supervised model for evaluation.
+
+        **See Also**:
+            :mod:`stable_ssl.trainers` for concrete examples of implementations.
+        """
         pass
 
     @abstractmethod
     def compute_loss(self):
-        """Compute the global loss to be minimized."""
+        """Calculate the global loss to be minimized during training.
+
+        Compute the total loss that the model aims to minimize.
+        Implementations can utilize the ``loss`` function provided during the
+        trainer's initialization to calculate loss based on the current batch.
+
+        Note that it can return a list or dictionary of losses. The various losses
+        are logged independently and summed to compute the final loss.
+
+        **See Also**:
+            :mod:`stable_ssl.trainers` for concrete examples of implementations.
+        """
         pass
 
     def get_logs(self, keys=None):
@@ -243,13 +274,19 @@ class BaseTrainer(torch.nn.Module):
         self.batch = to_device(self.batch, self.device)
 
     def after_fit_step(self):
-        """Handle post-step tasks after a training step, such as per-step monitoring."""
-        if "train" in self.logger["monitors"]:
-            for metric in self.logger["monitors"]["train"].values():
+        """Handle per-step monitoring and teacher update (if applicable)."""
+        # Compute and log the monitoring metrics.
+        if "train" in self.logger["monitor"]:
+            for metric in self.logger["monitor"]["train"].values():
                 metric: Monitor
-                score = metric.compute(self)
-                if self.global_step % self.logger["every_step"] == 0:
+                score = metric.compute(self._latest_forward)
+                if self.global_step % self.logger["log_every_step"] == 0:
                     self._log({f"train/{metric.name}": score})
+
+        # Update the teacher network if there is one.
+        for m in self.modules():
+            if isinstance(m, TeacherStudentModule):
+                m.update_teacher()
 
     def before_eval(self):
         """Set the model to evaluation mode before validation/testing."""
@@ -284,10 +321,11 @@ class BaseTrainer(torch.nn.Module):
         model = type(self)(
             self._data,
             self._module,
-            self._loss,
             self._hardware,
             self._optim,
             self._logger,
+            self._loss,
+            **self._kwargs,
         )
         logging.info("Cleaning up the current task before submitting a new one.")
         self._cleanup()
@@ -306,6 +344,16 @@ class BaseTrainer(torch.nn.Module):
         return 1
 
     @property
+    def batch_idx(self):
+        if not hasattr(self, "_batch_idx"):
+            return None
+        return self._batch_idx
+
+    @property
+    def device(self):
+        return self._device
+
+    @property
     def epoch(self):
         if not hasattr(self, "_epoch"):
             return None
@@ -318,14 +366,10 @@ class BaseTrainer(torch.nn.Module):
         return self._step
 
     @property
-    def batch_idx(self):
-        if not hasattr(self, "_batch_idx"):
+    def latest_forward(self):
+        if not hasattr(self, "_latest_forward"):
             return None
-        return self._batch_idx
-
-    @property
-    def device(self):
-        return self._device
+        return self._latest_forward
 
     @epoch.setter
     def epoch(self, value):
@@ -335,20 +379,27 @@ class BaseTrainer(torch.nn.Module):
     def step(self, value):
         self._step = value
 
+    @latest_forward.setter
+    def latest_forward(self, value):
+        self._latest_forward = value
+
     def _instanciate(self):
         seed_everything(self._hardware.get("seed", None))
 
         self.start_time = time.time()
-        # we skip optim as we may not need it (see below)
+        # We skip optim as we may not need it (see below).
         self.data = hydra.utils.instantiate(self._data, _convert_="object")
         self.module = hydra.utils.instantiate(self._module, _convert_="object")
-        self.loss = hydra.utils.instantiate(self._loss, _convert_="object")
         self.hardware = hydra.utils.instantiate(self._hardware, _convert_="object")
-        self.logger = hydra.utils.instantiate(self._logger, _convert_="object")
+        self.logger = hydra.utils.instantiate(self._logger, _convert_="partial")
 
         self._set_device(self.hardware)
 
-        self.loss = self.loss.to(self._device)
+        if self._loss is not None:
+            self.loss = hydra.utils.instantiate(self._loss, _convert_="object")
+            self.loss = self.loss.to(self._device)
+        else:
+            self.loss = None
 
         logging.info("Logger:")
         logging.info(f"\t- Dump path: `{self.logger['dump_path']}`")
@@ -356,16 +407,14 @@ class BaseTrainer(torch.nn.Module):
             logging.info("\t- Wandb:")
             try:
                 wandb.init(
-                    entity=self.logger["wandb"]["entity"],
-                    project=self.logger["wandb"]["project"],
-                    name=self.logger["wandb"]["name"],
-                    dir=str(self.logger["dump_path"]),
+                    **self.logger["wandb"],
+                    config=collapse_nested_dict(self.get_config()),
                     resume="allow",
                 )
                 self.logger["wandb"]["entity"] = wandb.run.entity
                 self.logger["wandb"]["project"] = wandb.run.project
                 self.logger["wandb"]["name"] = wandb.run.name
-                self.logger["wandb"]["ID"] = wandb.run.id
+                self.logger["wandb"]["id"] = wandb.run.id
                 logging.info(f"\t\t- entity: {wandb.run.entity}")
                 logging.info(f"\t\t- project: {wandb.run.project}")
                 logging.info(f"\t\t- name: {wandb.run.name}")
@@ -378,14 +427,12 @@ class BaseTrainer(torch.nn.Module):
 
         # we do metrics before data to allow logging in data
         logging.info("Metrics:")
-        for m in self.logger["metrics"]:
-            if type(self.logger["metrics"][m]) is dict:
-                self.logger["metrics"][m] = torch.nn.ModuleDict(
-                    self.logger["metrics"][m]
-                )
-        if type(self.logger["metrics"]) is dict:
-            self.logger["metrics"] = torch.nn.ModuleDict(self.logger["metrics"])
-        self.logger["metrics"] = self.logger["metrics"].to(self._device)
+        for m in self.logger["metric"]:
+            if type(self.logger["metric"][m]) is dict:
+                self.logger["metric"][m] = torch.nn.ModuleDict(self.logger["metric"][m])
+        if type(self.logger["metric"]) is dict:
+            self.logger["metric"] = torch.nn.ModuleDict(self.logger["metric"])
+        self.logger["metric"] = self.logger["metric"].to(self._device)
 
         # Data
         logging.info("Data:")
@@ -395,9 +442,9 @@ class BaseTrainer(torch.nn.Module):
                 continue
             logging.info(f"\t\t- length: {len(loader)}.")
 
-            if name in self.logger["metrics"]:
+            if name in self.logger["metric"]:
                 logging.info("\t\t- metrics:")
-                for mname in self.logger["metrics"][name]:
+                for mname in self.logger["metric"][name]:
                     logging.info(f"\t\t\t- {mname}.")
             else:
                 if name != "train":
@@ -450,6 +497,7 @@ class BaseTrainer(torch.nn.Module):
             )
             logging.info(f"\t- {name} with {trainable} trainable parameters.")
         self.module = torch.nn.ModuleDict(self.module)
+        self._check_modules()
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.hardware["float16"])
 
         self.register_buffer("global_step", torch.zeros((1,), dtype=int))
@@ -518,7 +566,7 @@ class BaseTrainer(torch.nn.Module):
         # If max_steps is negative, train on the full dataset.
         if self.optim["max_steps"] < 0:
             max_steps = len(loader)
-        # If max_steps is a float between 0 and 1, treat it as a percentage.
+        # If max_steps is a float between 0 and 1, treat it as a fraction.
         elif 0 < self.optim["max_steps"] < 1:
             max_steps = int(self.optim["max_steps"] * len(loader))
         # Otherwise, set max_steps to the length of the dataset.
@@ -554,8 +602,8 @@ class BaseTrainer(torch.nn.Module):
             if name_loader == "train" or name_loader[0] == "_":
                 continue
             # Reset the metrics for the epoch.
-            if name_loader in self.logger["metrics"]:
-                for _, v in self.logger["metrics"][name_loader].items():
+            if name_loader in self.logger["metric"]:
+                for _, v in self.logger["metric"][name_loader].items():
                     v.reset()
 
             try:
@@ -566,7 +614,6 @@ class BaseTrainer(torch.nn.Module):
                         total=max_steps,
                         desc=f"Eval {name_loader}: {self.epoch=}",
                     ):
-
                         # Call any user specified pre-step function.
                         self.before_eval_step()
 
@@ -587,8 +634,8 @@ class BaseTrainer(torch.nn.Module):
             # Be sure to clean up to avoid silent bugs.
             self.batch = None
             # Compute the final metrics for the epoch.
-            if name_loader in self.logger["metrics"]:
-                for name, metric in self.logger["metrics"][name_loader].items():
+            if name_loader in self.logger["metric"]:
+                for name, metric in self.logger["metric"][name_loader].items():
                     packet[f"{name_loader}/{name}"] = metric.compute()
         self._log(packet, commit=True)
         # Call any user specified post-epoch function.
@@ -634,7 +681,7 @@ class BaseTrainer(torch.nn.Module):
         if scale <= self.scaler.get_scale():
             self.optim["scheduler"].step()
 
-        if self.global_step % self.logger["every_step"] == 0:
+        if self.global_step % self.logger["log_every_step"] == 0:
             bucket = {}
             if isinstance(returned_loss, dict):
                 for name, value in returned_loss.items():
@@ -648,18 +695,18 @@ class BaseTrainer(torch.nn.Module):
 
     def _eval_step(self, name_loader):
         output = self.predict()
-        if name_loader in self.logger["metrics"]:
-            for metric in self.logger["metrics"][name_loader].values():
+        if name_loader in self.logger["metric"]:
+            for metric in self.logger["metric"][name_loader].values():
                 metric.update(output, self.batch[1])
 
-        if name_loader in self.logger["monitors"]:
-            for metric in self.logger["monitors"][name_loader].values():
+        if name_loader in self.logger["monitor"]:
+            for metric in self.logger["monitor"][name_loader].values():
                 metric: Monitor
                 # NOTE To make this more general (e.g. for GradNorm, etc.)
                 # we should pass in the BaseModel in its entirety and let the
                 # compute method use what it needs.
                 score = metric.compute(output)
-                if self.global_step % self.logger["every_step"] == 0:
+                if self.global_step % self.logger["log_every_step"] == 0:
                     self._log({f"{name_loader}/{metric.name}": score})
 
     def _set_device(self, hardware):
@@ -675,7 +722,6 @@ class BaseTrainer(torch.nn.Module):
             dist_env = submitit.JobEnvironment()
             port = 10000 + int(os.environ["SLURM_JOBID"]) % 55000
             if "SLURM_JOB_NODELIST" in os.environ:
-
                 cmd = ["scontrol", "show", "hostnames", os.getenv("SLURM_JOB_NODELIST")]
                 host_name = subprocess.check_output(cmd).decode().splitlines()[0]
                 dist_url = f"tcp://{host_name}:{port}"
@@ -851,3 +897,38 @@ class BaseTrainer(torch.nn.Module):
     @latest_representations.setter
     def latest_representations(self, value):
         self._latest_representations = value
+
+    def _check_modules(self):
+        """Check if the required modules are defined."""
+        if not hasattr(self, "required_modules"):
+            logging.info(
+                "\t-skipping module check as `required_modules' was not provided."
+            )
+            return
+        missing_modules = []
+        incorrect_types = {}
+
+        for module_name, expected_type in self.required_modules.items():
+            if module_name not in self.module:
+                missing_modules.append(module_name)
+            else:
+                actual_obj = self.module[module_name]
+                if not isinstance(actual_obj, expected_type):
+                    incorrect_types[module_name] = (
+                        f"Expected {expected_type.__name__}, "
+                        f"got {type(actual_obj).__name__}."
+                    )
+
+        if missing_modules:
+            log_and_raise(
+                ValueError,
+                f"The following required modules are missing: {missing_modules} "
+                f"for the {self.__class__.__name__} trainer.",
+            )
+
+        if incorrect_types:
+            log_and_raise(
+                ValueError,
+                f"Some modules are not of the required type:\n{incorrect_types}\n"
+                f"for the {self.__class__.__name__} trainer.",
+            )

@@ -12,21 +12,24 @@ authors = [
 license = {text = "MIT"}
 readme = {file = "README.md", content-type = "text/markdown"}
 dependencies = [
-    "numpy", 
+    "numpy",
     "torch",
     "torchvision",
-    "tqdm", 
-    "omegaconf", 
-    "wandb", 
-    "hydra-core", 
-    "hydra-submitit-launcher", 
-    "pandas", 
-    "jsonlines", 
-    "torchmetrics", 
+    "tqdm",
+    "omegaconf",
+    "wandb",
+    "hydra-core",
+    "hydra-submitit-launcher",
+    "pandas",
+    "jsonlines",
+    "torchmetrics",
     "scipy",
 ]
 
 dynamic = ["version"]
+
+[project.entry-points."console_scripts"]
+stable-ssl = "stable_ssl.cli:entry"
 
 [tool.setuptools]
 packages = ["stable_ssl"]
@@ -35,13 +38,15 @@ packages = ["stable_ssl"]
 version = {attr = "stable_ssl.__about__.__version__"}
 
 [project.optional-dependencies]
-test = [
+dev = [
     "pytest",
     "flake8",
     "coverage",
     "numpydoc",
     "pytest-cov",
-    "codecov"
+    "codecov",
+    "pykeops",
+    "pre-commit",
 ]
 
 doc = [

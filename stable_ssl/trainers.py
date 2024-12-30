@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-"""Template classes to easily instanciate Supervised or SSL trainers."""
+"""Template classes to easily instantiate Supervised or SSL trainers."""
+
 #
 # Author: Hugues Van Assel <vanasselhugues@gmail.com>
 #         Randall Balestriero <randallbalestriero@gmail.com>
@@ -7,32 +7,53 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import copy
-import logging
-
 import torch
 import torch.nn.functional as F
 
 from .base import BaseTrainer
-from .utils import update_momentum, log_and_raise
+from .modules import TeacherStudentModule
+from .utils import compute_global_mean, log_and_raise
+
+# ==========================================
+# Base trainers that require a loss function
+# ==========================================
 
 
 class SupervisedTrainer(BaseTrainer):
     r"""Base class for training a supervised model."""
 
-    def forward(self, x):
-        return self.module["backbone"](x)
+    required_modules = {"backbone": torch.nn.Module}
+
+    def forward(self, *args, **kwargs):
+        """Forward pass. By default, it simply calls the 'backbone' module."""
+        return self.module["backbone"](*args, **kwargs)
 
     def predict(self):
+        """Call the forward pass of current batch."""
         return self.forward(self.batch[0])
 
     def compute_loss(self):
+        """Compute the loss of the model using the `loss` provided in the config."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
         loss = self.loss(self.predict(), self.batch[1])
-        return {"train/loss": loss}
+        return {"loss": loss}
 
 
 class JointEmbeddingTrainer(BaseTrainer):
     r"""Base class for training a joint-embedding SSL model."""
+
+    required_modules = {
+        "backbone": torch.nn.Module,
+        "projector": torch.nn.Module,
+        "backbone_classifier": torch.nn.Module,
+        "projector_classifier": torch.nn.Module,
+    }
 
     def format_views_labels(self):
         if (
@@ -45,7 +66,7 @@ class JointEmbeddingTrainer(BaseTrainer):
         elif (
             len(self.batch) > 1
             and all([torch.is_tensor(b) for b in self.batch])
-            and len(set([b.ndim for b in self.batch])) == 1
+            and len({b.ndim for b in self.batch}) == 1
         ):
             # we assume all elements are views
             views = self.batch
@@ -57,13 +78,24 @@ class JointEmbeddingTrainer(BaseTrainer):
             log_and_raise(ValueError, msg)
         return views, labels
 
-    def forward(self, x):
-        return self.module["backbone"](x)
+    def forward(self, *args, **kwargs):
+        """Forward pass. By default, it simply calls the 'backbone' module."""
+        return self.module["backbone"](*args, **kwargs)
 
     def predict(self):
+        """Call the backbone classifier on the forward pass of current batch."""
         return self.module["backbone_classifier"](self.forward(self.batch[0]))
 
     def compute_loss(self):
+        """Compute final loss as sum of SSL loss and classifier losses."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
+
         views, labels = self.format_views_labels()
         representations = [self.module["backbone"](view) for view in views]
         self._latest_representations = representations
@@ -77,12 +109,14 @@ class JointEmbeddingTrainer(BaseTrainer):
             representations, embeddings, labels
         )
 
-        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+        return {"loss_ssl": loss_ssl, **classifier_losses}
 
     def compute_loss_classifiers(self, embeddings, projections, labels):
+        """Compute the classifier loss for both backbone and projector."""
         loss_backbone_classifier = 0
         loss_projector_classifier = 0
 
+        # Inputs are detached to avoid backprop through backbone and projector.
         if labels is not None:
             for embed, proj in zip(embeddings, projections):
                 loss_backbone_classifier += F.cross_entropy(
@@ -93,8 +127,8 @@ class JointEmbeddingTrainer(BaseTrainer):
                 )
 
         return {
-            "train/loss_backbone_classifier": loss_backbone_classifier,
-            "train/loss_projector_classifier": loss_projector_classifier,
+            "loss_backbone_classifier": loss_backbone_classifier,
+            "loss_projector_classifier": loss_projector_classifier,
         }
     
     # NOTE From the LiDAR paper:
@@ -118,77 +152,181 @@ class JointEmbeddingTrainer(BaseTrainer):
 class SelfDistillationTrainer(JointEmbeddingTrainer):
     r"""Base class for training a self-distillation SSL model."""
 
-    def setup(self):
-        logging.getLogger().setLevel(self._logger["level"])
-        logging.info(f"=> SETUP OF {self.__class__.__name__} STARTED.")
-        self._instanciate()
-        self.module["backbone_target"] = copy.deepcopy(self.module["backbone"])
-        self.module["projector_target"] = copy.deepcopy(self.module["projector"])
-
-        self.module["backbone_target"].requires_grad_(False)
-        self.module["projector_target"].requires_grad_(False)
-        self._load_checkpoint()
-        logging.info(f"=> SETUP OF {self.__class__.__name__} COMPLETED.")
-
-    def before_fit_step(self):
-        """Update the target parameters as EMA of the online model parameters."""
-        update_momentum(
-            self.backbone, self.backbone_target, m=self.config.model.momentum
-        )
-        update_momentum(
-            self.projector, self.projector_target, m=self.config.model.momentum
-        )
+    required_modules = {
+        "backbone": TeacherStudentModule,
+        "projector": TeacherStudentModule,
+        "backbone_classifier": torch.nn.Module,
+        "projector_classifier": torch.nn.Module,
+    }
 
     def compute_loss(self):
+        """Compute final loss as sum of SSL loss and classifier losses."""
+        if self.loss is None:
+            log_and_raise(
+                ValueError,
+                f"When using the trainer {self.__class__.__name__}, "
+                "one needs to either provide a loss function in the config "
+                "or implement a custom `compute_loss` method.",
+            )
+
         views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        projections = [self.module["projector"](embed) for embed in embeddings]
 
-        # If a predictor is used, it is generally applied to the online projections.
+        embeddings_student = [
+            self.module["backbone"].forward_student(view) for view in views
+        ]
+        projections_student = [
+            self.module["projector"].forward_student(embed)
+            for embed in embeddings_student
+        ]
+
+        # If a predictor is used, it is applied to the student projections.
         if "predictor" in self.module:
-            projections = [self.module["predictor"](proj) for proj in projections]
+            projections_student = [
+                self.module["predictor"](proj) for proj in projections_student
+            ]
 
-        projections_target = [
-            self.module["projector_target"](self.module["backbone_target"](view))
-            for view in views
+        embeddings_teacher = [
+            self.module["backbone"].forward_teacher(view) for view in views
+        ]
+        self.latest_forward = embeddings_teacher
+        projections_teacher = [
+            self.module["projector"].forward_teacher(embed)
+            for embed in embeddings_teacher
         ]
 
         loss_ssl = 0.5 * (
-            self.loss(projections[0], projections_target[1])
-            + self.loss(projections[1], projections_target[0])
+            self.loss(projections_student[0], projections_teacher[1])
+            + self.loss(projections_student[1], projections_teacher[0])
         )
 
         classifier_losses = self.compute_loss_classifiers(
-            embeddings, projections, labels
+            embeddings_teacher, projections_teacher, labels
         )
 
-        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+        return {"loss_ssl": loss_ssl, **classifier_losses}
 
 
-class SimSiamTrainer(JointEmbeddingTrainer):
-    r"""Base class for training a SimSiam SSL model."""
+# ===============================
+# Trainers with Specific Losses
+# ===============================
+
+
+class DINOTrainer(SelfDistillationTrainer):
+    r"""DINO SSL model by :cite:`caron2021emerging`.
+
+    Parameters
+    ----------
+    warmup_temperature_teacher : float, optional
+        The initial temperature for the teacher output.
+        Default is 0.04.
+    temperature_teacher : float, optional
+        The temperature for the teacher output.
+        Default is 0.07.
+    warmup_epochs_temperature_teacher : int, optional
+        The number of epochs to warm up the teacher temperature.
+        Default is 30.
+    temperature_student : float, optional
+        The temperature for the student output.
+        Default is 0.1.
+    center_momentum : float, optional
+        The momentum used to update the center.
+        Default is 0.9.
+    **kwargs
+        Additional arguments passed to the base class.
+    """
+
+    def __init__(
+        self,
+        warmup_temperature_teacher: float = 0.04,
+        temperature_teacher: float = 0.07,
+        warmup_epochs_temperature_teacher: int = 30,
+        temperature_student: float = 0.1,
+        center_momentum: float = 0.9,
+        **kwargs,
+    ):
+        super().__init__(
+            warmup_temperature_teacher=warmup_temperature_teacher,
+            temperature_teacher=temperature_teacher,
+            warmup_epochs_temperature_teacher=warmup_epochs_temperature_teacher,
+            temperature_student=temperature_student,
+            center_momentum=center_momentum,
+            **kwargs,
+        )
+
+        self.temperature_teacher_schedule = torch.linspace(
+            start=warmup_temperature_teacher,
+            end=temperature_teacher,
+            steps=warmup_epochs_temperature_teacher,
+        )
 
     def compute_loss(self):
+        """Compute the DINO loss."""
         views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        projections = [self.module["projector"](embed) for embed in embeddings]
 
-        if len(projections) > 2:
-            logging.warning("Only the first two views are used when using SimSiam.")
+        embeddings_student = [
+            self.module["backbone"].forward_student(view) for view in views
+        ]
+        projections_student = [
+            self.module["projector"].forward_student(embed)
+            for embed in embeddings_student
+        ]
 
-        if not hasattr(self.module, "predictor"):
-            log_and_raise(ValueError, "SimSiam requires a predictor module.")
+        # Construct target *from global views only* with the target ('teacher') network.
+        with torch.no_grad():
+            global_views = self.batch[0][:2]  # First two views should be global views.
+            embeddings_teacher = [
+                self.module["backbone"].forward_teacher(view) for view in global_views
+            ]
+            self.latest_forward = embeddings_teacher
+            projections_teacher = [
+                self.module["projector"].forward_teacher(embed)
+                for embed in embeddings_teacher
+            ]
 
-        predictions = [self.module["predictor"](proj) for proj in projections]
-        detached_projections = [proj.detach() for proj in projections]
+        if self.epoch < self.warmup_epochs_temperature_teacher:
+            temperature_teacher = self.temperature_teacher_schedule[self.epoch]
+        else:
+            temperature_teacher = self.temperature_teacher
 
-        loss_ssl = 0.5 * (
-            self.loss(predictions[0], detached_projections[1])
-            + self.loss(predictions[1], detached_projections[0])
+        stacked_projections_teacher = torch.stack(projections_teacher)
+        if hasattr(self, "center"):
+            probs_teacher = F.softmax(
+                (stacked_projections_teacher - self.center) / temperature_teacher,
+                dim=-1,
+            )
+        else:
+            probs_teacher = F.softmax(
+                stacked_projections_teacher / temperature_teacher, dim=-1
+            )
+
+        stacked_projections_student = torch.stack(projections_student)
+        log_probs_student = F.log_softmax(
+            stacked_projections_student / self.temperature_student, dim=-1
         )
+
+        # Compute the cross entropy loss between the student and teacher probabilities.
+        probs_teacher_flat = probs_teacher.flatten(start_dim=1)
+        log_probs_student_flat = log_probs_student.flatten(start_dim=1)
+        loss_ssl = -probs_teacher_flat @ log_probs_student_flat.T
+        loss_ssl.fill_diagonal_(0)
+
+        # Normalize the loss.
+        n_terms = loss_ssl.numel() - loss_ssl.diagonal().numel()
+        batch_size = stacked_projections_teacher.shape[1]
+        loss_ssl = loss_ssl.sum() / (n_terms * batch_size)
+
+        # Update the center of the teacher network.
+        with torch.no_grad():
+            batch_center = compute_global_mean(stacked_projections_teacher, dim=(0, 1))
+            if not hasattr(self, "center"):
+                self.center = batch_center
+            else:
+                self.center = self.center * self.center_momentum + batch_center * (
+                    1 - self.center_momentum
+                )
 
         classifier_losses = self.compute_loss_classifiers(
-            embeddings, projections, labels
+            embeddings_teacher, projections_teacher, labels
         )
 
-        return {"train/loss_ssl": loss_ssl, **classifier_losses}
+        return {"loss_ssl": loss_ssl, **classifier_losses}

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Learning rate schedulers."""
 #
 # Author: Randall Balestriero <randallbalestriero@gmail.com>
@@ -7,14 +6,14 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import numpy as np
 from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    LambdaLR,
     LinearLR,
     MultiStepLR,
-    CosineAnnealingLR,
     SequentialLR,
-    LambdaLR,
 )
-import numpy as np
 
 
 class CosineDecayer:
@@ -39,7 +38,7 @@ def LinearWarmup(optimizer, total_steps, start_factor=0.01, peak_step=0.1):
 
 
 def LinearWarmupCosineAnnealing(
-    optimizer, total_steps, start_factor=0.01, end_lr=0.0001, peak_step=0.01
+    optimizer, total_steps, start_factor=0.01, end_lr=0.0, peak_step=0.01
 ):
     """Combine linear warmup with cosine annealing decay."""
     if peak_step < 1:
