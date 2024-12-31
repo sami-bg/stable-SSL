@@ -120,10 +120,7 @@ def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
 
 
 class LiDAR(Monitor):
-    """A method for assessing representation quality of JE SSL objectives.
-
-    As introduced in https://arxiv.org/pdf/2312.04000
-    """
+    """LiDAR (Linear Discriminant Analysis Rank) monitor from :cite`thilak2023lidar`."""
 
     name = "LiDAR"
 
