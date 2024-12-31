@@ -11,4 +11,4 @@ Version 0.1
 - Loss functions: NTXEnt, Barlow Twins, Negative Cosine Similarity, VICReg.
 - Base classes for multi-view dataloaders.
 - Functionalities to read the loggings and easily export the results.
-- RankMe metric to monitor training.
+- RankMe, LiDAR metrics to monitor training.
