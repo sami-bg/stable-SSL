@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 """Training/evaluation metrics that are computed at the end of each step."""
 #
-# Author: Randall Balestriero <randallbalestriero@gmail.com>
-#         Hugues Van Assel <vanasselhugues@gmail.com>
+# Author: @sami-bg
 #
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
-import math
 import logging
 from functools import cache
 from collections import deque
@@ -41,10 +39,6 @@ def gather_to_rank0(x: torch.Tensor):
 class Monitor:
     """Base class for metrics that are monitored at the end of each step.
 
-    For example:
-
-        - RankMe
-        - GradNorm
 
     Inheritors must implement a `compute` method, that calculates the metric,
     and a `name` attribute for logging.
@@ -58,11 +52,7 @@ class Monitor:
 
 
 class RankMe(Monitor):
-    """Unsupervised criterion that calculates effective rank of \
-        learned joint-embedding representations.
-
-    As introduced in https://arxiv.org/pdf/2210.02885
-    """
+    """RankMe (effective rank) monitor from :cite:`garrido2023rankme`."""
 
     name = "rankme"
 
