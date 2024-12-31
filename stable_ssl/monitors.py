@@ -82,6 +82,7 @@ class RankMe(Monitor):
 
 
 def get_num_devices() -> int:
+    """Returns the number of devices used in this run."""
     num_devices = 1
     if dist.is_available() and dist.is_initialized():
         num_devices = dist.get_world_size()
@@ -121,6 +122,7 @@ def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
 
 class LiDAR(Monitor):
     """A method for assessing representation quality of JE SSL objectives.
+
 
     As introduced in https://arxiv.org/pdf/2312.04000
     """
