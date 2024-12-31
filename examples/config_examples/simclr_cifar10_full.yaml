@@ -146,6 +146,6 @@ trainer:
           top_k: 5
     monitor:
       train:
-          lidar:
-            _target_: stable_ssl.monitors.LiDAR
-            n: 128
+        lidar:
+          _target_: stable_ssl.monitors.LiDAR
+          n: 128

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Training/evaluation metrics that are computed at the end of each step."""
 #
 # Author: @sami-bg
@@ -10,13 +9,13 @@ from collections import deque
 
 import torch
 import torch.distributed as dist
-from stable_ssl.utils import warn_once
+
 from stable_ssl import BaseTrainer, JointEmbeddingTrainer
+from stable_ssl.utils import warn_once
 
 
 class Monitor:
     """Base class for metrics that are monitored at the end of each step.
-
 
     Inheritors must implement a `compute` method, that calculates the metric,
     and a `name` attribute for logging.
@@ -82,7 +81,7 @@ class RankMe(Monitor):
 
 
 def get_num_devices() -> int:
-    """Returns the number of devices used in this run."""
+    """Return the number of devices used in this run."""
     num_devices = 1
     if dist.is_available() and dist.is_initialized():
         num_devices = dist.get_world_size()
@@ -123,9 +122,9 @@ def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
 class LiDAR(Monitor):
     """A method for assessing representation quality of JE SSL objectives.
 
-
     As introduced in https://arxiv.org/pdf/2312.04000
     """
+
     name = "LiDAR"
 
     def __init__(self, n: int = 1000, epsilon: float = 1e-7, delta: float = 1e-3):
@@ -148,10 +147,12 @@ class LiDAR(Monitor):
         self.queue = deque(maxlen=self.device_limit)
 
         if self.global_limit != self.n:
-            warn_once(f"Received n={self.n} but rounded to {self.global_limit}. "
-                      f"To avoid this, make sure n={self.n} and your batch size "
-                      f"({batch_size}) are divisible.")
-        logging.info(f'Initialized LiDAR with n={self.global_limit}')
+            warn_once(
+                f"Received n={self.n} but rounded to {self.global_limit}. "
+                f"To avoid this, make sure n={self.n} and your batch size "
+                f"({batch_size}) are divisible."
+            )
+        logging.info(f"Initialized LiDAR with n={self.global_limit}")
         return
 
     def lidar(self, batch_embeddings: list[torch.Tensor]) -> float:
@@ -192,10 +193,8 @@ class LiDAR(Monitor):
         eigvals_w, eigvecs_w = torch.linalg.eigh(S_w)
         eigvals_w = torch.clamp(eigvals_w, min=self.epsilon)
 
-        invsqrt_w = (
-            (eigvecs_w * (1.0 / torch.sqrt(eigvals_w)))
-            @
-            eigvecs_w.transpose(-1, -2)
+        invsqrt_w = (eigvecs_w * (1.0 / torch.sqrt(eigvals_w))) @ eigvecs_w.transpose(
+            -1, -2
         )
         Sigma_lidar = invsqrt_w @ S_b @ invsqrt_w
 
@@ -208,7 +207,7 @@ class LiDAR(Monitor):
         p_log_p = p * torch.log(p + self.epsilon)
 
         lidar = float(torch.exp(-p_log_p.sum()))
-        print(f'lidar={lidar}')
+        print(f"lidar={lidar}")
         return lidar
 
     def compute(self, base: BaseTrainer) -> float:
@@ -228,7 +227,6 @@ if __name__ == "__main__":
 
     # rankme = RankMe()
     # rankmes = [rankme.compute(torch.randn((8, 16, 16, 14))) for _ in range(25)]
-
     # plt.plot(rankmes)
     # plt.show()
 

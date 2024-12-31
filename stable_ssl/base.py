@@ -12,9 +12,9 @@ import logging
 import os
 import subprocess
 import time
-from typing import TYPE_CHECKING
 from abc import abstractmethod
 from dataclasses import asdict
+from typing import TYPE_CHECKING
 
 import hydra
 import jsonlines
@@ -34,6 +34,7 @@ from .config import (
 )
 from .data import DistributedSamplerWrapper
 from .modules import TeacherStudentModule
+
 if TYPE_CHECKING:
     from .monitors import Monitor
 
