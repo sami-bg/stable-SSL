@@ -153,11 +153,8 @@ class LiDAR(Monitor):
         return
 
     def lidar(self, batch_embeddings: list[torch.Tensor]) -> float:
-        # latest_embeddings:
-        # list of size B, [q, D], q: num of augmentations per image (surrogate class)
-        # B is batch-size
-
         if not self.queue:
+            batch_size = len(batch_embeddings)
             self._init_bounded_queue(batch_size)
 
         self.queue.extend(batch_embeddings)
@@ -165,8 +162,8 @@ class LiDAR(Monitor):
         embeddings: torch.Tensor = torch.stack(list(self.queue), dim=0)
         (local_n, q, d), device = embeddings.shape, embeddings.device
 
-        class_means = embeddings.mean(dim=1)  # [n, D]
-        grand_mean_local = class_means.mean(dim=0)  # [D]
+        class_means = embeddings.mean(dim=1)
+        grand_mean_local = class_means.mean(dim=0)
 
         local_Sb = torch.zeros(d, d, device=device)
         local_Sw = torch.zeros(d, d, device=device)
@@ -178,7 +175,7 @@ class LiDAR(Monitor):
                 diff_w = (embeddings[i, j] - class_means[i]).unsqueeze(1)
                 local_Sw += diff_w @ diff_w.T
 
-        n_total = torch.Tensor([local_n], device=device)
+        n_total = torch.tensor([local_n], device=device)
 
         reduce_to_rank0(local_Sb, dist.ReduceOp.SUM)
         reduce_to_rank0(local_Sw, dist.ReduceOp.SUM)
@@ -208,7 +205,9 @@ class LiDAR(Monitor):
 
         p_log_p = p * torch.log(p + self.epsilon)
 
-        return float(torch.exp(-p_log_p.sum()))
+        lidar = float(torch.exp(-p_log_p.sum()))
+        print(f'lidar={lidar}')
+        return lidar
 
     def compute(self, base: BaseTrainer) -> float:
         if not isinstance(base, JointEmbeddingTrainer):

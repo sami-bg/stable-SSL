@@ -147,6 +147,16 @@ class JointEmbeddingTrainer(BaseTrainer):
     def latest_embeddings(self, value):
         self._latest_embeddings = value
 
+    @property
+    def latest_representations(self):
+        if not hasattr(self, "_latest_representations"):
+            return None
+        return self._latest_representations
+
+    @latest_representations.setter
+    def latest_representations(self, value):
+        self._latest_representations = value
+
 
 class SelfDistillationTrainer(JointEmbeddingTrainer):
     r"""Base class for training a self-distillation SSL model."""
