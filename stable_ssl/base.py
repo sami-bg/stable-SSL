@@ -11,6 +11,7 @@ import logging
 import os
 import subprocess
 import time
+from typing import TYPE_CHECKING
 from abc import abstractmethod
 from dataclasses import asdict
 
@@ -32,7 +33,8 @@ from .config import (
 )
 from .data import DistributedSamplerWrapper
 from .modules import TeacherStudentModule
-from .monitors import Monitor
+if TYPE_CHECKING:
+    from .monitors import Monitor
 
 try:
     import wandb
@@ -887,7 +889,7 @@ class BaseTrainer(torch.nn.Module):
 
         logging.info("Device status after cleaning.")
         get_gpu_info()
-    
+
     @property
     def latest_representations(self):
         if not hasattr(self, "_latest_representations"):
