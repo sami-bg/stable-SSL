@@ -6,18 +6,14 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 import logging
-from functools import cache
 from collections import deque
 
 import torch
 import torch.distributed as dist
 from typing import TYPE_CHECKING
+from stable_ssl.utils import warn_once
 if TYPE_CHECKING:
     from stable_ssl import BaseTrainer, JointEmbeddingTrainer
-
-@cache
-def _warn_once(warning: str):
-    logging.warning(warning)
 
 
 def gather_to_rank0(x: torch.Tensor):
@@ -76,7 +72,7 @@ class RankMe(Monitor):
     def _calculate_rankme(x: torch.Tensor, epsilon: float) -> torch.Tensor:
         # NOTE torch.linalg.svd only supports torch.float32 for now
         if x.dtype != torch.float32:
-            _warn_once(
+            warn_once(
                 f"RankMe expected tensors of type {torch.float32}, "
                 f"but received {x.dtype}, will convert "
                 f"{x.dtype}->{torch.float32}"
@@ -139,7 +135,7 @@ class LiDAR(Monitor):
         self.queue = deque(maxlen=self.device_limit)
 
         if self.global_limit != self.n:
-            _warn_once(f"Received n={self.n} but rounded to {self.global_limit}. "
+            warn_once(f"Received n={self.n} but rounded to {self.global_limit}. "
                        f"To avoid this, make sure n={self.n} and your batch size " 
                        f"({batch_size}) are divisible.")
         logging.info(f'Initialized LiDAR with n={self.global_limit}')
