@@ -14,6 +14,45 @@ from stable_ssl import BaseTrainer, JointEmbeddingTrainer
 from stable_ssl.utils import warn_once
 
 
+def get_num_devices() -> int:
+    """Return the number of devices used in this run."""
+    num_devices = 1
+    if dist.is_available() and dist.is_initialized():
+        num_devices = dist.get_world_size()
+    return num_devices
+
+
+def gather_to_rank0(x: torch.Tensor):
+    """Gathers a tensor to the rank0 device."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or (world_size := dist.get_world_size()) == 1
+    ):
+        return x
+
+    if dist.get_rank() == 0:
+        output = [torch.zeros_like(x) for _ in range(world_size)]
+        dist.gather(x, output, dst=0)
+        return torch.cat(output, dim=0)
+    else:
+        return x
+
+
+def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
+    """Reduces a tensor to the rank0 device."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or dist.get_world_size() == 1
+    ):
+        return x
+
+    if dist.get_rank() == 0:
+        dist.reduce(x, dst=0, op=op)
+        return x
+    else:
+        return x
+
+
 class Monitor:
     """Base class for metrics that are monitored at the end of each step.
 
@@ -78,45 +117,6 @@ class RankMe(Monitor):
             return [self.compute(batch) for batch in encoding][-1]
 
         return self.rankme(encoding, self.epsilon)
-
-
-def get_num_devices() -> int:
-    """Return the number of devices used in this run."""
-    num_devices = 1
-    if dist.is_available() and dist.is_initialized():
-        num_devices = dist.get_world_size()
-    return num_devices
-
-
-def gather_to_rank0(x: torch.Tensor):
-    """Gathers a tensor to the rank0 device."""
-    if (
-        not (dist.is_available() and dist.is_initialized())
-        or (world_size := dist.get_world_size()) == 1
-    ):
-        return x
-
-    if dist.get_rank() == 0:
-        output = [torch.zeros_like(x) for _ in range(world_size)]
-        dist.gather(x, output, dst=0)
-        return torch.cat(output, dim=0)
-    else:
-        return x
-
-
-def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
-    """Reduces a tensor to the rank0 device."""
-    if (
-        not (dist.is_available() and dist.is_initialized())
-        or dist.get_world_size() == 1
-    ):
-        return x
-
-    if dist.get_rank() == 0:
-        dist.reduce(x, dst=0, op=op)
-        return x
-    else:
-        return x
 
 
 class LiDAR(Monitor):
