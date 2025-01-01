@@ -204,7 +204,6 @@ class LiDAR(Monitor):
         p_log_p = p * torch.log(p + self.epsilon)
 
         lidar = float(torch.exp(-p_log_p.sum()))
-        print(f"lidar={lidar}")
         return lidar
 
     def compute(self, base: BaseTrainer) -> float:
