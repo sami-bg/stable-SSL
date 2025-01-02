@@ -193,23 +193,3 @@ class LiDAR(Monitor):
         trainer: JointEmbeddingTrainer
         embeddings: list[torch.Tensor] = trainer.latest_embeddings
         return self.lidar(embeddings)
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-
-    # rankme = RankMe()
-    # rankmes = [rankme.compute(torch.randn((8, 16, 16, 14))) for _ in range(25)]
-    # plt.plot(rankmes)
-    # plt.show()
-
-    lidar = LiDAR()
-    n, q, d = 1000, 16, 768
-    batch_size = 32
-    lidars = []
-    for i in range(1200 // batch_size):
-        embeddings = [torch.randn((q, d)) for i in range(batch_size)]
-        lidars.append(lidar.lidar(embeddings))
-
-    plt.plot(lidars)
-    plt.show()

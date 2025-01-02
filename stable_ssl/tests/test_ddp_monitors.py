@@ -1,9 +1,15 @@
+import coverage
 import pytest
 import torch
 import torch.multiprocessing as mp
 
 from stable_ssl.monitors import LiDAR, RankMe
 from stable_ssl.tests.utils import ddp_group_manager, find_free_port
+
+
+def pytest_configure(config):
+    """Configure coverage to handle multiprocessing."""
+    coverage.process_startup()
 
 
 @pytest.fixture
