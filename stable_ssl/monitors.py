@@ -11,7 +11,7 @@ import torch
 import torch.distributed as dist
 
 from stable_ssl import BaseTrainer, JointEmbeddingTrainer
-from stable_ssl.utils import warn_once
+from stable_ssl.utils import gather, reduce, warn_once
 
 
 def get_num_devices() -> int:
@@ -20,37 +20,6 @@ def get_num_devices() -> int:
     if dist.is_available() and dist.is_initialized():
         num_devices = dist.get_world_size()
     return num_devices
-
-
-def gather_to_rank0(x: torch.Tensor):
-    """Gathers a tensor to the rank0 device."""
-    if (
-        not (dist.is_available() and dist.is_initialized())
-        or (world_size := dist.get_world_size()) == 1
-    ):
-        return x
-
-    if dist.get_rank() == 0:
-        output = [torch.zeros_like(x) for _ in range(world_size)]
-        dist.gather(x, output, dst=0)
-        return torch.cat(output, dim=0)
-    else:
-        return x
-
-
-def reduce_to_rank0(x: torch.Tensor, op=dist.ReduceOp.SUM):
-    """Reduces a tensor to the rank0 device."""
-    if (
-        not (dist.is_available() and dist.is_initialized())
-        or dist.get_world_size() == 1
-    ):
-        return x
-
-    if dist.get_rank() == 0:
-        dist.reduce(x, dst=0, op=op)
-        return x
-    else:
-        return x
 
 
 class Monitor:
@@ -62,7 +31,7 @@ class Monitor:
 
     name: str = "monitor"
 
-    def compute(self, x: BaseTrainer):
+    def compute(self, trainer: BaseTrainer):
         """Abstract method that calculates a score given a model."""
         pass
 
@@ -93,7 +62,7 @@ class RankMe(Monitor):
         self.bounded_queue.append(encoding)
 
         encoding = torch.cat(list(self.bounded_queue), dim=0)
-        encoding = gather_to_rank0(encoding)
+        encoding = gather(encoding, rank=0)
 
         # NOTE torch.linalg.svd only supports torch.float32 for now
         if encoding.dtype != torch.float32:
@@ -109,8 +78,8 @@ class RankMe(Monitor):
         entropy = -torch.sum(p * torch.log(p))
         return torch.exp(entropy)
 
-    def compute(self, base: BaseTrainer) -> float:
-        encoding: list | torch.Tensor = base.latest_representations
+    def compute(self, trainer: BaseTrainer) -> float:
+        encoding: list | torch.Tensor = trainer.latest_representations
         if isinstance(encoding, list):
             # assume a list is of views, where each view is batch_size on the 0th dim
             # (as per JointEmbeddng)
@@ -176,15 +145,10 @@ class LiDAR(Monitor):
                 local_Sw += diff_w @ diff_w.T
 
         n_total = torch.tensor([local_n], device=device)
+        n_total = reduce(n_total, rank=0, op=dist.ReduceOp.SUM).item()
 
-        reduce_to_rank0(local_Sb, dist.ReduceOp.SUM)
-        reduce_to_rank0(local_Sw, dist.ReduceOp.SUM)
-        reduce_to_rank0(n_total, dist.ReduceOp.SUM)
-
-        n_total = n_total.item()
-
-        S_b = local_Sb / (n_total - 1)
-        S_w = local_Sw / (n_total * (q - 1))
+        S_b = reduce(local_Sb, rank=0, op=dist.ReduceOp.SUM) / (n_total - 1)
+        S_w = reduce(local_Sw, rank=0, op=dist.ReduceOp.SUM) / (n_total * (q - 1))
         S_w += self.delta * torch.eye(d, device=device)
 
         eigvals_w, eigvecs_w = torch.linalg.eigh(S_w)
@@ -206,15 +170,15 @@ class LiDAR(Monitor):
         lidar = float(torch.exp(-p_log_p.sum()))
         return lidar
 
-    def compute(self, base: BaseTrainer) -> float:
-        if not isinstance(base, JointEmbeddingTrainer):
+    def compute(self, trainer: BaseTrainer) -> float:
+        if not isinstance(trainer, JointEmbeddingTrainer):
             raise NotImplementedError(
                 f"LiDAR only implemented for JointEmbeddingTrainer "
-                f"and not yet implemented for type {type(base)}"
+                f"and not yet implemented for type {type(trainer)}"
             )
 
-        base: JointEmbeddingTrainer
-        embeddings: list[torch.Tensor] = base.latest_embeddings
+        trainer: JointEmbeddingTrainer
+        embeddings: list[torch.Tensor] = trainer.latest_embeddings
         return self.lidar(embeddings)
 
 

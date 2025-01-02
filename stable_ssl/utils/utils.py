@@ -38,21 +38,52 @@ class GatherLayer(torch.autograd.Function):
         return all_gradients[dist.get_rank()]
 
 
-def gather(x: torch.Tensor):
-    """Gather tensors from all processes if DDP is initialized."""
+def all_gather(x: torch.Tensor):
+    """All-gather tensors from all processes if DDP is initialized."""
     if not (dist.is_available() and dist.is_initialized()):
         return x
     else:
         return torch.cat(GatherLayer.apply(x), dim=0)
 
 
+def gather(x: torch.Tensor, rank: int = 0):
+    """Gathers a tensor to a specific rank."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or (world_size := dist.get_world_size()) == 1
+    ):
+        return x
+
+    if dist.get_rank() == rank:
+        output = [torch.zeros_like(x) for _ in range(world_size)]
+        dist.gather(x, output, dst=rank)
+        return torch.cat(output, dim=0)
+    else:
+        return x
+
+
 def all_reduce(x: torch.Tensor):
-    """Reduce tensors from all processes if DDP is initialized."""
+    """All-reduce tensors from all processes if DDP is initialized."""
     if not (dist.is_available() and dist.is_initialized()):
         return x
     else:
         x = x / dist.get_world_size()
         dist.all_reduce(x)
+        return x
+
+
+def reduce(x: torch.Tensor, rank: int = 0, op=dist.ReduceOp.SUM):
+    """Reduces a tensor to a specific rank."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or dist.get_world_size() == 1
+    ):
+        return x
+
+    if dist.get_rank() == rank:
+        dist.reduce(x, dst=rank, op=op)
+        return x
+    else:
         return x
 
 
