@@ -197,11 +197,12 @@ class SelfDistillationTrainer(JointEmbeddingTrainer):
         embeddings_teacher = [
             self.module["backbone"].forward_teacher(view) for view in views
         ]
-        self.latest_forward = embeddings_teacher
+        self.latest_representations = embeddings_teacher
         projections_teacher = [
             self.module["projector"].forward_teacher(embed)
             for embed in embeddings_teacher
         ]
+        self.latest_embeddings = projections_teacher
 
         loss_ssl = 0.5 * (
             self.loss(projections_student[0], projections_teacher[1])
@@ -286,11 +287,12 @@ class DINOTrainer(SelfDistillationTrainer):
             embeddings_teacher = [
                 self.module["backbone"].forward_teacher(view) for view in global_views
             ]
-            self.latest_forward = embeddings_teacher
+            self.latest_representations = embeddings_teacher
             projections_teacher = [
                 self.module["projector"].forward_teacher(embed)
                 for embed in embeddings_teacher
             ]
+            self.latest_embeddings = projections_teacher
 
         if self.epoch < self.warmup_epochs_temperature_teacher:
             temperature_teacher = self.temperature_teacher_schedule[self.epoch]

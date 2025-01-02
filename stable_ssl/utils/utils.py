@@ -59,6 +59,7 @@ def gather(x: torch.Tensor, rank: int = 0):
         dist.gather(x, output, dst=rank)
         return torch.cat(output, dim=0)
     else:
+        dist.gather(x, [], dst=rank)
         return x
 
 
@@ -72,7 +73,7 @@ def all_reduce(x: torch.Tensor):
         return x
 
 
-def reduce(x: torch.Tensor, rank: int = 0, op=dist.ReduceOp.SUM):
+def reduce(x: torch.Tensor, rank: int = 0, op=dist.ReduceOp.SUM) -> torch.Tensor:
     """Reduces a tensor to a specific rank."""
     if (
         not (dist.is_available() and dist.is_initialized())
@@ -80,11 +81,27 @@ def reduce(x: torch.Tensor, rank: int = 0, op=dist.ReduceOp.SUM):
     ):
         return x
 
-    if dist.get_rank() == rank:
-        dist.reduce(x, dst=rank, op=op)
+    dist.reduce(x, dst=rank, op=op)
+    return x
+
+
+def broadcast(x: torch.Tensor, src_rank: int = 0):
+    """Broadcasts a tensor from the specified rank to all devices."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or dist.get_world_size() == 1
+    ):
         return x
-    else:
-        return x
+
+    # specified rank will have the correct x shape, so sync it across all processes
+    shape = torch.tensor(x.shape, dtype=torch.int64, device=x.device)
+    dist.broadcast(shape, src=src_rank)
+
+    if dist.get_rank() != src_rank:
+        x = torch.zeros(*shape.tolist(), dtype=x.dtype, device=x.device)
+
+    dist.broadcast(x, src=src_rank)
+    return x
 
 
 @torch.no_grad()

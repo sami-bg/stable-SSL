@@ -11,7 +11,7 @@ import torch
 import torch.distributed as dist
 
 from stable_ssl import BaseTrainer, JointEmbeddingTrainer
-from stable_ssl.utils import gather, reduce, warn_once
+from stable_ssl.utils import broadcast, gather, reduce, warn_once
 
 
 def get_num_devices() -> int:
@@ -55,8 +55,8 @@ class RankMe(Monitor):
         self.epsilon = epsilon
         self.bounded_queue = deque(maxlen=self.device_limit)
 
-    def rankme(self, encoding: torch.Tensor, epsilon: float) -> torch.Tensor:
-        batch_size, *_ = encoding.shape
+    def rankme(self, encoding: torch.Tensor, epsilon: float) -> float:
+        (batch_size, *_), device = encoding.shape, encoding.device
         encoding = encoding.reshape(batch_size, -1)
 
         self.bounded_queue.append(encoding)
@@ -76,9 +76,17 @@ class RankMe(Monitor):
         _u, s, _vh = torch.linalg.svd(encoding, full_matrices=False)
         p = (s / torch.sum(s, axis=0)) + epsilon
         entropy = -torch.sum(p * torch.log(p))
-        return torch.exp(entropy)
+
+        rankme = float(torch.exp(entropy))
+        return broadcast(torch.tensor([rankme], device=device), src_rank=0).item()
 
     def compute(self, trainer: BaseTrainer) -> float:
+        if not isinstance(trainer, JointEmbeddingTrainer):
+            raise NotImplementedError(
+                f"RankMe only implemented for JointEmbeddingTrainer "
+                f"and not yet implemented for type {type(trainer)}"
+            )
+
         encoding: list | torch.Tensor = trainer.latest_representations
         if isinstance(encoding, list):
             # assume a list is of views, where each view is batch_size on the 0th dim
@@ -131,6 +139,15 @@ class LiDAR(Monitor):
         embeddings: torch.Tensor = torch.stack(list(self.queue), dim=0)
         (local_n, q, d), device = embeddings.shape, embeddings.device
 
+        n_total_tensor = torch.tensor([local_n], device=device)
+        n_total_tensor = reduce(n_total_tensor, rank=0, op=dist.ReduceOp.SUM)
+
+        n_total_tensor = broadcast(n_total_tensor, src_rank=0)
+
+        if (n_total := n_total_tensor.item()) == 1:
+            warn_once("LiDAR cannot compute within-class scatter with only one class!")
+            return 1.0
+
         class_means = embeddings.mean(dim=1)
         grand_mean_local = class_means.mean(dim=0)
 
@@ -143,10 +160,6 @@ class LiDAR(Monitor):
             for j in range(q):
                 diff_w = (embeddings[i, j] - class_means[i]).unsqueeze(1)
                 local_Sw += diff_w @ diff_w.T
-
-        n_total = torch.tensor([local_n], device=device)
-        n_total = reduce(n_total, rank=0, op=dist.ReduceOp.SUM).item()
-
         S_b = reduce(local_Sb, rank=0, op=dist.ReduceOp.SUM) / (n_total - 1)
         S_w = reduce(local_Sw, rank=0, op=dist.ReduceOp.SUM) / (n_total * (q - 1))
         S_w += self.delta * torch.eye(d, device=device)
@@ -168,7 +181,7 @@ class LiDAR(Monitor):
         p_log_p = p * torch.log(p + self.epsilon)
 
         lidar = float(torch.exp(-p_log_p.sum()))
-        return lidar
+        return broadcast(torch.tensor([lidar], device=device), src_rank=0).item()
 
     def compute(self, trainer: BaseTrainer) -> float:
         if not isinstance(trainer, JointEmbeddingTrainer):
