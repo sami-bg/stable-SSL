@@ -38,22 +38,70 @@ class GatherLayer(torch.autograd.Function):
         return all_gradients[dist.get_rank()]
 
 
-def gather(x: torch.Tensor):
-    """Gather tensors from all processes if DDP is initialized."""
+def all_gather(x: torch.Tensor):
+    """All-gather tensors from all processes if DDP is initialized."""
     if not (dist.is_available() and dist.is_initialized()):
         return x
     else:
         return torch.cat(GatherLayer.apply(x), dim=0)
 
 
+def gather(x: torch.Tensor, rank: int = 0):
+    """Gathers a tensor to a specific rank."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or (world_size := dist.get_world_size()) == 1
+    ):
+        return x
+
+    if dist.get_rank() == rank:
+        output = [torch.zeros_like(x) for _ in range(world_size)]
+        dist.gather(x, output, dst=rank)
+        return torch.cat(output, dim=0)
+    else:
+        dist.gather(x, [], dst=rank)
+        return x
+
+
 def all_reduce(x: torch.Tensor):
-    """Reduce tensors from all processes if DDP is initialized."""
+    """All-reduce tensors from all processes if DDP is initialized."""
     if not (dist.is_available() and dist.is_initialized()):
         return x
     else:
         x = x / dist.get_world_size()
         dist.all_reduce(x)
         return x
+
+
+def reduce(x: torch.Tensor, rank: int = 0, op=dist.ReduceOp.SUM) -> torch.Tensor:
+    """Reduces a tensor to a specific rank."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or dist.get_world_size() == 1
+    ):
+        return x
+
+    dist.reduce(x, dst=rank, op=op)
+    return x
+
+
+def broadcast(x: torch.Tensor, src_rank: int = 0):
+    """Broadcasts a tensor from the specified rank to all devices."""
+    if (
+        not (dist.is_available() and dist.is_initialized())
+        or dist.get_world_size() == 1
+    ):
+        return x
+
+    # specified rank will have the correct x shape, so sync it across all processes
+    shape = torch.tensor(x.shape, dtype=torch.int64, device=x.device)
+    dist.broadcast(shape, src=src_rank)
+
+    if dist.get_rank() != src_rank:
+        x = torch.zeros(*shape.tolist(), dtype=x.dtype, device=x.device)
+
+    dist.broadcast(x, src=src_rank)
+    return x
 
 
 @torch.no_grad()

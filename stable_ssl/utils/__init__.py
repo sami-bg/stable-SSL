@@ -8,13 +8,16 @@
 from .exceptions import BreakAllEpochs, BreakEpoch, BreakStep, NanError
 from .utils import (
     GatherLayer,
+    all_gather,
     all_reduce,
+    broadcast,
     compute_global_mean,
     gather,
     get_gpu_info,
     get_open_port,
     log_and_raise,
     off_diagonal,
+    reduce,
     seed_everything,
     str_to_dtype,
     to_device,
@@ -25,6 +28,7 @@ __all__ = [
     "str_to_dtype",
     "mask_correlated_samples",
     "GatherLayer",
+    "all_gather",
     "gather",
     "seed_everything",
     "BreakEpoch",
@@ -37,6 +41,8 @@ __all__ = [
     "get_gpu_info",
     "log_and_raise",
     "all_reduce",
+    "reduce",
     "warn_once",
     "compute_global_mean",
+    "broadcast",
 ]

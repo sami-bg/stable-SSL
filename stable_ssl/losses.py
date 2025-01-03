@@ -9,7 +9,7 @@
 import torch
 import torch.nn.functional as F
 
-from stable_ssl.utils import all_reduce, gather, off_diagonal
+from stable_ssl.utils import all_gather, all_reduce, off_diagonal
 
 
 class NTXEntLoss(torch.nn.Module):
@@ -44,8 +44,8 @@ class NTXEntLoss(torch.nn.Module):
         float
             The computed contrastive loss.
         """
-        z_i = gather(z_i)
-        z_j = gather(z_j)
+        z_i = all_gather(z_i)
+        z_j = all_gather(z_j)
 
         z = torch.cat([z_i, z_j], 0)
         N = z.size(0)
@@ -142,8 +142,8 @@ class VICRegLoss(torch.nn.Module):
         """
         repr_loss = F.mse_loss(z_i, z_j)
 
-        z_i = gather(z_i)
-        z_j = gather(z_j)
+        z_i = all_gather(z_i)
+        z_j = all_gather(z_j)
 
         z_i = z_i - z_i.mean(dim=0)
         z_j = z_j - z_j.mean(dim=0)

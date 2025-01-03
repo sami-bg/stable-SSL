@@ -9,3 +9,4 @@ stable_ssl.monitors
 
    Monitor
    RankMe
+   LiDAR

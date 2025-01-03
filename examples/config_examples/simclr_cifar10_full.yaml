@@ -144,3 +144,8 @@ trainer:
           _target_: torchmetrics.classification.MulticlassAccuracy
           num_classes: ${trainer.data._num_classes}
           top_k: 5
+    monitor:
+      train:
+        lidar:
+          _target_: stable_ssl.monitors.LiDAR
+          n: 128

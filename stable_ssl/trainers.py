@@ -97,14 +97,16 @@ class JointEmbeddingTrainer(BaseTrainer):
             )
 
         views, labels = self.format_views_labels()
-        embeddings = [self.module["backbone"](view) for view in views]
-        self.latest_forward = embeddings
-        projections = [self.module["projector"](embed) for embed in embeddings]
+        representations = [self.module["backbone"](view) for view in views]
+        self._latest_representations = representations
 
-        loss_ssl = self.loss(*projections)
+        embeddings = [self.module["projector"](_repr) for _repr in representations]
+        self._latest_embeddings = embeddings
+
+        loss_ssl = self.loss(*embeddings)
 
         classifier_losses = self.compute_loss_classifiers(
-            embeddings, projections, labels
+            representations, embeddings, labels
         )
 
         return {"loss_ssl": loss_ssl, **classifier_losses}
@@ -128,6 +130,32 @@ class JointEmbeddingTrainer(BaseTrainer):
             "loss_backbone_classifier": loss_backbone_classifier,
             "loss_projector_classifier": loss_projector_classifier,
         }
+
+    # NOTE From the LiDAR paper:
+    # "We adopt the terminology in (Garrido et al., 2022), and refer to the
+    # output of the encoder f as a representation, and the output of the
+    # composed encoder and projector # e = ψ◦f as an embedding"
+    # My assumption is that all SSL methods have `representations` but only `JEA` draws
+    # the distinction between `representations` and `embeddings`.
+    @property
+    def latest_embeddings(self):
+        if not hasattr(self, "_latest_embeddings"):
+            return None
+        return self._latest_embeddings
+
+    @latest_embeddings.setter
+    def latest_embeddings(self, value):
+        self._latest_embeddings = value
+
+    @property
+    def latest_representations(self):
+        if not hasattr(self, "_latest_representations"):
+            return None
+        return self._latest_representations
+
+    @latest_representations.setter
+    def latest_representations(self, value):
+        self._latest_representations = value
 
 
 class SelfDistillationTrainer(JointEmbeddingTrainer):
@@ -169,11 +197,12 @@ class SelfDistillationTrainer(JointEmbeddingTrainer):
         embeddings_teacher = [
             self.module["backbone"].forward_teacher(view) for view in views
         ]
-        self.latest_forward = embeddings_teacher
+        self.latest_representations = embeddings_teacher
         projections_teacher = [
             self.module["projector"].forward_teacher(embed)
             for embed in embeddings_teacher
         ]
+        self.latest_embeddings = projections_teacher
 
         loss_ssl = 0.5 * (
             self.loss(projections_student[0], projections_teacher[1])
@@ -258,11 +287,12 @@ class DINOTrainer(SelfDistillationTrainer):
             embeddings_teacher = [
                 self.module["backbone"].forward_teacher(view) for view in global_views
             ]
-            self.latest_forward = embeddings_teacher
+            self.latest_representations = embeddings_teacher
             projections_teacher = [
                 self.module["projector"].forward_teacher(embed)
                 for embed in embeddings_teacher
             ]
+            self.latest_embeddings = projections_teacher
 
         if self.epoch < self.warmup_epochs_temperature_teacher:
             temperature_teacher = self.temperature_teacher_schedule[self.epoch]
