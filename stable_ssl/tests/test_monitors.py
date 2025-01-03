@@ -1,8 +1,6 @@
 import pytest
 import torch
 
-# Suppose your code is in stable_ssl/monitors.py
-# Adjust import paths as needed to point to your actual code:
 from stable_ssl.monitors import LiDAR, RankMe
 
 

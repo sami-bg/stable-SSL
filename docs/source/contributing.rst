@@ -76,5 +76,5 @@ New contributor tips
 --------------------
 
 A great way to start contributing to ``stable-SSL`` is to pick an item
-from the list of `good first issues <https://github.com/rbalestr-lab/stable-SSL/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22>`_ in the issue tracker. Resolving these issues allow you to start
+from the list of `good first issues <https://github.com/rbalestr-lab/stable-SSL/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22>`_ in the issue tracker. Resolving these issues allows you to start
 contributing to the project without much prior knowledge.
