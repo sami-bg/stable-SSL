@@ -324,6 +324,9 @@ class BaseTrainer(torch.nn.Module):
         # Update the teacher network if there is one.
         for m in self.modules():
             if isinstance(m, TeacherStudentModule):
+                m.update_ema_coefficient(
+                    epoch=self.epoch, total_epochs=self.optim["epochs"]
+                )
                 m.update_teacher()
 
     def before_eval(self):
@@ -768,7 +771,7 @@ class BaseTrainer(torch.nn.Module):
             logging.info(f"\tglobal rank: {dist_env.global_rank}")
             logging.info(f"\tlocal rank: {dist_env.local_rank}")
             logging.info(f"\tnumber of nodes: {dist_env.num_nodes}")
-            logging.info(f"\tworld size: {dist_env.num_nodes*dist_env.num_tasks}")
+            logging.info(f"\tworld size: {dist_env.num_nodes * dist_env.num_tasks}")
 
             torch.distributed.init_process_group(
                 "nccl",
