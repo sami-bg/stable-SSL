@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /hydra/launcher: submitit_slurm
+  - override /hydra/launcher: submitit_local
 
 trainer:
   # ===== Base Trainer =====
@@ -75,10 +75,10 @@ trainer:
                 _target_: stable_ssl.utils.str_to_dtype
                 _args_: [float32]
               scale: True
+
   # ===== Logger Parameters =====
   logger:
-    dump_path: "."
-    save_final_model: True
+    save_final_model: true
     eval_every_epoch: 1
     log_every_step: 1
     metric:
@@ -91,20 +91,18 @@ trainer:
           _target_: torchmetrics.classification.MulticlassAccuracy
           num_classes: ${trainer.data._num_classes}
           top_k: 5
+
   # ===== Hardware Parameters =====
   hardware:
     seed: 0
     float16: true
-    device: "cuda:0"
+    device: "cpu"
     world_size: 1
 
 hydra:
   job:
     chdir: False
   launcher:
-    gpus_per_node: ${trainer.hardware.world_size}
     tasks_per_node: ${trainer.hardware.world_size}
     cpus_per_task: ${trainer.data.train.num_workers}
-    partition: gpu
     timeout_min: 1000
-    max_num_timeout: 5

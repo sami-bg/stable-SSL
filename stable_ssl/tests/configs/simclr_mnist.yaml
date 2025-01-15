@@ -4,11 +4,11 @@ defaults:
 
 trainer:
   # ===== Base Trainer =====
-  _target_: stable_ssl.JointEmbeddingTrainer
+  _target_: stable_ssl.trainers.JointEmbeddingTrainer
 
   # ===== loss Parameters =====
   loss:
-    _target_: stable_ssl.NTXEntLoss
+    _target_: stable_ssl.losses.NTXEntLoss
     temperature: 0.5
 
   # ===== Module Parameters =====
@@ -33,21 +33,21 @@ trainer:
 
   # ===== Optim Parameters =====
   optim:
-    epochs: 10
+    epochs: 50
     optimizer:
       _target_: stable_ssl.optimizers.LARS
       _partial_: True
       lr: 5
       weight_decay: 1e-6
     scheduler:
-      _target_: torch.optim.lr_scheduler.ConstantLR
+      _target_: stable_ssl.schedulers.LinearWarmupCosineAnnealing
       _partial_: True
-      factor: 1.0
+      total_steps: ${eval:'100 * ${trainer.data._num_train_samples} // ${trainer.data.train.batch_size}'}
 
   # ===== Data Parameters =====
   data:
     _num_classes: 10
-    _num_train_samples: 12000
+    _num_train_samples: 6000
     train: # training dataset as indicated by name 'train'
       _target_: torch.utils.data.DataLoader
       batch_size: 256
@@ -57,7 +57,7 @@ trainer:
       dataset:
         _target_: stable_ssl.data.HuggingFaceDataset
         path: "ylecun/mnist"
-        split: "train[:20%]"
+        split: "train[:10%]"
         x: "image"
         y: "label"
         trust_remote_code: true
@@ -103,7 +103,7 @@ trainer:
       dataset:
         _target_: stable_ssl.data.HuggingFaceDataset
         path: "ylecun/mnist"
-        split: "test[:50%]"
+        split: "test[:10%]"
         x: "image"
         y: "label"
         transform:
@@ -119,7 +119,6 @@ trainer:
   logger:
     eval_every_epoch: 1
     log_every_step: 1
-    wandb: True
     metric:
       test:
         acc1:
