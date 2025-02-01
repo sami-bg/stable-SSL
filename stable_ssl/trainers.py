@@ -272,7 +272,7 @@ class JointEmbeddingPredictiveTrainer(BaseTrainer):
         )
         self._latest_embeddings = predicted_representations
 
-        loss = F.l1_loss(predicted_representations, target_representations)
+        loss = self.loss(predicted_representations, target_representations)
         return {"loss_ssl": loss}
 
     @property
