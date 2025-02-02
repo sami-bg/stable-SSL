@@ -111,6 +111,7 @@ It is important to note that the multirun flag (``-m`` or ``--multirun``) is **m
 .. _vicreg: https://rbalestr-lab.github.io/stable-ssl.github.io/dev/gen_modules/stable_ssl.losses.VICRegLoss.html
 
 .. _jointembed: https://rbalestr-lab.github.io/stable-ssl.github.io/dev/gen_modules/stable_ssl.trainers.JointEmbeddingTrainer.html
+.. _jepa: https://rbalestr-lab.github.io/stable-ssl.github.io/dev/gen_modules/stable_ssl.trainers.JointEmbeddingPredictiveTrainer.html
 .. _selfdistill: https://rbalestr-lab.github.io/stable-ssl.github.io/dev/gen_modules/stable_ssl.trainers.SelfDistillationTrainer.html
 .. _dinotrainer: https://rbalestr-lab.github.io/stable-ssl.github.io/dev/gen_modules/stable_ssl.trainers.DINOTrainer.html
 
