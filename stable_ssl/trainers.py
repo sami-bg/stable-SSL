@@ -239,7 +239,7 @@ class JointEmbeddingPredictiveTrainer(BaseTrainer):
         return self.module["predictor"](*args, **kwargs)
 
     def compute_loss(self):
-        """Compute the final loss as the L2 distance between the predicted and target latents."""
+        """Compute the final loss as the L1 distance between the predicted and target latents."""
         # NOTE Which function should return the conditioning for the predictor? In the I-JEPA and V-JEPA repos,
         # the masking is *determined* at the data-loading level and the mask parameters are returned in the dataloader,
         # then the masking is *applied* at the forward-pass of the encoders and the masking parameters are passed into the predictor,
