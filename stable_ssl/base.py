@@ -22,6 +22,7 @@ import numpy as np
 import omegaconf
 import submitit
 import torch
+from tabulate import tabulate
 from tqdm import tqdm
 
 from . import reader
@@ -448,10 +449,10 @@ class BaseTrainer(torch.nn.Module):
     def _instanciate(self):
         # We start with logger since wandb may override some hparams
         self.logger = hydra.utils.instantiate(self._logger, _convert_="partial")
-        logging.info("Logger:")
-        logging.info(f"\t- Dump path: `{self.logger['dump_path']}`")
+        logging.info("████ Logger ████")
+        logging.info(f"\tDump path: `{self.logger['dump_path']}` ✅")
         if self.logger["wandb"]:
-            logging.info("\t- Wandb:")
+            logging.info("\t𝗪𝗮𝗻𝗱𝗯™")
             # we defer adding the config to later
             # to make sure we use the possibly given
             # sweep config
@@ -460,12 +461,12 @@ class BaseTrainer(torch.nn.Module):
             self.logger["wandb"]["project"] = wandb.run.project
             self.logger["wandb"]["name"] = wandb.run.name
             self.logger["wandb"]["id"] = wandb.run.id
-            logging.info(f"\t\t- entity: {wandb.run.entity}")
-            logging.info(f"\t\t- project: {wandb.run.project}")
-            logging.info(f"\t\t- name: {wandb.run.name}")
-            logging.info(f"\t\t- id: {wandb.run.id}")
-            if wandb.config:
-                logging.info("\t\t- config:")
+            logging.info(f"\t\tentity: {wandb.run.entity} ✅")
+            logging.info(f"\t\tproject: {wandb.run.project} ✅")
+            logging.info(f"\t\tname: {wandb.run.name} ✅")
+            logging.info(f"\t\tid: {wandb.run.id} ✅")
+            if len(wandb.config.keys()):
+                logging.info("\t\ta Wandb™ config is provided, not uploading Hydra's:")
                 for key, value in wandb.config.items():
                     # need to handle the fact that our base configs have a _
                     # and users wouldn't provide that
@@ -483,21 +484,23 @@ class BaseTrainer(torch.nn.Module):
                         if "_" != accessor[0][0]:
                             accessor[0] = "_" + accessor[0]
                     key = ".".join(accessor)
-                    original = rgetattr(self, key)
-                    logging.info(
-                        f"\t\t\t- overriding: {key} from {original} to {value}"
-                    )
-                    rsetattr(self, key, value)
-                    assert rgetattr(self, key) == value
+                    try:
+                        original = rgetattr(self, key)
+                        rsetattr(self, key, value)
+                        assert rgetattr(self, key) == value
+                        logging.info(
+                            f"\t\t\toverriding: {key} from {original} to {value} ✅"
+                        )
+                    except Exception as e:
+                        logging.error(f"❌ Error while trying to override {key} ❌")
+                        raise e
             else:
-                logging.info("\t\t- No sweep config to use")
+                logging.info("\t\tNo Wandb™ config provided, uploading Hydra's")
                 config = collapse_nested_dict(self.get_config())
-                for key, value in config.items():
-                    run.config[key] = value
-                run.update()
+                run.config.update(config)
 
         else:
-            logging.info("\t- JSONL")
+            logging.info("\tJSONL")
 
         seed_everything(self._hardware.get("seed", None))
 
@@ -568,6 +571,7 @@ class BaseTrainer(torch.nn.Module):
 
         # Modules and scaler
         logging.info("Modules:")
+        stats = []
         for name, module in self.module.items():
             # if self.config.model.memory_format == "channels_last":
             #     module.to(memory_format=torch.channels_last)
@@ -576,6 +580,7 @@ class BaseTrainer(torch.nn.Module):
             module.to(self.device)
             num_trainable = 0
             num_nontrainable = 0
+            num_buffer = 0
             for p in module.parameters():
                 if isinstance(p, torch.nn.parameter.UninitializedParameter):
                     n = 1
@@ -585,16 +590,25 @@ class BaseTrainer(torch.nn.Module):
                     num_trainable += n
                 else:
                     num_nontrainable += n
+            for p in module.buffers():
+                if isinstance(p, torch.nn.parameter.UninitializedBuffer):
+                    n = 1
+                else:
+                    n = p.numel()
+                num_buffer += n
             if self.world_size > 1 and num_trainable:
                 module = torch.nn.parallel.DistributedDataParallel(
                     module, device_ids=[self._device]
                 )
             self.module[name] = module
-
-            logging.info(f"\t- {name} with {num_trainable} trainable parameters.")
-            logging.info(
-                f"\t- {name} with {num_nontrainable} non-trainable parameters."
-            )
+            stats.append([name, num_trainable, num_nontrainable, num_buffer])
+        headers = [
+            "Module",
+            "Trainable parameters",
+            "Non Trainable parameters",
+            "Buffers",
+        ]
+        logging.info(f"\n{tabulate(stats, headers, tablefmt='heavy_outline')}")
         self.module = torch.nn.ModuleDict(self.module)
         self._check_modules()
         self.scaler = torch.amp.GradScaler("cuda", enabled=self.hardware["float16"])
