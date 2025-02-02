@@ -267,6 +267,7 @@ class JointEmbeddingPredictiveTrainer(BaseTrainer):
         # NOTE The forward predictor can take some additional arguments, such as the transformation arguments.
         predicted_representations = self.forward_predictor(
             context_representations,
+            target_representations,
             context_transformation_parameters,
             target_transformation_parameters,
         )
