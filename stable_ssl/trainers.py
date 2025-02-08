@@ -240,15 +240,6 @@ class JointEmbeddingPredictiveTrainer(BaseTrainer):
 
     def compute_loss(self):
         """Compute the final loss as the L1 distance between the predicted and target latents."""
-        # NOTE Which function should return the conditioning for the predictor? In the I-JEPA and V-JEPA repos,
-        # the masking is *determined* at the data-loading level and the mask parameters are returned in the dataloader,
-        # then the masking is *applied* at the forward-pass of the encoders and the masking parameters are passed into the predictor,
-        # so I opted for this arrangement.
-
-        # NOTE It is also up for debate what the name of those parameters should be, as the transformation does not need to be a mask.
-        # i.e., perhaps for the audio modality it could be some noising.
-        # I have opted for Image World Models' terminology (https://arxiv.org/pdf/2403.00504),
-        # where you "transform" the target into the context with a transformation "T", and T is parametrized by an action "a".
         (
             (context, context_transformation_parameters),
             (target, target_transformation_parameters),
@@ -258,8 +249,7 @@ class JointEmbeddingPredictiveTrainer(BaseTrainer):
             context, context_transformation_parameters
         )
         self._latest_representations = context_representations
-        # NOTE Target encoder is usually frozen and trained with no_grad & uses EMA.
-        # I am assuming this will be handled with hooks in the BaseTrainer.
+
         target_representations = self.forward_target(
             target, target_transformation_parameters
         )

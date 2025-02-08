@@ -14,6 +14,7 @@ from .__about__ import (
     __version__,
 )
 from .base import BaseTrainer
+from .collaters import random_mask
 from .config import instanciate_config
 from .losses import BarlowTwinsLoss, NegativeCosineSimilarity, NTXEntLoss, VICRegLoss
 from .modules import load_backbone
@@ -42,4 +43,5 @@ __all__ = [
     "BarlowTwinsLoss",
     "NegativeCosineSimilarity",
     "instanciate_config",
+    "random_mask",
 ]
