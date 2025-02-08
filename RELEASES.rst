@@ -3,7 +3,7 @@ Version 0.1
 -----------
 
 - Base trainer offering the basic functionalities of stable-SSL (logging, checkpointing, data loading etc).
-- Template trainers for supervised and self-supervised learning (general joint embedding and teacher student models).
+- Template trainers for supervised and self-supervised learning (general joint embedding, JEPA, and teacher student models).
 - Examples of self-supervised learning methods : SimCLR, Barlow Twins, VicReg, DINO, MoCo, SimSiam.
 - Classes to load templates neural networks (backbone, projector, etc).
 - LARS optimizer.
