@@ -7,7 +7,23 @@ from torch import nn
 
 
 class Patchify2D(nn.Module):
-    """Turns an image into patches of patch_size x patch_size."""
+    """Turn an image into patches of patch_size x patch_size.
+
+    Parameters
+    ----------
+    patch_size : Union[int, tuple[int, int]], default=16
+        Size of patches to extract. Can be either:
+        - An integer for square patches (patch_size x patch_size)
+        - A tuple of (height, width) for rectangular patches
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor of patches with shape [N, P, D] where:
+        - N is number of patches (H/patch_size_height * W/patch_size_width)
+        - P is number of pixels per patch (patch_size_height * patch_size_width)
+        - D is the input channel dimension: 3 for RGB images
+    """
 
     def __init__(
         self,
@@ -36,7 +52,29 @@ class Patchify2D(nn.Module):
 
 
 class Patchify3D(nn.Module):
-    """Patchifies a video tensor into tubelets with a certain patch size, similar to 3D convolutions."""
+    """Patchify a video tensor into tubelets with a certain patch size, similar to 3D convolutions.
+
+    This module converts a video tensor into spatiotemporal patches (tubelets) by:
+    1. Grouping frames into temporal chunks of size tubelet_size
+    2. Within each chunk, extracting spatial patches of size patch_size x patch_size
+
+    Parameters
+    ----------
+    patch_size : Union[int, tuple[int, int]], default=16
+        Size of spatial patches to extract. Can be either:
+        - An integer for square patches (patch_size x patch_size)
+        - A tuple of (height, width) for rectangular patches
+    tubelet_size : int, default=2
+        Number of consecutive frames to group into each tubelet
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor of tubelets with shape [T, H, W, C] where:
+        - T is number of frames (original T/tubelet_size)
+        - H,W are spatial grid dimensions (original H,W/patch_size)
+        - C is channel dimension (original C * patch_size^2 * tubelet_size)
+    """
 
     def __init__(
         self, patch_size: Union[int, tuple[int, int]] = 16, tubelet_size: int = 2
@@ -66,10 +104,8 @@ class Patchify3D(nn.Module):
         video_tubed = rearrange(
             video_TCHW, "(n t) c h w -> n (t c) h w", n=timesteps, t=self.tubelet_size
         )
-        # nn.Unfold expects batchdim x C x *, so we fold the tubelet size into channels and use the timesteps as batchdims
-        # 8, 1536, 196 =  # [timesteps, tubelet*C*16*16, grid_h*grid_w]
+
         video_patched_flattened = self.unfold(video_tubed)
-        # 16, 196, 768 = num frames, num patches, (c x patchsize_height x patchsize_width)
         video_patched = rearrange(
             video_patched_flattened,
             "n (t c ph pw) (gh gw) -> (n t) gh gw (c ph pw)",
@@ -85,33 +121,37 @@ class Patchify3D(nn.Module):
 
 
 class TubeMask:
-    """
-    WIP: Takes a video tensor with dimensions T, H, W, C, generates a tube mask with a certain ratio of patches to keep, and masks H,W alongside the entirety of T and C.
+    """Apply tube masking to spatiotemporal video data by masking aligned spatial patches across time.
 
-    BIG NOTE: Currently, this is designed to be completely agnostic to whether the input is patchified. I'm not sure if it's desirable but it felt like it made sense to me, for example:
-    - In V-JEPA, we tube-mask the patches, not the raw video.
-    - For other approaches, we might want tube-mask the raw video itself.
+    This class implements tube masking as used in V-JEPA and similar architectures. It can handle:
+    1. Raw video tensors [T, H, W, C]
+    2. Pre-patchified tensors where H,W represent a grid of patches
 
-    Because of this, our input dimensions T,H,W,C can be something like:
-    - T=16, H=224, W=224, C=3 for a raw video
-    - T=16, H=14, W=14, C=768 for a patchified video, where patch-size is 16x16 (so that 224/16 = 14, and 768 = 3*16*16)
-    The output, with a ratio of 0.5, will be:
-    - T=16, patches_kept=(0.5*14*14 = 98), C=768. However, the H/W dims have been flattened into one. Not sure if this is desirable or not, but I assume not.
-    I suppose we could also reshape them but this gets tricky if the number of patches kept is not a multiple of the original H/W dimensions (e.g. some awkward ratios used)
+    For example, given:
+    - Raw video: [16, 224, 224, 3]
+    - Patchified video: [16, 14, 14, 768] (using 16x16 patches)
+    The masking pattern is consistent across the temporal dimension, creating "tubes".
 
-    ---
-    So, for the V-JEPA case, the patch-->tube-masking will be a patchify3D into a tube-mask with a patch-size of 1.
-    This is because each of the H/W dimensions are already patchified.
+    Parameters
+    ----------
+    ratio : float
+        Ratio of patches to mask out (between 0 and 1)
+    patch_size : Union[tuple[int, int], int]
+        Size of patches for masking. For pre-patchified input, use (1,1)
 
-    If we wanted to tube-mask the raw video, we can ignore the patchify3D and just use a patch-size of 16.
-    Code is still not super clean and uses a bunch of einops (which could be slow) but is optimized for readability for now :D
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor]
+        Two tensors containing:
+        1. Kept patches with shape [T, N_kept, C]
+        2. Masked patches with shape [T, N_masked, C]
+        where N_kept + N_masked = H*W/patch_size^2
     """
 
     def __init__(
         self,
         ratio: float,
         patch_size: Union[tuple[int, int], int],
-        tubelet_size: int,
     ):
         super(TubeMask, self).__init__()
         self.ratio = ratio
@@ -119,12 +159,24 @@ class TubeMask:
             self.patch_size = (patch_size,) * 2
 
         self.patch_size = patch_size
-        self.tubelet_size = tubelet_size
 
-    def sample_mask(
+    def sample_spatial_mask(
         self, ratio: float, num_spatial_patches: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # NOTE number of patches to keep
+        """Generate spatial masking pattern to be applied across temporal dimension.
+
+        Parameters
+        ----------
+        ratio : float
+            Ratio of patches to mask (between 0 and 1)
+        num_spatial_patches : int
+            Total number of spatial patches (H*W/patch_size^2)
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            Indices of patches to keep and discard
+        """
         num_keep_spatial = int(num_spatial_patches * (1.0 - ratio))
         mask = np.hstack(
             [
@@ -134,25 +186,42 @@ class TubeMask:
         )
         np.random.shuffle(mask)
         mask = torch.tensor(mask)
-        mask_p = torch.argwhere(mask == 0).squeeze()
-        mask_e = torch.nonzero(mask).squeeze()
-        return mask_e, mask_p
+        mask_discard = torch.argwhere(mask == 0).squeeze()
+        mask_keep = torch.nonzero(mask).squeeze()
+        return mask_keep, mask_discard
 
-    def __call__(self, video_thwc: torch.Tensor) -> torch.Tensor:
+    def __call__(self, video_thwc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply tube masking to input video.
+
+        Parameters
+        ----------
+        video_thwc : torch.Tensor
+            Input video tensor in [T, H, W, C] format
+            Can be either raw video or pre-patchified
+
+        Returns
+        -------
+        tuple[torch.Tensor, torch.Tensor]
+            Kept patches and masked patches
+            Both have shape [T, N, C] where N varies based on ratio
+        """
         T, H, W, C = video_thwc.shape
         num_patches_spatial: int = (H // self.patch_size[0]) * (W // self.patch_size[1])
-        # NOTE mask_pred is never used and is always the exact inverse of mask_enc but I kept it here for the time-being to be consistent-ish with the original jepa
-        mask_enc, mask_pred = self.sample_mask(self.ratio, num_patches_spatial)
-        # tile a patch across the temporal and channel dimensions
-        mask_enc, mask_pred = (
-            mask_enc.unsqueeze(-1).expand(T, -1, C),
-            mask_pred.unsqueeze(-1).expand(T, -1, C),
+        mask_keep, mask_discard = self.sample_spatial_mask(
+            self.ratio, num_patches_spatial
+        )
+        mask_keep, mask_discard = (
+            mask_keep.unsqueeze(-1).expand(T, -1, C),
+            mask_discard.unsqueeze(-1).expand(T, -1, C),
         )
         # Flatten video across the H,W dimensions
         video_flattened_grid = rearrange(video_thwc, "t h w c -> t (h w) c")
         # since the masks contain indices to keep, we can use gather to apply the masking:
-        masked_video_enc = torch.gather(video_flattened_grid, dim=1, index=mask_enc)
-        return masked_video_enc
+        masked_video_keep = torch.gather(video_flattened_grid, dim=1, index=mask_keep)
+        masked_video_discard = torch.gather(
+            video_flattened_grid, dim=1, index=mask_discard
+        )
+        return masked_video_keep, masked_video_discard
 
 
 if __name__ == "__main__":
