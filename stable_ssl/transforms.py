@@ -138,9 +138,6 @@ class TubeMask:
         mask_e = torch.nonzero(mask).squeeze()
         return mask_e, mask_p
 
-    # NOTE My big question is what type of input we expect here, whether it's a patchified video or the raw video.
-    # My working assumption is that this should take the raw TCHW vid and patchify it and then mask it.
-    # I think there is probably a cleaner, first-class way to do this with pytorch using transforms.Compose
     def __call__(self, video_thwc: torch.Tensor) -> torch.Tensor:
         T, H, W, C = video_thwc.shape
         num_patches_spatial: int = (H // self.patch_size[0]) * (W // self.patch_size[1])
