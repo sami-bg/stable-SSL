@@ -5,6 +5,170 @@ import numpy as np
 import torch
 from einops import rearrange
 from torch import nn
+from functools import cache
+
+# TODO: This is all awful. Fold this into patchify2d and 3d like randall said
+class PositionalEncoding(nn.Module):
+    """Positional encoding using features."""
+
+    def __init__(
+            self,
+            num_dimensions: int,
+            encoding_shape: torch.types.Size,
+            uniform_power: bool = False,
+            cls_token: bool = False,
+        ):
+        super().__init__()
+        self.num_dimensions = num_dimensions
+        self.encoding_shape = encoding_shape
+        if encoding_shape.numel() == 4:
+            T, H, W, D = encoding_shape
+        elif encoding_shape.numel() == 3:
+            H, W, D = encoding_shape
+        elif encoding_shape.numel() == 2:
+            W, D = encoding_shape
+        else:
+            raise ValueError(f"Invalid encoding shape: {encoding_shape}")
+        
+        # NOTE Divide by 6, ceil, and multiply by 2 to ensure that the embedding dimensions are 
+        # closest multiple of 3 that is even
+        h_embed_dim = w_embed_dim = depth_embed_dim = int(np.ceil(D / 6)*2)
+        # NOTE I guess depth embed dim and power is irrelevant for non-3d case, as is h_embed_dim for 1d case
+        if uniform_power:
+            h_embed_dim = w_embed_dim = self.encoding_shape // 4
+            depth_embed_dim = self.encoding_shape // 2
+
+        # NOTE This is all taken from the JEPA codebase for now
+        # TODO Turn this hideous thing into a function
+        pos_embed = []
+        h_embed_dim = w_embed_dim = depth_embed_dim = int(np.ceil(self.encoding_shape / 6)*2)
+        # BIG TODO: What is self.encoding_dim and how do we derive H/W/D from it 
+        if self.num_dimensions >= 1:
+            W = self.encoding_shape
+            emb_w = self.get_1d_sincos_pos_embed(w_embed_dim, np.arange(W, dtype=float))
+            pos_embed.append(emb_w)
+        if self.num_dimensions >= 2:
+            H = self.encoding_shape
+            emb_h = self.get_1d_sincos_pos_embed(h_embed_dim, np.arange(H, dtype=float))
+            pos_embed.append(emb_h)
+        if  self.num_dimensions == 3:
+            emb_t = self.get_1d_sincos_pos_embed(depth_embed_dim, np.arange(T, dtype=float))
+            pos_embed.append(emb_t)
+        if self.num_dimensions not in {1,2,3}:
+            raise ValueError(f"Invalid number of dimensions: {self.num_dimensions}")
+        
+        pos_embed = np.concatenate(pos_embed, axis=1)[:, :self.encoding_shape]
+        if cls_token:
+            pos_embed = np.concatenate([np.zeros([1, self.encoding_shape]), pos_embed], axis=0)
+
+        self.pos_embed = torch.from_numpy(pos_embed)
+        
+
+    @staticmethod
+    def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
+        """
+        embed_dim: output dimension for each position
+        pos: a list of positions to be encoded: size (M,)
+        returns: (M, D)
+        """
+        assert embed_dim % 2 == 0
+        omega = np.arange(embed_dim // 2, dtype=float)
+        omega /= embed_dim / 2.
+        omega = 1. / 10000**omega   # (D/2,)
+
+        pos = pos.reshape(-1)   # (M,)
+        out = np.einsum('m,d->md', pos, omega)   # (M, D/2), outer product
+
+        emb_sin = np.sin(out)  # (M, D/2)
+        emb_cos = np.cos(out)  # (M, D/2)
+
+        emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+        return emb
+
+    def get_1d_sincos_pos_embed(self, grid_size, cls_token=False):
+        """
+        embed_dim: output dimension for each position
+        grid_size: int of the grid length
+        returns:
+            pos_embed: [grid_size, embed_dim] (w/o cls_token)
+                    or [1+grid_size, embed_dim] (w/ cls_token)
+        """
+        grid = np.arange(grid_size, dtype=float)
+        pos_embed = PositionalEncoding.get_1d_sincos_pos_embed_from_grid(self.encoding_shape, grid)
+        if cls_token:
+            pos_embed = np.concatenate([np.zeros([1, self.encoding_shape]), pos_embed], axis=0)
+        return pos_embed
+
+    # TODO
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass for positional encoding.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (Optional[time], height, width, channels)
+
+        Returns:
+            torch.Tensor: Positional encoding of shape (batch_size, height, width, channels)
+        """
+
+        _, N, dim = pos_embed.shape
+
+        if self.is_video:
+
+            # If pos_embed already corret size, just return
+            _, _, T, H, W = x.shape
+            if H == self.input_size and W == self.input_size and T == self.num_frames:
+                return pos_embed
+            # TODO i am assuming input is BCTHW and we are passing in BTHWC
+            # Convert depth, height, width of input to be measured in patches
+            # instead of pixels/frames
+            T = T // self.tubelet_size
+            H = H // self.patch_size
+            W = W // self.patch_size
+
+            # Compute the initialized shape of the positional embedding measured
+            # in patches
+            N_t = self.num_frames // self.tubelet_size
+            N_h = N_w = self.input_size // self.patch_size
+            assert N_h * N_w * N_t == N, 'Positional embedding initialized incorrectly'
+
+            # Compute scale factor for spatio-temporal interpolation
+            scale_factor = (T/N_t, H/N_h, W/N_w)
+
+            pos_embed = nn.functional.interpolate(
+                pos_embed.reshape(1, N_t, N_h, N_w, dim).permute(0, 4, 1, 2, 3),
+                scale_factor=scale_factor,
+                mode='trilinear')
+            pos_embed = pos_embed.permute(0, 2, 3, 4, 1).view(1, -1, dim)
+            return pos_embed
+
+        else:
+
+            # If pos_embed already corret size, just return
+            _, _, H, W = x.shape
+            if H == self.input_size and W == self.input_size:
+                return pos_embed
+
+            # Compute scale factor for spatial interpolation
+            npatch = (H // self.patch_size) * (W // self.patch_size)
+            scale_factor = math.sqrt(npatch / N)
+
+            pos_embed = nn.functional.interpolate(
+                pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+                scale_factor=scale_factor,
+                mode='bicubic')
+            pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+            return pos_embed
+
+
+# TODO In the future, consider passing some posembed name or class constructor
+# NOTE Cache acts as a cheap singleton for each shape of input
+@cache
+def _get_pos_embed(encoding_shape: torch.types.Size) -> nn.Module:
+    # NOTE Assumption is that shape ends with HWD, D is dimension/channel
+    return PositionalEncoding(
+        num_dimensions=len(encoding_shape)-1,  # NOTE Add positional encoding to all dimensions but the channel
+        encoding_shape=encoding_shape
+    )
 
 
 class Patchify2D(nn.Module):
@@ -16,6 +180,8 @@ class Patchify2D(nn.Module):
         Size of patches to extract. Can be either:
         - An integer for square patches (patch_size x patch_size)
         - A tuple of (height, width) for rectangular patches
+    positional_encoding : nn.Module, default=PositionalEncoding()
+        Positional encoding to apply to the patches
 
     Returns
     -------
@@ -29,6 +195,7 @@ class Patchify2D(nn.Module):
     def __init__(
         self,
         patch_size: Union[int, tuple[int, int]] = 16,
+        use_pos_embed: bool = True,
     ):
         super().__init__()
         if isinstance(patch_size, tuple):
@@ -38,6 +205,7 @@ class Patchify2D(nn.Module):
             self.patch_size = (patch_size,) * 2
 
         self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+        self.use_pos_embed = use_pos_embed
 
     # TODO Change this to hwc if unfold allows for it
     def __call__(self, image_CHW: torch.Tensor) -> torch.Tensor:
@@ -51,9 +219,13 @@ class Patchify2D(nn.Module):
 
         image_patched_flat = self.unfold(image_CHW).T
         # NOTE Unflatten patches to recover original shape
-        image_patched = rearrange(
+        image_patched: torch.Tensor = rearrange(
             image_patched_flat, "(gh gw) d -> gh gw d", gh=grid_height, gw=grid_width
         )
+
+        if self.use_pos_embed:
+            image_patched = _get_pos_embed(image_patched.shape)(image_patched)
+
         return image_patched
 
 
@@ -72,6 +244,8 @@ class Patchify3D(nn.Module):
         - A tuple of (height, width) for rectangular patches
     tubelet_size : int, default=2
         Number of consecutive frames to group into each tubelet
+    positional_encoding : nn.Module, default=PositionalEncoding()
+        Positional encoding to apply to the patches
 
     Returns
     -------
@@ -83,7 +257,10 @@ class Patchify3D(nn.Module):
     """
 
     def __init__(
-        self, patch_size: Union[int, tuple[int, int]] = 16, tubelet_size: int = 2
+        self,
+        patch_size: Union[int, tuple[int, int]] = 16,
+        tubelet_size: int = 2,
+        use_pos_embed: bool = True,
     ):
         super().__init__()
         if isinstance(patch_size, tuple):
@@ -94,6 +271,7 @@ class Patchify3D(nn.Module):
 
         self.tubelet_size = tubelet_size
         self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
+        self.use_pos_embed = use_pos_embed
 
     # TODO Change this to thwc
     def __call__(self, video_TCHW: torch.Tensor) -> torch.Tensor:
@@ -113,7 +291,7 @@ class Patchify3D(nn.Module):
         )
 
         video_patched_flattened = self.unfold(video_tubed)
-        video_patched = rearrange(
+        video_patched: torch.Tensor = rearrange(
             video_patched_flattened,
             "n (t c ph pw) (gh gw) -> (n t) gh gw (c ph pw)",
             t=self.tubelet_size,
@@ -123,6 +301,9 @@ class Patchify3D(nn.Module):
             ph=self.patch_size[0],
             pw=self.patch_size[1],
         )
+
+        if self.use_pos_embed:
+            video_patched = _get_pos_embed(video_patched.shape)(video_patched)
 
         return video_patched
 
@@ -372,14 +553,29 @@ class MultiBlock3DMask:
 if __name__ == "__main__":
     tube = TubeMask(0.5, (1, 1))
     mb3d = MultiBlock3DMask((0.2, 0.8), (1.0, 1.0), (0.3, 3.0), 1, 1.0, (1, 1))
-    patchify = Patchify3D(16, 2)
-    patchify2d = Patchify2D(16)
+    patchify_noembed = Patchify2D(16)
+    patchify_embed = Patchify2D(16, use_pos_embed=True)
+    patchify_3d_noembed = Patchify3D(16, 2)
+    patchify_3d_embed = Patchify3D(16, 2, use_pos_embed=True)
+
     randvid = torch.randn((16, 3, 224, 224))
     randimg = torch.randn((3, 224, 224))
     # 16, 14, 14, 768
-    vidpatch = patchify(randvid)
-    imgpatch = patchify2d(randimg)
+    vidpatch = patchify_3d_noembed(randvid)
+    imgpatch = patchify_noembed(randimg)
     # since ratio is 0.5: 16, 98, 768
     vidtubemask = tube(vidpatch)
-    vidmb3dmask = mb3d(vidpatch)
     imgmb3dmask = mb3d(imgpatch)
+
+    vidpatch_embed = patchify_3d_embed(randvid)
+    imgpatch_embed = patchify_embed(randimg)
+    x=1
+    # randvid = torch.randn((16, 3, 224, 224))
+    # randimg = torch.randn((3, 224, 224))
+    # # 16, 14, 14, 768
+    # vidpatch = patchify(randvid)
+    # imgpatch = patchify2d(randimg)
+    # # since ratio is 0.5: 16, 98, 768
+    # vidtubemask = tube(vidpatch)
+    # vidmb3dmask = mb3d(vidpatch)
+    # imgmb3dmask = mb3d(imgpatch)
