@@ -14,7 +14,7 @@ def get_3d_sincos_pos_embed(
     grid_width,
     grid_depth,
     cls_token=False,
-    uniform_power=False  # weights pos embeddings differently for temporal dimension vs spatial dimensions
+    uniform_power=False,  # weights pos embeddings differently for temporal dimension vs spatial dimensions
 ):
     """
     grid_size: int of the grid height and width
@@ -26,14 +26,18 @@ def get_3d_sincos_pos_embed(
     grid_d = torch.arange(grid_depth, dtype=torch.float)
     grid_h = torch.arange(grid_height, dtype=torch.float)
     grid_w = torch.arange(grid_width, dtype=torch.float)
-    grid_h, grid_d, grid_w = torch.meshgrid(grid_h, grid_d, grid_w)  # order of meshgrid is very important for indexing as [d,h,w]
+    grid_h, grid_d, grid_w = torch.meshgrid(
+        grid_h, grid_d, grid_w
+    )  # order of meshgrid is very important for indexing as [d,h,w]
 
     if not uniform_power:
         h_embed_dim = embed_dim // 4
         w_embed_dim = embed_dim // 4
         d_embed_dim = embed_dim // 2
     else:
-        h_embed_dim = w_embed_dim = d_embed_dim = int(torch.ceil(torch.tensor(embed_dim/6))*2)
+        h_embed_dim = w_embed_dim = d_embed_dim = int(
+            torch.ceil(torch.tensor(embed_dim / 6)) * 2
+        )
 
     emb_h = get_1d_sincos_pos_embed_from_grid(h_embed_dim, grid_h)  # (T*H*W, D1)
     emb_w = get_1d_sincos_pos_embed_from_grid(w_embed_dim, grid_w)  # (T*H*W, D2)
@@ -54,7 +58,9 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_H: int, grid_W: int, cls_token=
     """
     grid_h = torch.arange(grid_H, dtype=torch.float)
     grid_w = torch.arange(grid_W, dtype=torch.float)
-    grid_w, grid_h = torch.meshgrid(grid_w, grid_h)  # order of meshgrid is very important for indexing as [h, w]
+    grid_w, grid_h = torch.meshgrid(
+        grid_w, grid_h
+    )  # order of meshgrid is very important for indexing as [h, w]
 
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_h)  # (H*W, D/2)
     emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_w)  # (H*W, D/2)
@@ -62,6 +68,7 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_H: int, grid_W: int, cls_token=
     if cls_token:
         pos_embed = torch.cat([torch.zeros(1, embed_dim), pos_embed], dim=0)
     return pos_embed
+
 
 def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
@@ -86,11 +93,11 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     """
     assert embed_dim % 2 == 0
     omega = torch.arange(embed_dim // 2, dtype=torch.float)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000**omega   # (D/2,)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega  # (D/2,)
 
-    pos = pos.reshape(-1)   # (M,)
-    out = torch.einsum('m,d->md', pos, omega)   # (M, D/2), outer product
+    pos = pos.reshape(-1)  # (M,)
+    out = torch.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
 
     emb_sin = torch.sin(out)  # (M, D/2)
     emb_cos = torch.cos(out)  # (M, D/2)
@@ -141,7 +148,6 @@ class Patchify2D(nn.Module):
         sincos = get_2d_sincos_pos_embed(embed_dim, grid_H, grid_W, cls_token=False)
         return sincos
 
-
     # TODO Change this to hwc if unfold allows for it to make it similar to 3d patchify
     def __call__(self, image_CHW: torch.Tensor) -> torch.Tensor:
         C, H, W = image_CHW.shape
@@ -158,9 +164,11 @@ class Patchify2D(nn.Module):
             # NOTE Since positional embeddings are lazily created based on the patched shape
             # and not the input shape, we don't ever need to interpolate them
             D = image_patched_flat.shape[-1]
-            pos_embed = self.get_pos_embed(embed_dim=D, grid_H=grid_height, grid_W=grid_width)
+            pos_embed = self.get_pos_embed(
+                embed_dim=D, grid_H=grid_height, grid_W=grid_width
+            )
             image_patched_flat += pos_embed
-        
+
         mean_after_pos_embed = image_patched_flat.mean(dim=1, keepdim=True)
 
         # NOTE Unflatten patches to recover original shape
@@ -215,17 +223,19 @@ class Patchify3D(nn.Module):
         self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         self.use_pos_embed = use_pos_embed
 
-
     @cache
-    def get_pos_embed(self, embed_dim: int, grid_H: int, grid_W: int, grid_T: int) -> torch.Tensor:
+    def get_pos_embed(
+        self, embed_dim: int, grid_H: int, grid_W: int, grid_T: int
+    ) -> torch.Tensor:
         # NOTE Converting this to and from numpy could be slow but this is just a PoC for now
-        sincos = get_3d_sincos_pos_embed(embed_dim, grid_H, grid_W, grid_T, cls_token=False)
+        sincos = get_3d_sincos_pos_embed(
+            embed_dim, grid_H, grid_W, grid_T, cls_token=False
+        )
         # sincos = torch.from_numpy(sincos).float()
         # NOTE Will this preserve the values of the positional embeddings
         # NOTE How can I check this? Means over th
         sincos = rearrange(sincos, "(gh gw t) d -> t d (gh gw)", gh=grid_H, gw=grid_W)
         return sincos
-
 
     # TODO Change this to thwc
     def __call__(self, video_TCHW: torch.Tensor) -> torch.Tensor:
@@ -247,10 +257,11 @@ class Patchify3D(nn.Module):
         video_patched_flattened: torch.Tensor = self.unfold(video_tubed)
         if self.use_pos_embed:
             D = video_patched_flattened.shape[1]
-            pos_embed = self.get_pos_embed(embed_dim=D, grid_H=grid_height, grid_W=grid_width, grid_T=timesteps)
+            pos_embed = self.get_pos_embed(
+                embed_dim=D, grid_H=grid_height, grid_W=grid_width, grid_T=timesteps
+            )
             video_patched_flattened += pos_embed
-        
-        
+
         video_patched: torch.Tensor = rearrange(
             video_patched_flattened,
             "n (t c ph pw) (gh gw) -> (n t) gh gw (c ph pw)",
@@ -261,7 +272,6 @@ class Patchify3D(nn.Module):
             ph=self.patch_size[0],
             pw=self.patch_size[1],
         )
-
 
         return video_patched
 
@@ -529,16 +539,19 @@ if __name__ == "__main__":
     imgpatch_embed = patchify_embed(randimg)
     x = 1
     posembed_2d = patchify_embed.get_pos_embed(embed_dim=768, grid_H=14, grid_W=14)
-    posembed_3d = patchify_3d_embed.get_pos_embed(embed_dim=768, grid_H=14, grid_W=14, grid_T=8)
+    posembed_3d = patchify_3d_embed.get_pos_embed(
+        embed_dim=768, grid_H=14, grid_W=14, grid_T=8
+    )
     import matplotlib.pyplot as plt
+
     # the 2d embeds should be one image, ignore the channel dim
-    posembed_2d_vis = posembed_2d.reshape(14*14, 768).detach().numpy()
+    posembed_2d_vis = posembed_2d.reshape(14 * 14, 768).detach().numpy()
     plt.imshow(posembed_2d_vis)
     plt.colorbar()
     plt.savefig("torch_posembed_2d.png")
     for i in range(8):
         plt.figure(figsize=(8, 6))
-        posembed_3d_vis = posembed_3d[i,:,:].reshape(14*14, 768).detach().numpy()
+        posembed_3d_vis = posembed_3d[i, :, :].reshape(14 * 14, 768).detach().numpy()
         plt.imshow(posembed_3d_vis)
         plt.axis("off")
         plt.colorbar()
