@@ -1,23 +1,24 @@
 import math
+from functools import cache
 from typing import Union
 
 import numpy as np
 import torch
 from einops import rearrange
 from torch import nn
-from functools import cache
+
 
 # TODO: This is all awful. Fold this into patchify2d and 3d like randall said
 class PositionalEncoding(nn.Module):
     """Positional encoding using features."""
 
     def __init__(
-            self,
-            num_dimensions: int,
-            encoding_shape: torch.types.Size,
-            uniform_power: bool = False,
-            cls_token: bool = False,
-        ):
+        self,
+        num_dimensions: int,
+        encoding_shape: torch.types.Size,
+        uniform_power: bool = False,
+        cls_token: bool = False,
+    ):
         super().__init__()
         self.num_dimensions = num_dimensions
         self.encoding_shape = encoding_shape
@@ -29,10 +30,10 @@ class PositionalEncoding(nn.Module):
             W, D = encoding_shape
         else:
             raise ValueError(f"Invalid encoding shape: {encoding_shape}")
-        
-        # NOTE Divide by 6, ceil, and multiply by 2 to ensure that the embedding dimensions are 
+
+        # NOTE Divide by 6, ceil, and multiply by 2 to ensure that the embedding dimensions are
         # closest multiple of 3 that is even
-        h_embed_dim = w_embed_dim = depth_embed_dim = int(np.ceil(D / 6)*2)
+        h_embed_dim = w_embed_dim = depth_embed_dim = int(np.ceil(D / 6) * 2)
         # NOTE I guess depth embed dim and power is irrelevant for non-3d case, as is h_embed_dim for 1d case
         if uniform_power:
             h_embed_dim = w_embed_dim = self.encoding_shape // 4
@@ -41,8 +42,10 @@ class PositionalEncoding(nn.Module):
         # NOTE This is all taken from the JEPA codebase for now
         # TODO Turn this hideous thing into a function
         pos_embed = []
-        h_embed_dim = w_embed_dim = depth_embed_dim = int(np.ceil(self.encoding_shape / 6)*2)
-        # BIG TODO: What is self.encoding_dim and how do we derive H/W/D from it 
+        h_embed_dim = w_embed_dim = depth_embed_dim = int(
+            np.ceil(self.encoding_shape / 6) * 2
+        )
+        # BIG TODO: What is self.encoding_dim and how do we derive H/W/D from it
         if self.num_dimensions >= 1:
             W = self.encoding_shape
             emb_w = self.get_1d_sincos_pos_embed(w_embed_dim, np.arange(W, dtype=float))
@@ -51,18 +54,21 @@ class PositionalEncoding(nn.Module):
             H = self.encoding_shape
             emb_h = self.get_1d_sincos_pos_embed(h_embed_dim, np.arange(H, dtype=float))
             pos_embed.append(emb_h)
-        if  self.num_dimensions == 3:
-            emb_t = self.get_1d_sincos_pos_embed(depth_embed_dim, np.arange(T, dtype=float))
+        if self.num_dimensions == 3:
+            emb_t = self.get_1d_sincos_pos_embed(
+                depth_embed_dim, np.arange(T, dtype=float)
+            )
             pos_embed.append(emb_t)
-        if self.num_dimensions not in {1,2,3}:
+        if self.num_dimensions not in {1, 2, 3}:
             raise ValueError(f"Invalid number of dimensions: {self.num_dimensions}")
-        
-        pos_embed = np.concatenate(pos_embed, axis=1)[:, :self.encoding_shape]
+
+        pos_embed = np.concatenate(pos_embed, axis=1)[:, : self.encoding_shape]
         if cls_token:
-            pos_embed = np.concatenate([np.zeros([1, self.encoding_shape]), pos_embed], axis=0)
+            pos_embed = np.concatenate(
+                [np.zeros([1, self.encoding_shape]), pos_embed], axis=0
+            )
 
         self.pos_embed = torch.from_numpy(pos_embed)
-        
 
     @staticmethod
     def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
@@ -73,11 +79,11 @@ class PositionalEncoding(nn.Module):
         """
         assert embed_dim % 2 == 0
         omega = np.arange(embed_dim // 2, dtype=float)
-        omega /= embed_dim / 2.
-        omega = 1. / 10000**omega   # (D/2,)
+        omega /= embed_dim / 2.0
+        omega = 1.0 / 10000**omega  # (D/2,)
 
-        pos = pos.reshape(-1)   # (M,)
-        out = np.einsum('m,d->md', pos, omega)   # (M, D/2), outer product
+        pos = pos.reshape(-1)  # (M,)
+        out = np.einsum("m,d->md", pos, omega)  # (M, D/2), outer product
 
         emb_sin = np.sin(out)  # (M, D/2)
         emb_cos = np.cos(out)  # (M, D/2)
@@ -94,9 +100,13 @@ class PositionalEncoding(nn.Module):
                     or [1+grid_size, embed_dim] (w/ cls_token)
         """
         grid = np.arange(grid_size, dtype=float)
-        pos_embed = PositionalEncoding.get_1d_sincos_pos_embed_from_grid(self.encoding_shape, grid)
+        pos_embed = PositionalEncoding.get_1d_sincos_pos_embed_from_grid(
+            self.encoding_shape, grid
+        )
         if cls_token:
-            pos_embed = np.concatenate([np.zeros([1, self.encoding_shape]), pos_embed], axis=0)
+            pos_embed = np.concatenate(
+                [np.zeros([1, self.encoding_shape]), pos_embed], axis=0
+            )
         return pos_embed
 
     # TODO
@@ -106,14 +116,13 @@ class PositionalEncoding(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (Optional[time], height, width, channels)
 
-        Returns:
+        Returns
+        -------
             torch.Tensor: Positional encoding of shape (batch_size, height, width, channels)
         """
-
         _, N, dim = pos_embed.shape
 
         if self.is_video:
-
             # If pos_embed already corret size, just return
             _, _, T, H, W = x.shape
             if H == self.input_size and W == self.input_size and T == self.num_frames:
@@ -129,20 +138,20 @@ class PositionalEncoding(nn.Module):
             # in patches
             N_t = self.num_frames // self.tubelet_size
             N_h = N_w = self.input_size // self.patch_size
-            assert N_h * N_w * N_t == N, 'Positional embedding initialized incorrectly'
+            assert N_h * N_w * N_t == N, "Positional embedding initialized incorrectly"
 
             # Compute scale factor for spatio-temporal interpolation
-            scale_factor = (T/N_t, H/N_h, W/N_w)
+            scale_factor = (T / N_t, H / N_h, W / N_w)
 
             pos_embed = nn.functional.interpolate(
                 pos_embed.reshape(1, N_t, N_h, N_w, dim).permute(0, 4, 1, 2, 3),
                 scale_factor=scale_factor,
-                mode='trilinear')
+                mode="trilinear",
+            )
             pos_embed = pos_embed.permute(0, 2, 3, 4, 1).view(1, -1, dim)
             return pos_embed
 
         else:
-
             # If pos_embed already corret size, just return
             _, _, H, W = x.shape
             if H == self.input_size and W == self.input_size:
@@ -153,9 +162,12 @@ class PositionalEncoding(nn.Module):
             scale_factor = math.sqrt(npatch / N)
 
             pos_embed = nn.functional.interpolate(
-                pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+                pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(
+                    0, 3, 1, 2
+                ),
                 scale_factor=scale_factor,
-                mode='bicubic')
+                mode="bicubic",
+            )
             pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
             return pos_embed
 
@@ -166,8 +178,9 @@ class PositionalEncoding(nn.Module):
 def _get_pos_embed(encoding_shape: torch.types.Size) -> nn.Module:
     # NOTE Assumption is that shape ends with HWD, D is dimension/channel
     return PositionalEncoding(
-        num_dimensions=len(encoding_shape)-1,  # NOTE Add positional encoding to all dimensions but the channel
-        encoding_shape=encoding_shape
+        num_dimensions=len(encoding_shape)
+        - 1,  # NOTE Add positional encoding to all dimensions but the channel
+        encoding_shape=encoding_shape,
     )
 
 
@@ -569,7 +582,7 @@ if __name__ == "__main__":
 
     vidpatch_embed = patchify_3d_embed(randvid)
     imgpatch_embed = patchify_embed(randimg)
-    x=1
+    x = 1
     # randvid = torch.randn((16, 3, 224, 224))
     # randimg = torch.randn((3, 224, 224))
     # # 16, 14, 14, 768
