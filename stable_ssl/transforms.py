@@ -2,7 +2,6 @@ import math
 from functools import cache
 from typing import Union
 
-import numpy as np
 import torch
 from einops import rearrange
 from torch import nn
@@ -24,25 +23,25 @@ def get_3d_sincos_pos_embed(
         pos_embed: [grid_depth*grid_size*grid_size, embed_dim] (w/o cls_token)
                 or [1+grid_depth*grid_size*grid_size, embed_dim] (w/ cls_token)
     """
-    grid_d = np.arange(grid_depth, dtype=float)
-    grid_h = np.arange(grid_height, dtype=float)
-    grid_w = np.arange(grid_width, dtype=float)
-    grid_h, grid_d, grid_w = np.meshgrid(grid_h, grid_d, grid_w)  # order of meshgrid is very important for indexing as [d,h,w]
+    grid_d = torch.arange(grid_depth, dtype=torch.float)
+    grid_h = torch.arange(grid_height, dtype=torch.float)
+    grid_w = torch.arange(grid_width, dtype=torch.float)
+    grid_h, grid_d, grid_w = torch.meshgrid(grid_h, grid_d, grid_w)  # order of meshgrid is very important for indexing as [d,h,w]
 
     if not uniform_power:
         h_embed_dim = embed_dim // 4
         w_embed_dim = embed_dim // 4
         d_embed_dim = embed_dim // 2
     else:
-        h_embed_dim = w_embed_dim = d_embed_dim = int(np.ceil(embed_dim/6)*2)
+        h_embed_dim = w_embed_dim = d_embed_dim = int(torch.ceil(torch.tensor(embed_dim/6))*2)
 
     emb_h = get_1d_sincos_pos_embed_from_grid(h_embed_dim, grid_h)  # (T*H*W, D1)
     emb_w = get_1d_sincos_pos_embed_from_grid(w_embed_dim, grid_w)  # (T*H*W, D2)
     emb_d = get_1d_sincos_pos_embed_from_grid(d_embed_dim, grid_d)  # (T*H*W, D3)
-    pos_embed = np.concatenate([emb_d, emb_h, emb_w], axis=1)
+    pos_embed = torch.cat([emb_d, emb_h, emb_w], dim=1)
     pos_embed = pos_embed[:, :embed_dim]
     if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
+        pos_embed = torch.cat([torch.zeros(1, embed_dim), pos_embed], dim=0)
     return pos_embed
 
 
@@ -53,17 +52,16 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_H: int, grid_W: int, cls_token=
         pos_embed: [grid_size*grid_size, embed_dim] (w/o cls_token)
                 or [1+grid_size*grid_size, embed_dim] (w/ cls_token)
     """
-    grid_h = np.arange(grid_H, dtype=float)
-    grid_w = np.arange(grid_W, dtype=float)
-    grid_w, grid_h = np.meshgrid(grid_w, grid_h)  # order of meshgrid is very important for indexing as [h, w]
+    grid_h = torch.arange(grid_H, dtype=torch.float)
+    grid_w = torch.arange(grid_W, dtype=torch.float)
+    grid_w, grid_h = torch.meshgrid(grid_w, grid_h)  # order of meshgrid is very important for indexing as [h, w]
 
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_h)  # (H*W, D/2)
     emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_w)  # (H*W, D/2)
-    pos_embed = np.concatenate([emb_h, emb_w], axis=1)  # (H*W, D)
+    pos_embed = torch.cat([emb_h, emb_w], dim=1)  # (H*W, D)
     if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
+        pos_embed = torch.cat([torch.zeros(1, embed_dim), pos_embed], dim=0)
     return pos_embed
-
 
 def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
@@ -73,10 +71,10 @@ def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
         pos_embed: [grid_size, embed_dim] (w/o cls_token)
                 or [1+grid_size, embed_dim] (w/ cls_token)
     """
-    grid = np.arange(grid_size, dtype=float)
+    grid = torch.arange(grid_size, dtype=torch.float)
     pos_embed = get_1d_sincos_pos_embed_from_grid(embed_dim, grid)
     if cls_token:
-        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
+        pos_embed = torch.cat([torch.zeros(1, embed_dim), pos_embed], dim=0)
     return pos_embed
 
 
@@ -87,17 +85,17 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     returns: (M, D)
     """
     assert embed_dim % 2 == 0
-    omega = np.arange(embed_dim // 2, dtype=float)
+    omega = torch.arange(embed_dim // 2, dtype=torch.float)
     omega /= embed_dim / 2.
     omega = 1. / 10000**omega   # (D/2,)
 
     pos = pos.reshape(-1)   # (M,)
-    out = np.einsum('m,d->md', pos, omega)   # (M, D/2), outer product
+    out = torch.einsum('m,d->md', pos, omega)   # (M, D/2), outer product
 
-    emb_sin = np.sin(out)  # (M, D/2)
-    emb_cos = np.cos(out)  # (M, D/2)
+    emb_sin = torch.sin(out)  # (M, D/2)
+    emb_cos = torch.cos(out)  # (M, D/2)
 
-    emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
+    emb = torch.cat([emb_sin, emb_cos], dim=1)  # (M, D)
     return emb
 
 
@@ -141,7 +139,7 @@ class Patchify2D(nn.Module):
     def get_pos_embed(self, embed_dim: int, grid_H: int, grid_W: int) -> torch.Tensor:
         # NOTE Converting this to and from numpy could be slow but this is just a PoC for now
         sincos = get_2d_sincos_pos_embed(embed_dim, grid_H, grid_W, cls_token=False)
-        return torch.from_numpy(sincos).float()
+        return sincos
 
 
     # TODO Change this to hwc if unfold allows for it to make it similar to 3d patchify
@@ -222,7 +220,7 @@ class Patchify3D(nn.Module):
     def get_pos_embed(self, embed_dim: int, grid_H: int, grid_W: int, grid_T: int) -> torch.Tensor:
         # NOTE Converting this to and from numpy could be slow but this is just a PoC for now
         sincos = get_3d_sincos_pos_embed(embed_dim, grid_H, grid_W, grid_T, cls_token=False)
-        sincos = torch.from_numpy(sincos).float()
+        # sincos = torch.from_numpy(sincos).float()
         # NOTE Will this preserve the values of the positional embeddings
         # NOTE How can I check this? Means over th
         sincos = rearrange(sincos, "(gh gw t) d -> t d (gh gw)", gh=grid_H, gw=grid_W)
@@ -326,14 +324,14 @@ class TubeMask:
             Indices of patches to keep and discard
         """
         num_keep_spatial = int(num_spatial_patches * (1.0 - ratio))
-        mask = np.hstack(
+        mask = torch.cat(
             [
-                np.zeros(num_spatial_patches - num_keep_spatial),
-                np.ones(num_keep_spatial),
+                torch.zeros(num_spatial_patches - num_keep_spatial),
+                torch.ones(num_keep_spatial),
             ]
         )
-        np.random.shuffle(mask)
-        mask = torch.tensor(mask)
+        # NOTE Equivalent to np.random.shuffle(mask)
+        mask = mask.view(-1)[torch.randperm(mask.nelement())].view(mask.size())
         mask_discard = torch.argwhere(mask == 0).squeeze()
         mask_keep = torch.nonzero(mask).squeeze()
         return mask_keep, mask_discard
@@ -537,7 +535,7 @@ if __name__ == "__main__":
     posembed_2d_vis = posembed_2d.reshape(14*14, 768).detach().numpy()
     plt.imshow(posembed_2d_vis)
     plt.colorbar()
-    plt.savefig("posembed_2d.png")
+    plt.savefig("torch_posembed_2d.png")
     for i in range(8):
         plt.figure(figsize=(8, 6))
         posembed_3d_vis = posembed_3d[i,:,:].reshape(14*14, 768).detach().numpy()
@@ -545,5 +543,5 @@ if __name__ == "__main__":
         plt.axis("off")
         plt.colorbar()
         plt.tight_layout()
-        plt.savefig(f"posembed_3d_frame{i}.png")
+        plt.savefig(f"torch_posembed_3d_frame{i}.png")
         plt.close()
