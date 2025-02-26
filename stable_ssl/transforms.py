@@ -446,7 +446,11 @@ class TubeMask:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
 
-        return masked_video_keep.clone(), masked_video_discard.clone(), mask_keep
+        return (
+            masked_video_keep.clone(),
+            masked_video_discard.clone(),
+            mask_keep.clone(),
+        )
 
 
 class MultiBlock3DMask:
@@ -587,4 +591,8 @@ class MultiBlock3DMask:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
 
-        return masked_video_keep.clone(), masked_video_discard.clone(), mask_keep
+        return (
+            masked_video_keep.clone(),
+            masked_video_discard.clone(),
+            mask_keep.clone(),
+        )
