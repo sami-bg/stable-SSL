@@ -448,8 +448,9 @@ class TubeMask:
 
         return (
             masked_video_keep.clone(),
-            masked_video_discard.clone(),
             mask_keep.clone(),
+            masked_video_discard.clone(),
+            mask_discard.clone(),
         )
 
 
@@ -593,6 +594,7 @@ class MultiBlock3DMask:
 
         return (
             masked_video_keep.clone(),
-            masked_video_discard.clone(),
             mask_keep.clone(),
+            masked_video_discard.clone(),
+            mask_discard.clone(),
         )
