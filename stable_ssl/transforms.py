@@ -443,8 +443,8 @@ class TubeMask:
         )
 
         if is_image:
-            masked_video_keep.squeeze_(0)
-            masked_video_discard.squeeze_(0)
+            masked_video_keep = masked_video_keep.squeeze(0)
+            masked_video_discard = masked_video_discard.squeeze(0)
 
         return masked_video_keep, masked_video_discard, mask_keep
 
@@ -579,12 +579,12 @@ class MultiBlock3DMask:
 
         video_flat = rearrange(video_thwc, "t h w c -> (t h w) c")
 
-        kept = video_flat[mask_keep].reshape(T, -1, C)
-        masked = video_flat[mask_discard].reshape(T, -1, C)
+        masked_video_keep = video_flat[mask_keep].reshape(T, -1, C)
+        masked_video_discard = video_flat[mask_discard].reshape(T, -1, C)
 
         # remove temporal dimension for image
         if is_image:
-            kept.squeeze_(0)
-            masked.squeeze_(0)
+            masked_video_keep = masked_video_keep.squeeze(0)
+            masked_video_discard = masked_video_discard.squeeze(0)
 
-        return kept, masked, mask_keep
+        return masked_video_keep, masked_video_discard, mask_keep
