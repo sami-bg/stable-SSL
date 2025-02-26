@@ -446,7 +446,7 @@ class TubeMask:
             masked_video_keep.squeeze_(0)
             masked_video_discard.squeeze_(0)
 
-        return masked_video_keep, masked_video_discard
+        return masked_video_keep, masked_video_discard, mask_keep
 
 
 class MultiBlock3DMask:
@@ -587,4 +587,4 @@ class MultiBlock3DMask:
             kept.squeeze_(0)
             masked.squeeze_(0)
 
-        return kept, masked
+        return kept, masked, mask_keep

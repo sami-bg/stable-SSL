@@ -146,7 +146,7 @@ def test_tube_mask_on_patchified_video(tube_mask_half_1x1: TubeMask):
     """
     T, grid_h, grid_w, channels = 16, 14, 14, 768
     patchified_video = torch.randn(T, grid_h, grid_w, channels)
-    kept, masked = tube_mask_half_1x1(patchified_video)
+    kept, masked, mask_indices = tube_mask_half_1x1(patchified_video)
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
     assert masked.shape[0] == T
@@ -167,7 +167,7 @@ def test_tube_mask_on_patchified_image(tube_mask_half_1x1: TubeMask):
     """
     grid_h, grid_w, channels = 14, 14, 768
     patchified_image = torch.randn(grid_h, grid_w, channels)
-    kept, masked = tube_mask_half_1x1(patchified_image)
+    kept, masked, mask_indices = tube_mask_half_1x1(patchified_image)
     total_patches = grid_h * grid_w
     # for an image input, outputs are squeezed to 2D tensors (N, C)
     assert kept.ndim == 2
@@ -203,7 +203,7 @@ def test_multiblock3d_mask_on_patchified_video(multi_block_3d_mask: MultiBlock3D
     """
     T, grid_h, grid_w, channels = 16, 14, 14, 768
     patchified_video = torch.randn(T, grid_h, grid_w, channels)
-    kept, masked = multi_block_3d_mask(patchified_video)
+    kept, masked, mask_indices = multi_block_3d_mask(patchified_video)
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
     assert masked.shape[0] == T
@@ -222,7 +222,7 @@ def test_multiblock3d_mask_on_patchified_image(multi_block_3d_mask: MultiBlock3D
     """
     grid_h, grid_w, channels = 14, 14, 768
     patchified_image = torch.randn(grid_h, grid_w, channels)
-    kept, masked = multi_block_3d_mask(patchified_image)
+    kept, masked, mask_indices = multi_block_3d_mask(patchified_image)
     total_patches = grid_h * grid_w
     assert kept.ndim == 2
     assert masked.ndim == 2
