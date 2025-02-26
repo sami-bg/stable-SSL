@@ -6,6 +6,8 @@ import torch
 from einops import rearrange
 from torch import nn
 
+from stable_ssl.utils import warn_once
+
 
 #### NOTE All of these are slightly modified versions of what's in the JEPA repo.
 def get_3d_sincos_pos_embed(
@@ -17,17 +19,32 @@ def get_3d_sincos_pos_embed(
     uniform_power=False,  # weights pos embeddings differently for temporal dimension vs spatial dimensions
 ):
     """
-    grid_size: int of the grid height and width
-    grid_depth: int of the grid depth
-    returns:
-        pos_embed: [grid_depth*grid_size*grid_size, embed_dim] (w/o cls_token)
-                or [1+grid_depth*grid_size*grid_size, embed_dim] (w/ cls_token)
+    Generate 3D sinusoidal positional embeddings for a 3D grid (depth, height, width).
+
+    This function creates positional encodings for 3D data by generating sine and cosine
+    embeddings for each dimension (depth, height, width) and concatenating them.
+
+    Args:
+        embed_dim (int): Dimension of the output embeddings.
+        grid_height (int): Height of the 3D grid.
+        grid_width (int): Width of the 3D grid.
+        grid_depth (int): Depth (temporal dimension) of the 3D grid.
+        cls_token (bool, optional): Whether to prepend a zero embedding for a classification token.
+                                   Defaults to False.
+        uniform_power (bool, optional): Distribution of embedding dimensions across spatial/temporal dimensions.
+                                      If False, temporal dimension gets half the embedding dimensions.
+                                      If True, dimensions are distributed equally. Defaults to False.
+
+    Returns
+    -------
+        torch.Tensor: Positional embeddings of shape [grid_depth*grid_height*grid_width, embed_dim] without cls_token
+                     or [1+grid_depth*grid_height*grid_width, embed_dim] with cls_token.
     """
     grid_d = torch.arange(grid_depth, dtype=torch.float)
     grid_h = torch.arange(grid_height, dtype=torch.float)
     grid_w = torch.arange(grid_width, dtype=torch.float)
     grid_h, grid_d, grid_w = torch.meshgrid(
-        grid_h, grid_d, grid_w
+        grid_h, grid_d, grid_w, indexing="ij"
     )  # order of meshgrid is very important for indexing as [d,h,w]
 
     if not uniform_power:
@@ -49,17 +66,29 @@ def get_3d_sincos_pos_embed(
     return pos_embed
 
 
-def get_2d_sincos_pos_embed(embed_dim: int, grid_H: int, grid_W: int, cls_token=False):
+def get_2d_sincos_pos_embed(embed_dim: int, grid_h: int, grid_w: int, cls_token=False):
     """
-    grid_size: int of the grid height and width
-    returns:
-        pos_embed: [grid_size*grid_size, embed_dim] (w/o cls_token)
-                or [1+grid_size*grid_size, embed_dim] (w/ cls_token)
+    Generate 2D sinusoidal positional embeddings for a 2D grid (height, width).
+
+    This function creates positional encodings for 2D data by generating sine and cosine
+    embeddings for each dimension (height, width) and concatenating them.
+
+    Args:
+        embed_dim (int): Dimension of the output embeddings.
+        grid_h (int): Height of the 2D grid.
+        grid_w (int): Width of the 2D grid.
+        cls_token (bool, optional): Whether to prepend a zero embedding for a classification token.
+                                   Defaults to False.
+
+    Returns
+    -------
+        torch.Tensor: Positional embeddings of shape [grid_h*grid_w, embed_dim] without cls_token
+                     or [1+grid_h*grid_w, embed_dim] with cls_token.
     """
-    grid_h = torch.arange(grid_H, dtype=torch.float)
-    grid_w = torch.arange(grid_W, dtype=torch.float)
+    grid_h = torch.arange(grid_h, dtype=torch.float)
+    grid_w = torch.arange(grid_w, dtype=torch.float)
     grid_w, grid_h = torch.meshgrid(
-        grid_w, grid_h
+        grid_w, grid_h, indexing="ij"
     )  # order of meshgrid is very important for indexing as [h, w]
 
     emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_h)  # (H*W, D/2)
@@ -72,11 +101,21 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_H: int, grid_W: int, cls_token=
 
 def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
-    embed_dim: output dimension for each position
-    grid_size: int of the grid length
-    returns:
-        pos_embed: [grid_size, embed_dim] (w/o cls_token)
-                or [1+grid_size, embed_dim] (w/ cls_token)
+    Generate 1D sinusoidal positional embeddings for a sequence of positions.
+
+    This function creates positional encodings for a 1D sequence by generating
+    sine and cosine embeddings for each position.
+
+    Args:
+        embed_dim (int): Dimension of the output embeddings.
+        grid_size (int): Length of the sequence.
+        cls_token (bool, optional): Whether to prepend a zero embedding for a classification token.
+                                   Defaults to False.
+
+    Returns
+    -------
+        torch.Tensor: Positional embeddings of shape [grid_size, embed_dim] without cls_token
+                     or [1+grid_size, embed_dim] with cls_token.
     """
     grid = torch.arange(grid_size, dtype=torch.float)
     pos_embed = get_1d_sincos_pos_embed_from_grid(embed_dim, grid)
@@ -87,9 +126,23 @@ def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
 
 def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     """
-    embed_dim: output dimension for each position
-    pos: a list of positions to be encoded: size (M,)
-    returns: (M, D)
+    Generate 1D sinusoidal positional embeddings from a grid of positions.
+
+    This is the core function that implements sinusoidal position encoding according to the formula:
+    PE(pos, 2i) = sin(pos / 10000^(2i/embed_dim))
+    PE(pos, 2i+1) = cos(pos / 10000^(2i/embed_dim))
+
+    Args:
+        embed_dim (int): Dimension of the output embeddings. Must be divisible by 2.
+        pos (torch.Tensor): A tensor of positions to be encoded of shape (M,).
+
+    Returns
+    -------
+        torch.Tensor: Sinusoidal embeddings of shape (M, embed_dim).
+
+    Raises
+    ------
+        AssertionError: If embed_dim is not divisible by 2.
     """
     assert embed_dim % 2 == 0
     omega = torch.arange(embed_dim // 2, dtype=torch.float)
@@ -124,7 +177,7 @@ class Patchify2D(nn.Module):
         Tensor of patches with shape [N, P, D] where:
         - N is number of patches (H/patch_size_height * W/patch_size_width)
         - P is number of pixels per patch (patch_size_height * patch_size_width)
-        - D is the input channel dimension: 3 for RGB images
+        - D is the input channel dimension: 3x16x16 for RGB images
     """
 
     def __init__(
@@ -143,14 +196,14 @@ class Patchify2D(nn.Module):
         self.use_pos_embed = use_pos_embed
 
     @cache
-    def get_pos_embed(self, embed_dim: int, grid_H: int, grid_W: int) -> torch.Tensor:
+    def get_pos_embed(self, embed_dim: int, grid_h: int, grid_w: int) -> torch.Tensor:
         # NOTE Converting this to and from numpy could be slow but this is just a PoC for now
-        sincos = get_2d_sincos_pos_embed(embed_dim, grid_H, grid_W, cls_token=False)
+        sincos = get_2d_sincos_pos_embed(embed_dim, grid_h, grid_w, cls_token=False)
         return sincos
 
     # TODO Change this to hwc if unfold allows for it to make it similar to 3d patchify
-    def __call__(self, image_CHW: torch.Tensor) -> torch.Tensor:
-        C, H, W = image_CHW.shape
+    def __call__(self, image_hwc: torch.Tensor) -> torch.Tensor:
+        H, W, C = image_hwc.shape
 
         grid_height = H // self.patch_size[0]
         grid_width = W // self.patch_size[1]
@@ -158,25 +211,25 @@ class Patchify2D(nn.Module):
             grid_width * self.patch_size[1]
         ) == W
 
-        image_patched_flat: torch.Tensor = self.unfold(image_CHW).T
-        mean = image_patched_flat.mean(dim=1, keepdim=True)
+        # NOTE unfold needs channel dim to come first, but images are loaded as HWC
+        # so we permute in this method
+        image_patched_flat: torch.Tensor = self.unfold(image_hwc.permute(2, 0, 1)).T
+
         if self.use_pos_embed:
             # NOTE Since positional embeddings are lazily created based on the patched shape
             # and not the input shape, we don't ever need to interpolate them
             D = image_patched_flat.shape[-1]
             pos_embed = self.get_pos_embed(
-                embed_dim=D, grid_H=grid_height, grid_W=grid_width
+                embed_dim=D, grid_h=grid_height, grid_w=grid_width
             )
             image_patched_flat += pos_embed
 
-        mean_after_pos_embed = image_patched_flat.mean(dim=1, keepdim=True)
-
         # NOTE Unflatten patches to recover original shape
-        image_patched: torch.Tensor = rearrange(
+        image_patched_hwd: torch.Tensor = rearrange(
             image_patched_flat, "(gh gw) d -> gh gw d", gh=grid_height, gw=grid_width
         )
 
-        return image_patched
+        return image_patched_hwd
 
 
 class Patchify3D(nn.Module):
@@ -225,55 +278,51 @@ class Patchify3D(nn.Module):
 
     @cache
     def get_pos_embed(
-        self, embed_dim: int, grid_H: int, grid_W: int, grid_T: int
+        self, embed_dim: int, grid_h: int, grid_w: int, grid_t: int
     ) -> torch.Tensor:
         # NOTE Converting this to and from numpy could be slow but this is just a PoC for now
         sincos = get_3d_sincos_pos_embed(
-            embed_dim, grid_H, grid_W, grid_T, cls_token=False
+            embed_dim, grid_h, grid_w, grid_t, cls_token=False
         )
         # sincos = torch.from_numpy(sincos).float()
         # NOTE Will this preserve the values of the positional embeddings
         # NOTE How can I check this? Means over th
-        sincos = rearrange(sincos, "(gh gw t) d -> t d (gh gw)", gh=grid_H, gw=grid_W)
+        sincos = rearrange(sincos, "(gh gw t) d -> t d (gh gw)", gh=grid_h, gw=grid_w)
         return sincos
 
-    # TODO Change this to thwc
-    def __call__(self, video_TCHW: torch.Tensor) -> torch.Tensor:
-        T, C, H, W = video_TCHW.shape
+    def __call__(self, video_thwc: torch.Tensor) -> torch.Tensor:
+        T, H, W, C = video_thwc.shape
 
         timesteps: int = T // self.tubelet_size
         assert (timesteps * self.tubelet_size) == T
 
-        grid_height = H // self.patch_size[0]
-        grid_width = W // self.patch_size[1]
-        assert (grid_height * self.patch_size[0]) == H and (
-            grid_width * self.patch_size[1]
-        ) == W
+        grid_h, grid_w = H // self.patch_size[0], W // self.patch_size[1]
+        assert (grid_h * self.patch_size[0]) == H and (grid_w * self.patch_size[1]) == W
 
         video_tubed = rearrange(
-            video_TCHW, "(n t) c h w -> n (t c) h w", n=timesteps, t=self.tubelet_size
+            video_thwc, "(n t) h w c -> n (t c) h w", n=timesteps, t=self.tubelet_size
         )
 
         video_patched_flattened: torch.Tensor = self.unfold(video_tubed)
         if self.use_pos_embed:
             D = video_patched_flattened.shape[1]
             pos_embed = self.get_pos_embed(
-                embed_dim=D, grid_H=grid_height, grid_W=grid_width, grid_T=timesteps
+                embed_dim=D, grid_h=grid_h, grid_w=grid_w, grid_t=timesteps
             )
             video_patched_flattened += pos_embed
 
-        video_patched: torch.Tensor = rearrange(
+        video_patched_thwc: torch.Tensor = rearrange(
             video_patched_flattened,
             "n (t c ph pw) (gh gw) -> (n t) gh gw (c ph pw)",
             t=self.tubelet_size,
             c=C,
-            gh=grid_height,
-            gw=grid_width,
+            gh=grid_h,
+            gw=grid_w,
             ph=self.patch_size[0],
             pw=self.patch_size[1],
         )
 
-        return video_patched
+        return video_patched_thwc
 
 
 class TubeMask:
@@ -354,6 +403,9 @@ class TubeMask:
         video_thwc : torch.Tensor
             Input video tensor in [T, H, W, C] format
             Can be either raw video or pre-patchified
+            If input tensor is an image-like [H, W, C],
+            it will be casted to a video-like by the addition
+            of an extra temporal dimension into [1, H, W, C]
 
         Returns
         -------
@@ -361,6 +413,18 @@ class TubeMask:
             Kept patches and masked patches
             Both have shape [T, N, C] where N varies based on ratio
         """
+        if is_image := bool(video_thwc.dim() == 3):
+            warn_once(
+                f"Received image-like input with shape {video_thwc.shape}, ",
+                "adding temporal dimension of 1!",
+            )
+            video_thwc = video_thwc.unsqueeze(0)
+
+        assert video_thwc.dim() == 4, (
+            f"TubeMask only accepts videos with dimensions \
+                                [T, H, W, C], received {video_thwc.shape} instead! "
+        )
+
         T, H, W, C = video_thwc.shape
         num_patches_spatial: int = (H // self.patch_size[0]) * (W // self.patch_size[1])
         mask_keep, mask_discard = self.sample_spatial_mask(
@@ -377,6 +441,11 @@ class TubeMask:
         masked_video_discard = torch.gather(
             video_flattened_grid, dim=1, index=mask_discard
         )
+
+        if is_image:
+            masked_video_keep.squeeze_(0)
+            masked_video_discard.squeeze_(0)
+
         return masked_video_keep, masked_video_discard
 
 
@@ -487,13 +556,16 @@ class MultiBlock3DMask:
             Kept patches [T, N_kept, C] and masked patches [T, N_masked, C]
         """
         # NOTE Add temporal dimension for image
-        is_image = video_thwc.ndim == 3
-        if video_thwc.ndim == 3:
+        if is_image := bool(video_thwc.ndim == 3):
             video_thwc = video_thwc.unsqueeze(0)
 
+        assert video_thwc.dim() == 4, (
+            f"MultiBlock3D only accepts videos with dimensions \
+                                [T, H, W, C] or [H, W, C] received {video_thwc.shape} instead! "
+        )
+
         T, H, W, C = video_thwc.shape
-        grid_h = H // self.patch_size[0]
-        grid_w = W // self.patch_size[1]
+        grid_h, grid_w = H // self.patch_size[0], W // self.patch_size[1]
 
         block_size = self._sample_block_size(grid_h, grid_w, T, torch.Generator())
 
@@ -512,49 +584,7 @@ class MultiBlock3DMask:
 
         # remove temporal dimension for image
         if is_image:
-            kept = kept.squeeze(0)
-            masked = masked.squeeze(0)
+            kept.squeeze_(0)
+            masked.squeeze_(0)
 
         return kept, masked
-
-
-if __name__ == "__main__":
-    tube = TubeMask(0.5, (1, 1))
-    mb3d = MultiBlock3DMask((0.2, 0.8), (1.0, 1.0), (0.3, 3.0), 1, 1.0, (1, 1))
-    patchify_noembed = Patchify2D(16)
-    patchify_embed = Patchify2D(16, use_pos_embed=True)
-    patchify_3d_noembed = Patchify3D(16, 2)
-    patchify_3d_embed = Patchify3D(16, 2, use_pos_embed=True)
-
-    randvid = torch.randn((16, 3, 224, 224))
-    randimg = torch.randn((3, 224, 224))
-    # 16, 14, 14, 768
-    vidpatch = patchify_3d_noembed(randvid)
-    imgpatch = patchify_noembed(randimg)
-    # since ratio is 0.5: 16, 98, 768
-    vidtubemask = tube(vidpatch)
-    imgmb3dmask = mb3d(imgpatch)
-
-    vidpatch_embed = patchify_3d_embed(randvid)
-    imgpatch_embed = patchify_embed(randimg)
-    x = 1
-    posembed_2d = patchify_embed.get_pos_embed(embed_dim=768, grid_H=14, grid_W=14)
-    posembed_3d = patchify_3d_embed.get_pos_embed(
-        embed_dim=768, grid_H=14, grid_W=14, grid_T=8
-    )
-    import matplotlib.pyplot as plt
-
-    # the 2d embeds should be one image, ignore the channel dim
-    posembed_2d_vis = posembed_2d.reshape(14 * 14, 768).detach().numpy()
-    plt.imshow(posembed_2d_vis)
-    plt.colorbar()
-    plt.savefig("torch_posembed_2d.png")
-    for i in range(8):
-        plt.figure(figsize=(8, 6))
-        posembed_3d_vis = posembed_3d[i, :, :].reshape(14 * 14, 768).detach().numpy()
-        plt.imshow(posembed_3d_vis)
-        plt.axis("off")
-        plt.colorbar()
-        plt.tight_layout()
-        plt.savefig(f"torch_posembed_3d_frame{i}.png")
-        plt.close()
