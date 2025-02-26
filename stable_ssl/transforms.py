@@ -362,8 +362,8 @@ class TubeMask:
         self.ratio = ratio
         if isinstance(patch_size, int):
             self.patch_size = (patch_size,) * 2
-
-        self.patch_size = patch_size
+        else:
+            self.patch_size = patch_size
 
     def sample_spatial_mask(
         self, ratio: float, num_spatial_patches: int
