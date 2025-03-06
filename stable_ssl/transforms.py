@@ -24,7 +24,8 @@ def get_3d_sincos_pos_embed(
     This function creates positional encodings for 3D data by generating sine and cosine
     embeddings for each dimension (depth, height, width) and concatenating them.
 
-    Args:
+    Parameters
+    ----------
         embed_dim (int): Dimension of the output embeddings.
         grid_height (int): Height of the 3D grid.
         grid_width (int): Width of the 3D grid.
@@ -73,7 +74,8 @@ def get_2d_sincos_pos_embed(embed_dim: int, grid_h: int, grid_w: int, cls_token=
     This function creates positional encodings for 2D data by generating sine and cosine
     embeddings for each dimension (height, width) and concatenating them.
 
-    Args:
+    Parameters
+    ----------
         embed_dim (int): Dimension of the output embeddings.
         grid_h (int): Height of the 2D grid.
         grid_w (int): Width of the 2D grid.
@@ -106,7 +108,8 @@ def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     This function creates positional encodings for a 1D sequence by generating
     sine and cosine embeddings for each position.
 
-    Args:
+    Parameters
+    ----------
         embed_dim (int): Dimension of the output embeddings.
         grid_size (int): Length of the sequence.
         cls_token (bool, optional): Whether to prepend a zero embedding for a classification token.
@@ -132,7 +135,8 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     PE(pos, 2i) = sin(pos / 10000^(2i/embed_dim))
     PE(pos, 2i+1) = cos(pos / 10000^(2i/embed_dim))
 
-    Args:
+    Parameters
+    ----------
         embed_dim (int): Dimension of the output embeddings. Must be divisible by 2.
         pos (torch.Tensor): A tensor of positions to be encoded of shape (M,).
 
@@ -228,7 +232,8 @@ class Patchify2D(nn.Module):
         image_patched_hwd: torch.Tensor = rearrange(
             image_patched_flat, "(gh gw) d -> gh gw d", gh=grid_height, gw=grid_width
         )
-
+        # 224,224,3 16,16
+        # 14, 14, (16*16*3)
         return image_patched_hwd
 
 
@@ -321,7 +326,6 @@ class Patchify3D(nn.Module):
             ph=self.patch_size[0],
             pw=self.patch_size[1],
         )
-
         return video_patched_thwc
 
 
