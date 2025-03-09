@@ -34,7 +34,7 @@ def patchifier_3d() -> Patchify3D:
 @pytest.fixture(scope="module")
 def tube_mask_half_1x1() -> TubeMask:
     """Return a default TubeMask with a ratio=0.5 and a patch_size of 1x1."""
-    return TubeMask(ratio=0.5, patch_size=(1, 1), video_key="patched_video")
+    return TubeMask(ratio=0.5, patch_size=(1, 1), input_key="patched_video")
 
 
 @pytest.fixture(scope="module")
@@ -46,7 +46,7 @@ def multi_block_3d_mask() -> MultiBlock3DMask:
         num_blocks=1,
         max_temporal_keep=1.0,
         patch_size=(1, 1),
-        video_key="patched_video",
+        input_key="patched_video",
     )
 
 
@@ -161,8 +161,13 @@ def test_tube_mask_on_patchified_video(tube_mask_half_1x1: TubeMask):
     the kept and masked patches sum to the total number of grid patches.
     """
     T, grid_h, grid_w, channels = 16, 14, 14, 768
+
+    tube_mask_half_1x1.input_key = "patched_video"
     patchified_video = {"patched_video": torch.randn(T, grid_h, grid_w, channels)}
-    kept, mask_keep, masked, mask_discard = tube_mask_half_1x1(patchified_video)
+
+    output_dict = tube_mask_half_1x1(patchified_video)
+    kept = output_dict["masked_patched_video_keep"]
+    masked = output_dict["masked_patched_video_discard"]
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
     assert masked.shape[0] == T
@@ -182,8 +187,13 @@ def test_tube_mask_on_patchified_image(tube_mask_half_1x1: TubeMask):
     image-like into a video with temporal dimension of 1.
     """
     grid_h, grid_w, channels = 14, 14, 768
-    patchified_image = {"image": torch.randn(grid_h, grid_w, channels)}
-    kept, mask_keep, masked, mask_discard = tube_mask_half_1x1(patchified_image)
+
+    tube_mask_half_1x1.input_key = "patched_image"
+    patchified_image = {"patched_image": torch.randn(grid_h, grid_w, channels)}
+
+    output_dict = tube_mask_half_1x1(patchified_image)
+    kept = output_dict["masked_patched_image_keep"]
+    masked = output_dict["masked_patched_image_discard"]
     total_patches = grid_h * grid_w
     # for an image input, outputs are squeezed to 2D tensors (N, C)
     assert kept.ndim == 2
@@ -199,10 +209,10 @@ def test_tube_mask_invalid_dimensions(tube_mask_half_1x1: TubeMask):
 
     Checks that TubeMask raises an AssertionError.
     """
-    bad_input = {"image": torch.randn(224, 224)}
+    bad_input = {"patched_image": torch.randn(224, 224)}
     with pytest.raises(AssertionError):
         tube_mask_half_1x1(bad_input)
-    bad_input = {"video": torch.randn(16, 224, 224, 3, 1)}
+    bad_input = {"patched_video": torch.randn(16, 224, 224, 3, 1)}
     with pytest.raises(AssertionError):
         tube_mask_half_1x1(bad_input)
 
@@ -218,8 +228,13 @@ def test_multiblock3d_mask_on_patchified_video(multi_block_3d_mask: MultiBlock3D
     the total number of grid patches.
     """
     T, grid_h, grid_w, channels = 16, 14, 14, 768
-    patchified_video = torch.randn(T, grid_h, grid_w, channels)
-    kept, mask_keep, masked, mask_discard = multi_block_3d_mask(patchified_video)
+
+    multi_block_3d_mask.input_key = "patched_video"
+    patchified_video = {"patched_video": torch.randn(T, grid_h, grid_w, channels)}
+
+    output_dict = multi_block_3d_mask(patchified_video)
+    kept = output_dict["masked_patched_video_keep"]
+    masked = output_dict["masked_patched_video_discard"]
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
     assert masked.shape[0] == T
@@ -237,8 +252,13 @@ def test_multiblock3d_mask_on_patchified_image(multi_block_3d_mask: MultiBlock3D
     their combined patches match the grid size.
     """
     grid_h, grid_w, channels = 14, 14, 768
-    patchified_image = torch.randn(grid_h, grid_w, channels)
-    kept, mask_keep, masked, mask_discard = multi_block_3d_mask(patchified_image)
+
+    multi_block_3d_mask.input_key = "patched_image"
+    patchified_image = {"patched_image": torch.randn(grid_h, grid_w, channels)}
+
+    output_dict = multi_block_3d_mask(patchified_image)
+    kept = output_dict["masked_patched_image_keep"]
+    masked = output_dict["masked_patched_image_discard"]
     total_patches = grid_h * grid_w
     assert kept.ndim == 2
     assert masked.ndim == 2
@@ -253,9 +273,9 @@ def test_multiblock3d_mask_invalid_dimensions(multi_block_3d_mask: MultiBlock3DM
 
     Checks that MultiBlock3DMask raises an AssertionError.
     """
-    bad_input = torch.randn(224, 224)
+    bad_input = {"patched_image": torch.randn(224, 224)}
     with pytest.raises(AssertionError):
         multi_block_3d_mask(bad_input)
-    bad_input = torch.randn(16, 224, 224, 3, 1)
+    bad_input = {"patched_video": torch.randn(16, 224, 224, 3, 1)}
     with pytest.raises(AssertionError):
         multi_block_3d_mask(bad_input)

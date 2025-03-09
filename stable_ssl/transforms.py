@@ -1,6 +1,6 @@
 import math
 from functools import cache
-from typing import Union
+from typing import Optional, Union
 
 import torch
 from einops import rearrange
@@ -10,6 +10,7 @@ from stable_ssl.utils import warn_once
 
 
 #### NOTE All of these are slightly modified versions of what's in the JEPA repo.
+#### NOTE These should all be removed.
 def get_3d_sincos_pos_embed(
     embed_dim,
     grid_height,
@@ -374,8 +375,7 @@ class TubeMask:
         ratio: float,
         patch_size: Union[tuple[int, int], int],
         *,
-        video_key: str = "video",
-        image_key: str = "image",
+        input_key: Optional[str] = None,
     ):
         super(TubeMask, self).__init__()
         self.ratio = ratio
@@ -383,9 +383,10 @@ class TubeMask:
             self.patch_size = (patch_size,) * 2
         else:
             self.patch_size = patch_size
-
-        self.video_key = video_key
-        self.image_key = image_key
+        # NOTE: When either alias is passed in explicitly by the user,
+        # we should not include any fallback logic, so that we don't silently use
+        # a default alias that is not what the user expects.
+        self.input_key = input_key
 
     def sample_spatial_mask(
         self, ratio: float, num_spatial_patches: int
@@ -435,10 +436,19 @@ class TubeMask:
             Kept patches and masked patches
             Both have shape [T, N, C] where N varies based on ratio
         """
-        assert self.video_key in input or self.image_key in input
-        video_thwc: torch.Tensor = (
-            input[self.video_key] if self.video_key in input else input[self.image_key]
-        )
+        # TODO: Turn this to its own validation function
+        if self.input_key:
+            assert self.input_key in input, (
+                f"TubeMask requires '{self.input_key}' key in input dict, as it was specified! Received {input.keys()}"
+            )
+            video_thwc: torch.Tensor = input[self.input_key]
+        else:
+            video_thwc: torch.Tensor = input.get("video", input.get("image"))
+            if video_thwc is None:
+                raise ValueError(
+                    f"TubeMask requires either 'video' or 'image' key in input dict! Received {input.keys()}"
+                )
+
         if is_image := bool(video_thwc.dim() == 3):
             warn_once(
                 f"Received image-like input with shape {video_thwc.shape}, ",
@@ -468,15 +478,19 @@ class TubeMask:
             video_flattened_grid, dim=1, index=mask_discard
         )
 
+        # TODO Add unit test for alias - detect whether we adjust dict keys based on input dims
+        alias = self.input_key or "video"
+
         if is_image:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
+            alias = self.input_key or "image"
 
         return {
             **input,
-            "masked_video_keep": masked_video_keep.clone(),
+            f"masked_{alias}_keep": masked_video_keep.clone(),
             "mask_keep": mask_keep.clone(),
-            "masked_video_discard": masked_video_discard.clone(),
+            f"masked_{alias}_discard": masked_video_discard.clone(),
             "mask_discard": mask_discard.clone(),
         }
 
@@ -512,8 +526,7 @@ class MultiBlock3DMask:
         max_temporal_keep: float = 1.0,
         patch_size: Union[tuple[int, int], int] = (16, 16),
         *,
-        video_key: str = "video",
-        image_key: str = "image",
+        input_key: Optional[str] = None,
     ):
         if isinstance(patch_size, int):
             self.patch_size = (patch_size,) * 2
@@ -525,8 +538,7 @@ class MultiBlock3DMask:
         self.aspect_ratio = aspect_ratio
         self.num_blocks = num_blocks
         self.max_temporal_keep = max_temporal_keep
-        self.video_key = video_key
-        self.image_key = image_key
+        self.input_key = input_key
 
     def _sample_block_size(
         self,
@@ -592,10 +604,18 @@ class MultiBlock3DMask:
         tuple[torch.Tensor, torch.Tensor]
             Kept patches [T, N_kept, C] and masked patches [T, N_masked, C]
         """
-        assert self.video_key in input or self.image_key in input
-        video_thwc: torch.Tensor = (
-            input[self.video_key] if self.video_key in input else input[self.image_key]
-        )
+        if self.input_key:
+            assert self.input_key in input, (
+                f"MultiBlock3D requires '{self.input_key}' key in input dict, as it was specified! Received {input.keys()}"
+            )
+            video_thwc: torch.Tensor = input[self.input_key]
+        else:
+            video_thwc: torch.Tensor = input.get("video", input.get("image"))
+            if video_thwc is None:
+                raise ValueError(
+                    f"MultiBlock3D requires either 'video' or 'image' key in input dict! Received {input.keys()}"
+                )
+        # TODO: Turn this to its own validation function
         # NOTE Add temporal dimension for image
         if is_image := bool(video_thwc.ndim == 3):
             video_thwc = video_thwc.unsqueeze(0)
@@ -623,15 +643,18 @@ class MultiBlock3DMask:
         masked_video_keep = video_flat[mask_keep].reshape(T, -1, C)
         masked_video_discard = video_flat[mask_discard].reshape(T, -1, C)
 
+        # TODO Add unit test for alias - detect whether we adjust dict keys based on input dims
+        alias = self.input_key or "video"
         # remove temporal dimension for image
         if is_image:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
+            alias = self.input_key or "image"
 
         return {
             **input,
-            "masked_video_keep": masked_video_keep.clone(),
+            f"masked_{alias}_keep": masked_video_keep.clone(),
             "mask_keep": mask_keep.clone(),
-            "masked_video_discard": masked_video_discard.clone(),
+            f"masked_{alias}_discard": masked_video_discard.clone(),
             "mask_discard": mask_discard.clone(),
         }
