@@ -206,7 +206,10 @@ class Patchify2D(nn.Module):
         return sincos
 
     # TODO Change this to hwc if unfold allows for it to make it similar to 3d patchify
-    def __call__(self, image_hwc: torch.Tensor) -> torch.Tensor:
+    def __call__(self, input: dict) -> dict:
+        assert "image" in input
+
+        image_hwc: torch.Tensor = input["image"]
         H, W, C = image_hwc.shape
 
         grid_height = H // self.patch_size[0]
@@ -234,7 +237,7 @@ class Patchify2D(nn.Module):
         )
         # 224,224,3 16,16
         # 14, 14, (16*16*3)
-        return image_patched_hwd
+        return {**input, "patched_image": image_patched_hwd}
 
 
 class Patchify3D(nn.Module):
@@ -269,6 +272,8 @@ class Patchify3D(nn.Module):
         patch_size: Union[int, tuple[int, int]] = 16,
         tubelet_size: int = 2,
         use_pos_embed: bool = True,
+        *,
+        video_key: str = "video",
     ):
         super().__init__()
         if isinstance(patch_size, tuple):
@@ -280,6 +285,7 @@ class Patchify3D(nn.Module):
         self.tubelet_size = tubelet_size
         self.unfold = nn.Unfold(kernel_size=self.patch_size, stride=self.patch_size)
         self.use_pos_embed = use_pos_embed
+        self.video_key = video_key
 
     @cache
     def get_pos_embed(
@@ -295,7 +301,9 @@ class Patchify3D(nn.Module):
         sincos = rearrange(sincos, "(gh gw t) d -> t d (gh gw)", gh=grid_h, gw=grid_w)
         return sincos
 
-    def __call__(self, video_thwc: torch.Tensor) -> torch.Tensor:
+    def __call__(self, input: dict) -> dict:
+        assert self.video_key in input
+        video_thwc: torch.Tensor = input[self.video_key]
         T, H, W, C = video_thwc.shape
 
         timesteps: int = T // self.tubelet_size
@@ -326,7 +334,11 @@ class Patchify3D(nn.Module):
             ph=self.patch_size[0],
             pw=self.patch_size[1],
         )
-        return video_patched_thwc
+
+        return {
+            **input,
+            "patched_video": video_patched_thwc,
+        }
 
 
 class TubeMask:
@@ -361,6 +373,9 @@ class TubeMask:
         self,
         ratio: float,
         patch_size: Union[tuple[int, int], int],
+        *,
+        video_key: str = "video",
+        image_key: str = "image",
     ):
         super(TubeMask, self).__init__()
         self.ratio = ratio
@@ -368,6 +383,9 @@ class TubeMask:
             self.patch_size = (patch_size,) * 2
         else:
             self.patch_size = patch_size
+
+        self.video_key = video_key
+        self.image_key = image_key
 
     def sample_spatial_mask(
         self, ratio: float, num_spatial_patches: int
@@ -399,7 +417,7 @@ class TubeMask:
         mask_keep = torch.nonzero(mask).squeeze()
         return mask_keep, mask_discard
 
-    def __call__(self, video_thwc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(self, input: dict) -> dict:
         """Apply tube masking to input video.
 
         Parameters
@@ -417,6 +435,10 @@ class TubeMask:
             Kept patches and masked patches
             Both have shape [T, N, C] where N varies based on ratio
         """
+        assert self.video_key in input or self.image_key in input
+        video_thwc: torch.Tensor = (
+            input[self.video_key] if self.video_key in input else input[self.image_key]
+        )
         if is_image := bool(video_thwc.dim() == 3):
             warn_once(
                 f"Received image-like input with shape {video_thwc.shape}, ",
@@ -450,12 +472,13 @@ class TubeMask:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
 
-        return (
-            masked_video_keep.clone(),
-            mask_keep.clone(),
-            masked_video_discard.clone(),
-            mask_discard.clone(),
-        )
+        return {
+            **input,
+            "masked_video_keep": masked_video_keep.clone(),
+            "mask_keep": mask_keep.clone(),
+            "masked_video_discard": masked_video_discard.clone(),
+            "mask_discard": mask_discard.clone(),
+        }
 
 
 class MultiBlock3DMask:
@@ -488,6 +511,9 @@ class MultiBlock3DMask:
         num_blocks: int = 1,
         max_temporal_keep: float = 1.0,
         patch_size: Union[tuple[int, int], int] = (16, 16),
+        *,
+        video_key: str = "video",
+        image_key: str = "image",
     ):
         if isinstance(patch_size, int):
             self.patch_size = (patch_size,) * 2
@@ -499,6 +525,8 @@ class MultiBlock3DMask:
         self.aspect_ratio = aspect_ratio
         self.num_blocks = num_blocks
         self.max_temporal_keep = max_temporal_keep
+        self.video_key = video_key
+        self.image_key = image_key
 
     def _sample_block_size(
         self,
@@ -551,7 +579,7 @@ class MultiBlock3DMask:
 
         return mask
 
-    def __call__(self, video_thwc: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(self, input: dict) -> dict:
         """Apply masking to input video. An image tensor can be passed as well, in which case the mask will interpret it as a single frame.
 
         Parameters
@@ -564,6 +592,10 @@ class MultiBlock3DMask:
         tuple[torch.Tensor, torch.Tensor]
             Kept patches [T, N_kept, C] and masked patches [T, N_masked, C]
         """
+        assert self.video_key in input or self.image_key in input
+        video_thwc: torch.Tensor = (
+            input[self.video_key] if self.video_key in input else input[self.image_key]
+        )
         # NOTE Add temporal dimension for image
         if is_image := bool(video_thwc.ndim == 3):
             video_thwc = video_thwc.unsqueeze(0)
@@ -596,9 +628,10 @@ class MultiBlock3DMask:
             masked_video_keep = masked_video_keep.squeeze(0)
             masked_video_discard = masked_video_discard.squeeze(0)
 
-        return (
-            masked_video_keep.clone(),
-            mask_keep.clone(),
-            masked_video_discard.clone(),
-            mask_discard.clone(),
-        )
+        return {
+            **input,
+            "masked_video_keep": masked_video_keep.clone(),
+            "mask_keep": mask_keep.clone(),
+            "masked_video_discard": masked_video_discard.clone(),
+            "mask_discard": mask_discard.clone(),
+        }

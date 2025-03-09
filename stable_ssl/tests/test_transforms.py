@@ -8,15 +8,15 @@ from stable_ssl.transforms import MultiBlock3DMask, Patchify2D, Patchify3D, Tube
 # FIXTURES
 # -----------------------------------------------------------------------------
 @pytest.fixture
-def image() -> torch.Tensor:
+def image() -> dict[str, torch.Tensor]:
     """Return a random image tensor of shape (224, 224, 3)."""
-    return torch.randn(224, 224, 3)
+    return {"image": torch.randn(224, 224, 3)}
 
 
 @pytest.fixture
-def video() -> torch.Tensor:
+def video() -> dict[str, torch.Tensor]:
     """Return a random video tensor of shape (16, 224, 224, 3)."""
-    return torch.randn(16, 224, 224, 3)
+    return {"video": torch.randn(16, 224, 224, 3)}
 
 
 @pytest.fixture(scope="module")
@@ -34,7 +34,7 @@ def patchifier_3d() -> Patchify3D:
 @pytest.fixture(scope="module")
 def tube_mask_half_1x1() -> TubeMask:
     """Return a default TubeMask with a ratio=0.5 and a patch_size of 1x1."""
-    return TubeMask(ratio=0.5, patch_size=(1, 1))
+    return TubeMask(ratio=0.5, patch_size=(1, 1), video_key="patched_video")
 
 
 @pytest.fixture(scope="module")
@@ -46,13 +46,14 @@ def multi_block_3d_mask() -> MultiBlock3DMask:
         num_blocks=1,
         max_temporal_keep=1.0,
         patch_size=(1, 1),
+        video_key="patched_video",
     )
 
 
 # -----------------------------------------------------------------------------
 # PATCHIFY2D TESTS
 # -----------------------------------------------------------------------------
-def test_patchify2d_smoke(image: torch.Tensor):
+def test_patchify2d_smoke(image: dict[str, torch.Tensor]):
     """
     Smoke test for Patchify2D without positional embedding.
 
@@ -60,15 +61,18 @@ def test_patchify2d_smoke(image: torch.Tensor):
     """
     patchifier_no_posembed = Patchify2D(patch_size=16, use_pos_embed=False)
     patches = patchifier_no_posembed(image)
+    assert "patched_image" in patches
     grid_h, grid_w, expected_channels = (
-        image.shape[0] // 16,  # 14
-        image.shape[1] // 16,  # 14
-        16 * 16 * image.shape[2],  # 768
+        image["image"].shape[0] // 16,  # 14
+        image["image"].shape[1] // 16,  # 14
+        16 * 16 * image["image"].shape[2],  # 768
     )
-    assert patches.shape == (grid_h, grid_w, expected_channels)
+    assert patches["patched_image"].shape == (grid_h, grid_w, expected_channels)
 
 
-def test_patchify2d_with_pos_embed(image: torch.Tensor, patchifier_2d: Patchify2D):
+def test_patchify2d_with_pos_embed(
+    image: dict[str, torch.Tensor], patchifier_2d: Patchify2D
+):
     """
     Test Patchify2D with positional embedding enabled (default fixture).
 
@@ -76,17 +80,17 @@ def test_patchify2d_with_pos_embed(image: torch.Tensor, patchifier_2d: Patchify2
     """
     patches = patchifier_2d(image)
     grid_h, grid_w, expected_channels = (
-        image.shape[0] // 16,
-        image.shape[1] // 16,
-        16 * 16 * image.shape[2],
+        image["image"].shape[0] // 16,
+        image["image"].shape[1] // 16,
+        16 * 16 * image["image"].shape[2],
     )
-    assert patches.shape == (grid_h, grid_w, expected_channels)
+    assert patches["patched_image"].shape == (grid_h, grid_w, expected_channels)
 
 
 def test_patchify2d_invalid_shape(patchifier_2d: Patchify2D):
     """Verify that Patchify2D raises an assertion when image dimensions are not divisible by the patch size."""
     # height is not divisible by num_patches (225 % 16 != 0)
-    bad_image = torch.randn(225, 224, 3)
+    bad_image = {"image": torch.randn(225, 224, 3)}
     with pytest.raises(AssertionError):
         patchifier_2d(bad_image)
 
@@ -94,7 +98,7 @@ def test_patchify2d_invalid_shape(patchifier_2d: Patchify2D):
 # -----------------------------------------------------------------------------
 # PATCHIFY3D TESTS
 # -----------------------------------------------------------------------------
-def test_patchify3d_smoke(video: torch.Tensor):
+def test_patchify3d_smoke(video: dict[str, torch.Tensor]):
     """
     Smoke test for Patchify3D without positional embedding.
 
@@ -103,31 +107,43 @@ def test_patchify3d_smoke(video: torch.Tensor):
     patchifier = Patchify3D(patch_size=16, tubelet_size=2, use_pos_embed=False)
     patches = patchifier(video)
     grid_h, grid_w, expected_channels = (
-        video.shape[1] // 16,
-        video.shape[2] // 16,
-        16 * 16 * video.shape[3],
+        video["video"].shape[1] // 16,
+        video["video"].shape[2] // 16,
+        16 * 16 * video["video"].shape[3],
     )
     # expected output shape: (T, grid_h, grid_w, patch_pixels)
-    assert patches.shape == (video.shape[0], grid_h, grid_w, expected_channels)
+    assert patches["patched_video"].shape == (
+        video["video"].shape[0],
+        grid_h,
+        grid_w,
+        expected_channels,
+    )
 
 
-def test_patchify3d_with_pos_embed(video: torch.Tensor, patchifier_3d: Patchify3D):
+def test_patchify3d_with_pos_embed(
+    video: dict[str, torch.Tensor], patchifier_3d: Patchify3D
+):
     """
     Test Patchify3D with positional embedding enabled (default fixture).
 
     Checks that the patchified video has the expected grid and patch dimensions.
     """
     patches = patchifier_3d(video)
-    grid_h = video.shape[1] // 16
-    grid_w = video.shape[2] // 16
-    expected_channels = 16 * 16 * video.shape[3]
-    assert patches.shape == (video.shape[0], grid_h, grid_w, expected_channels)
+    grid_h = video["video"].shape[1] // 16
+    grid_w = video["video"].shape[2] // 16
+    expected_channels = 16 * 16 * video["video"].shape[3]
+    assert patches["patched_video"].shape == (
+        video["video"].shape[0],
+        grid_h,
+        grid_w,
+        expected_channels,
+    )
 
 
 def test_patchify3d_invalid_temporal(patchifier_3d: Patchify3D):
     """Verify that Patchify3D raises an assertion when the temporal dimension is not divisible by the tubelet size."""
     # time dimension is not divislbe by tubelet size (15 % 2 != 0)
-    bad_video = torch.randn(15, 224, 224, 3)
+    bad_video = {"video": torch.randn(15, 224, 224, 3)}
     with pytest.raises(AssertionError):
         patchifier_3d(bad_video)
 
@@ -145,7 +161,7 @@ def test_tube_mask_on_patchified_video(tube_mask_half_1x1: TubeMask):
     the kept and masked patches sum to the total number of grid patches.
     """
     T, grid_h, grid_w, channels = 16, 14, 14, 768
-    patchified_video = torch.randn(T, grid_h, grid_w, channels)
+    patchified_video = {"patched_video": torch.randn(T, grid_h, grid_w, channels)}
     kept, mask_keep, masked, mask_discard = tube_mask_half_1x1(patchified_video)
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
@@ -166,7 +182,7 @@ def test_tube_mask_on_patchified_image(tube_mask_half_1x1: TubeMask):
     image-like into a video with temporal dimension of 1.
     """
     grid_h, grid_w, channels = 14, 14, 768
-    patchified_image = torch.randn(grid_h, grid_w, channels)
+    patchified_image = {"image": torch.randn(grid_h, grid_w, channels)}
     kept, mask_keep, masked, mask_discard = tube_mask_half_1x1(patchified_image)
     total_patches = grid_h * grid_w
     # for an image input, outputs are squeezed to 2D tensors (N, C)
@@ -183,10 +199,10 @@ def test_tube_mask_invalid_dimensions(tube_mask_half_1x1: TubeMask):
 
     Checks that TubeMask raises an AssertionError.
     """
-    bad_input = torch.randn(224, 224)
+    bad_input = {"image": torch.randn(224, 224)}
     with pytest.raises(AssertionError):
         tube_mask_half_1x1(bad_input)
-    bad_input = torch.randn(16, 224, 224, 3, 1)
+    bad_input = {"video": torch.randn(16, 224, 224, 3, 1)}
     with pytest.raises(AssertionError):
         tube_mask_half_1x1(bad_input)
 
