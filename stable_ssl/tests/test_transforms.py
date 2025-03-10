@@ -194,7 +194,7 @@ def test_tube_mask_on_patchified_image(tube_mask_half_1x1: TubeMask):
     output_dict = tube_mask_half_1x1(patchified_image)
     kept = output_dict["masked_patched_image_keep"]
     masked = output_dict["masked_patched_image_discard"]
-    
+
     total_patches = grid_h * grid_w
     # for an image input, outputs are squeezed to 2D tensors (N, C)
     assert kept.ndim == 2
