@@ -194,6 +194,7 @@ def test_tube_mask_on_patchified_image(tube_mask_half_1x1: TubeMask):
     output_dict = tube_mask_half_1x1(patchified_image)
     kept = output_dict["masked_patched_image_keep"]
     masked = output_dict["masked_patched_image_discard"]
+    
     total_patches = grid_h * grid_w
     # for an image input, outputs are squeezed to 2D tensors (N, C)
     assert kept.ndim == 2
@@ -235,6 +236,7 @@ def test_multiblock3d_mask_on_patchified_video(multi_block_3d_mask: MultiBlock3D
     output_dict = multi_block_3d_mask(patchified_video)
     kept = output_dict["masked_patched_video_keep"]
     masked = output_dict["masked_patched_video_discard"]
+
     total_patches = grid_h * grid_w
     assert kept.shape[0] == T
     assert masked.shape[0] == T
@@ -259,6 +261,7 @@ def test_multiblock3d_mask_on_patchified_image(multi_block_3d_mask: MultiBlock3D
     output_dict = multi_block_3d_mask(patchified_image)
     kept = output_dict["masked_patched_image_keep"]
     masked = output_dict["masked_patched_image_discard"]
+
     total_patches = grid_h * grid_w
     assert kept.ndim == 2
     assert masked.ndim == 2
@@ -277,5 +280,6 @@ def test_multiblock3d_mask_invalid_dimensions(multi_block_3d_mask: MultiBlock3DM
     with pytest.raises(AssertionError):
         multi_block_3d_mask(bad_input)
     bad_input = {"patched_video": torch.randn(16, 224, 224, 3, 1)}
+
     with pytest.raises(AssertionError):
         multi_block_3d_mask(bad_input)

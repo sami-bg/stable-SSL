@@ -11,6 +11,7 @@ from stable_ssl.utils import warn_once
 
 #### NOTE All of these are slightly modified versions of what's in the JEPA repo.
 #### NOTE These should all be removed.
+
 def get_3d_sincos_pos_embed(
     embed_dim,
     grid_height,
@@ -304,7 +305,7 @@ class Patchify3D(nn.Module):
 
     def __call__(self, input: dict) -> dict:
         assert self.video_key in input
-        video_thwc: torch.Tensor = input[self.video_key]
+        video_thwc: torch.Tensor = input[self.video_key
         T, H, W, C = video_thwc.shape
 
         timesteps: int = T // self.tubelet_size
