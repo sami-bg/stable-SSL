@@ -21,14 +21,14 @@ def video() -> dict[str, torch.Tensor]:
 
 @pytest.fixture(scope="module")
 def patchifier_2d() -> Patchify2D:
-    """Return a default 2D patchifier with positional embedding enabled."""
-    return Patchify2D(patch_size=16, use_pos_embed=True)
+    """Return a default 2D patchifier."""
+    return Patchify2D(patch_size=16)
 
 
 @pytest.fixture(scope="module")
 def patchifier_3d() -> Patchify3D:
-    """Return a default 3D patchifier with tubelet_size=2 and positional embedding enabled."""
-    return Patchify3D(patch_size=16, tubelet_size=2, use_pos_embed=True)
+    """Return a default 3D patchifier with tubelet_size=2."""
+    return Patchify3D(patch_size=16, tubelet_size=2)
 
 
 @pytest.fixture(scope="module")
@@ -53,36 +53,18 @@ def multi_block_3d_mask() -> MultiBlock3DMask:
 # -----------------------------------------------------------------------------
 # PATCHIFY2D TESTS
 # -----------------------------------------------------------------------------
-def test_patchify2d_smoke(image: dict[str, torch.Tensor]):
+def test_patchify2d_smoke(image: dict[str, torch.Tensor], patchifier_2d: Patchify2D):
     """
-    Smoke test for Patchify2D without positional embedding.
+    Smoke test for Patchify2D.
 
-    This test instantiates a local patchifier with use_pos_embed=False.
+    Instantiates a local patchifier.
     """
-    patchifier_no_posembed = Patchify2D(patch_size=16, use_pos_embed=False)
-    patches = patchifier_no_posembed(image)
+    patches = patchifier_2d(image)
     assert "patched_image" in patches
     grid_h, grid_w, expected_channels = (
         image["image"].shape[0] // 16,  # 14
         image["image"].shape[1] // 16,  # 14
         16 * 16 * image["image"].shape[2],  # 768
-    )
-    assert patches["patched_image"].shape == (grid_h, grid_w, expected_channels)
-
-
-def test_patchify2d_with_pos_embed(
-    image: dict[str, torch.Tensor], patchifier_2d: Patchify2D
-):
-    """
-    Test Patchify2D with positional embedding enabled (default fixture).
-
-    Verifies that the output shape matches the expected grid and flattened patch size.
-    """
-    patches = patchifier_2d(image)
-    grid_h, grid_w, expected_channels = (
-        image["image"].shape[0] // 16,
-        image["image"].shape[1] // 16,
-        16 * 16 * image["image"].shape[2],
     )
     assert patches["patched_image"].shape == (grid_h, grid_w, expected_channels)
 
@@ -98,40 +80,19 @@ def test_patchify2d_invalid_shape(patchifier_2d: Patchify2D):
 # -----------------------------------------------------------------------------
 # PATCHIFY3D TESTS
 # -----------------------------------------------------------------------------
-def test_patchify3d_smoke(video: dict[str, torch.Tensor]):
+def test_patchify3d_smoke(video: dict[str, torch.Tensor], patchifier_3d: Patchify3D):
     """
-    Smoke test for Patchify3D without positional embedding.
+    Smoke test for Patchify3D.
 
-    Instantiates a local patchifier with use_pos_embed=False.
+    Instantiates a local patchifier.
     """
-    patchifier = Patchify3D(patch_size=16, tubelet_size=2, use_pos_embed=False)
-    patches = patchifier(video)
+    patches = patchifier_3d(video)
     grid_h, grid_w, expected_channels = (
         video["video"].shape[1] // 16,
         video["video"].shape[2] // 16,
         16 * 16 * video["video"].shape[3],
     )
     # expected output shape: (T, grid_h, grid_w, patch_pixels)
-    assert patches["patched_video"].shape == (
-        video["video"].shape[0],
-        grid_h,
-        grid_w,
-        expected_channels,
-    )
-
-
-def test_patchify3d_with_pos_embed(
-    video: dict[str, torch.Tensor], patchifier_3d: Patchify3D
-):
-    """
-    Test Patchify3D with positional embedding enabled (default fixture).
-
-    Checks that the patchified video has the expected grid and patch dimensions.
-    """
-    patches = patchifier_3d(video)
-    grid_h = video["video"].shape[1] // 16
-    grid_w = video["video"].shape[2] // 16
-    expected_channels = 16 * 16 * video["video"].shape[3]
     assert patches["patched_video"].shape == (
         video["video"].shape[0],
         grid_h,
