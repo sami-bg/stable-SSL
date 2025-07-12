@@ -4,11 +4,12 @@ import shutil
 
 def test_simple_writer():
     import lightning as pl
-    import optimalssl as ossl
     import torch
     import torchmetrics
-    from optimalssl.data import transforms
     from transformers import AutoConfig, AutoModelForImageClassification
+
+    import stable_ssl as ossl
+    from stable_ssl.data import transforms
 
     # without transform
     mean = [0.485, 0.456, 0.406]

@@ -15,7 +15,7 @@ Self Supervised Learning (SSL) is the last frontier of AI. But quick experimenta
 
 ## How?
 
-To reach flexibility, scalability and stability, we rely on battle-tested third party libraries: `PyTorch`, `Lightning`, `HuggingFace`, `TorchMetrics` amongst a few others. Those dependencies allow us to focus on one thing: assmebling everything into a powerful SSL research framework. ``stable-ssl`` adopts a flexible and modular design for seamless integration of components from external libraries, including architectures, loss functions, evaluation metrics, and augmentations.
+To reach flexibility, scalability and stability, we rely on battle-tested third party libraries: `PyTorch`, `Lightning`, `HuggingFace`, `TorchMetrics` amongst a few others. Those dependencies allow us to focus on one thing: assembling everything into a powerful SSL research framework. ``stable-ssl`` adopts a flexible and modular design for seamless integration of components from external libraries, including architectures, loss functions, evaluation metrics, and augmentations.
 
 ## Log log log, monitor monitor monitor!
 
@@ -35,12 +35,12 @@ The key to SSL research is to log and monitor everything. This is what we bring 
         transform=train_transform,
     )
     ```
-    if it already exists on the Hub, otherwise you can wrap your own dataset into a HF dataset. **Why?** Imposing that format ensures consistent behavior (each sample is a dictionnary) and leverage powerful utilities from the `datasets` package. Once datasets (train et al.) are created, they can be used as-is with `torch.utils.data.DataLoader`. However we recommend putting them into our `DataModule` e.g.
+    if it already exists on the Hub, otherwise you can wrap your own dataset into a HF dataset. **Why?** Imposing that format ensures consistent behavior (each sample is a dictionary) and leverage powerful utilities from the `datasets` package. Once datasets (train et al.) are created, they can be used as-is with `torch.utils.data.DataLoader`. However we recommend putting them into our `DataModule` e.g.
     ```
     datamodule = ssl.data.DataModule(train=train_dataset, val=val_dataset, ...)
     ```
     to ensure precise logging and easy debugging.
-2. **module, models, forward**: the overall orchestration leverages `ssl.Module` which inherits from `lightning.LightningModule`. We provide all the basic required utilites (optimizer/scheduler creation etc). So the only required implementation for the user is the `forward` method, for example a supervised learning run would define
+2. **module, models, forward**: the overall orchestration leverages `ssl.Module` which inherits from `lightning.LightningModule`. We provide all the basic required utilities (optimizer/scheduler creation etc). So the only required implementation for the user is the `forward` method, for example a supervised learning run would define
     ```
     def forward(self, batch, stage):
         batch["embedding"] = self.backbone(batch["image"])["logits"]
@@ -49,7 +49,7 @@ The key to SSL research is to log and monitor everything. This is what we bring 
             batch["loss"] = torch.nn.functional.cross_entropy(preds, batch["label"])
         return batch
     ```
-    the `forward` method takes in a dictionnary (`batch` from the data loader) and should return a dictionnary. If any module has to be trained, then a `loss` key must be present. Further customization can be done (see the `examples`) ensuring that any desired behavior can be achieved. The `self` is a LightningModule with any attribute passed during module creation:
+    the `forward` method takes in a dictionary (`batch` from the data loader) and should return a dictionary. If any module has to be trained, then a `loss` key must be present. Further customization can be done (see the `examples`) ensuring that any desired behavior can be achieved. The `self` is a LightningModule with any attribute passed during module creation:
     ```
     config = AutoConfig.from_pretrained("microsoft/resnet-18")
     backbone = ViT(512)
@@ -202,7 +202,7 @@ The library is not yet available on PyPI. You can install it from the source cod
     ```
     conda create -n my_env python=3.11
     ```
-    with your environment name (here `my_env`) and your favorite Python version (here, `3.11`). Once completed, make sure to activate your environment (`conda activate my_env`) before proceding to the next steps!
+    with your environment name (here `my_env`) and your favorite Python version (here, `3.11`). Once completed, make sure to activate your environment (`conda activate my_env`) before proceeding to the next steps!
   </details>
 
 2. Pytorch and our library (we recommend using `uv` for quicker package management):
@@ -242,7 +242,7 @@ The library is not yet available on PyPI. You can install it from the source cod
     2. <details>
         <summary>Install the Tex compiler (optional, if not available on your system)</summary>
 
-        - install texlive locally following https://tug.org/texlive/quickinstall.html#running where you can use `-texdir your_path` to install to a local path (so you don't need sudo priviledges)
+        - install texlive locally following https://tug.org/texlive/quickinstall.html#running where you can use `-texdir your_path` to install to a local path (so you don't need sudo privileges)
         - follow the instructions at the end of the installation to edit the PATH variables, you can edit that variable for a conda environment with `conda env config vars set PATH=$PATH`
         - make sure inside the conde environment that you point to the right binaries e.g. `whereis latex` and `whereis mktexfmt`
         - If at some point there is an error that the file `latex.fmt` is not found. You can generate it with
