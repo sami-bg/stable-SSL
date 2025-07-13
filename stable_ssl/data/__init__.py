@@ -9,7 +9,9 @@ from .utils import (
     FromTorchDataset,
     HFDataset,
     MinariStepsDataset,
+    Subset,
     fold_views,
+    random_split,
 )
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     fold_views,
     FromTorchDataset,
     MinariStepsDataset,
+    Subset,
+    random_split,
 ]

@@ -5,8 +5,11 @@ from random import seed as rseed
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+import PIL.Image
 import torch
+import torchvision
 from PIL import ImageFilter
+from torchvision import tv_tensors
 from torchvision.transforms import v2
 from torchvision.transforms.functional import InterpolationMode
 from torchvision.transforms.v2 import functional as F
@@ -14,6 +17,25 @@ from torchvision.transforms.v2._utils import query_chw
 
 
 class Transform(v2.Transform):
+    def nested_get(self, v, name):
+        if name == "":
+            return v
+        i = name.split(".")
+        if i[0].isnumeric():
+            i[0] = int(i[0])
+        return self.nested_get(v[i[0]], ".".join(i[1:]))
+
+    def nested_set(self, original, value, name):
+        if "." not in name:
+            if name.isnumeric():
+                name = int(name)
+            original[name] = value
+        else:
+            i = name.split(".")
+            if i[0].isnumeric():
+                i[0] = int(i[0])
+            return self.nested_set(original[i[0]], value, ".".join(i[1:]))
+
     def get_name(self, x):
         base = self.name
         assert "_" not in base
@@ -31,7 +53,25 @@ class Transform(v2.Transform):
     # def __call__(self, x):
 
 
-class ToImage:
+@torch.jit.unused
+def to_image(
+    inpt: Union[torch.Tensor, PIL.Image.Image, np.ndarray],
+) -> tv_tensors.Image:
+    """See :class:`~torchvision.transforms.v2.ToImage` for details."""
+    if isinstance(inpt, np.ndarray):
+        output = torch.from_numpy(np.atleast_3d(inpt)).transpose(-3, -1).contiguous()
+    elif isinstance(inpt, PIL.Image.Image):
+        output = torchvision.transforms.functional.pil_to_tensor(inpt)
+    elif isinstance(inpt, torch.Tensor):
+        output = inpt
+    else:
+        raise TypeError(
+            f"Input can either be a pure Tensor, a numpy array, or a PIL image, but got {type(inpt)} instead."
+        )
+    return tv_tensors.Image(output)
+
+
+class ToImage(Transform):
     def __init__(
         self,
         dtype=torch.float32,
@@ -41,7 +81,8 @@ class ToImage:
         source: str = "image",
         target: str = "image",
     ):
-        t = [v2.ToImage(), v2.ToDtype(dtype, scale=scale)]
+        super().__init__()
+        t = [to_image, v2.ToDtype(dtype, scale=scale)]
         if mean is not None and std is not None:
             t.append(v2.Normalize(mean=mean, std=std))
         self.t = v2.Compose(t)
@@ -49,7 +90,7 @@ class ToImage:
         self.target = target
 
     def __call__(self, x):
-        x[self.target] = self.t(x[self.source])
+        self.nested_set(x, self.t(self.nested_get(x, self.source)), self.target)
         return x
 
 
@@ -67,9 +108,13 @@ class RandomGrayscale(Transform, v2.RandomGrayscale):
         if self.p < 1 and torch.rand(1) >= self.p:
             x[self.get_name(x)] = False
             return x
-        channels, *_ = query_chw([x[self.source]])
-        x[self.target] = F.rgb_to_grayscale(
-            x[self.source], num_output_channels=channels
+        channels, *_ = query_chw([self.nested_get(x, self.source)])
+        self.nested_set(
+            x,
+            F.rgb_to_grayscale(
+                self.nested_get(x, self.source), num_output_channels=channels
+            ),
+            self.target,
         )
         x[self.get_name(x)] = True
         return x
@@ -85,7 +130,9 @@ class RandomSolarize(Transform, v2.RandomSolarize):
         if self.p < 1 and torch.rand(1) >= self.p:
             x[self.get_name(x)] = False
             return x
-        x[self.target] = F.solarize(x[self.source], self.threshold)
+        self.nested_set(
+            x, F.solarize(self.nested_get(x, self.source), self.threshold), self.target
+        )
         x[self.get_name(x)] = True
         return x
 
@@ -111,7 +158,9 @@ class GaussianBlur(Transform, v2.GaussianBlur):
             x[self.get_name(x)] = torch.zeros((2,))
             return x
         params = self.make_params([])
-        x["image"] = self.transform(x["image"], params)
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), params), self.target
+        )
         x[self.get_name(x)] = torch.Tensor(params["sigma"])
         return x
 
@@ -149,7 +198,13 @@ class PILGaussianBlur(Transform):
             return x
         sigma = torch.rand((1,)) * (self.sigma[1] - self.sigma[1]) + self.sigma[0]
         x[self.get_name(x)] = sigma
-        x["image"] = x["image"].filter(ImageFilter.GaussianBlur(radius=sigma.item()))
+        self.nested_set(
+            x,
+            self.nested_get(x, self.source).filter(
+                ImageFilter.GaussianBlur(radius=sigma.item())
+            ),
+            self.target,
+        )
         return x
 
 
@@ -175,7 +230,9 @@ class UniformTemporalSubsample(Transform):
         self.target = target
 
     def forward(self, x: dict) -> torch.Tensor:
-        x[self.target] = super().forward(self, x[self.source])
+        self.nested_set(
+            x, super().forward(self, self.nested_get(x, self.source)), self.target
+        )
         return x
 
 
@@ -187,7 +244,7 @@ class RandomContiguousTemporalSampler(Transform):
         self.frame_subsampling = frame_subsampling
 
     def __call__(self, x):
-        metadata = x[self.source].get_metadata()
+        metadata = self.nested_get(x, self.source).get_metadata()
         T = int(metadata["video"]["duration"][0] * metadata["video"]["fps"][0])
         covering = self.num_frames * self.frame_subsampling
         start = torch.randint(low=0, high=T - covering, size=(1,)).item()
@@ -196,13 +253,14 @@ class RandomContiguousTemporalSampler(Transform):
         # Seek and return frames
         count = 0
         for frame in islice(
-            x[self.source].seek(start / metadata["video"]["fps"][0]), covering
+            self.nested_get(x, self.source).seek(start / metadata["video"]["fps"][0]),
+            covering,
         ):
             if count % self.frame_subsampling == 0:
                 video_frames.append(frame["data"])
             count += 1
         # Stack it into a tensor
-        x[self.target] = torch.stack(video_frames, 0)
+        self.nested_set(x, torch.stack(video_frames, 0), self.target)
         x[self.get_name(x)] = start
         return x
 
@@ -214,7 +272,9 @@ class RGB(Transform, v2.RGB):
         self.target = target
 
     def __call__(self, x):
-        x[self.target] = F.grayscale_to_rgb(x[self.source])
+        self.nested_set(
+            x, F.grayscale_to_rgb(self.nested_get(x, self.source)), self.target
+        )
         return x
 
 
@@ -233,7 +293,9 @@ class Resize(Transform, v2.Resize):
         self.target = target
 
     def __call__(self, x):
-        x[self.target] = self.transform(x[self.source], [])
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), []), self.target
+        )
         return x
 
 
@@ -258,14 +320,19 @@ class ColorJitter(Transform, v2.ColorJitter):
             x[self.get_name(x)] = torch.zeros(8)
             return x
         params = self.make_params([])
-        x[self.target] = self.transform(x[self.source], params)
+        x[self.target] = self.transform(self.nested_get(x, self.source), params)
         brightness_factor = params["brightness_factor"]
         contrast_factor = params["contrast_factor"]
         saturation_factor = params["saturation_factor"]
         hue_factor = params["hue_factor"]
         perm = params["fn_idx"].tolist()
-        x[self.get_name(x)] = torch.Tensor(
-            [brightness_factor, contrast_factor, saturation_factor, hue_factor] + perm
+        self.nested_set(
+            x,
+            torch.Tensor(
+                [brightness_factor, contrast_factor, saturation_factor, hue_factor]
+                + perm
+            ),
+            self.target,
         )
         return x
 
@@ -287,7 +354,9 @@ class RandomRotation(Transform, v2.RandomRotation):
 
     def __call__(self, x):
         angle = self.make_params([])
-        x[self.target] = self.transform(x[self.source], angle)
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), angle), self.target
+        )
         x[self.get_name(x)] = angle
         return x
 
@@ -299,9 +368,11 @@ class RandomChannelPermutation(Transform, v2.RandomChannelPermutation):
         self.target = target
 
     def __call__(self, x) -> Any:
-        num_channels, *_ = query_chw([x[self.source]])
+        num_channels, *_ = query_chw([self.nested_get(x, self.source)])
         perm = torch.randperm(num_channels)
-        x[self.target] = F.permute_channels(x[self.source], perm)
+        self.nested_set(
+            x, F.permute_channels(self.nested_get(x, self.source), perm), self.target
+        )
         x[self.get_name(x)] = perm
         return x
 
@@ -324,8 +395,10 @@ class RandomCrop(Transform, v2.RandomCrop):
         self.target = target
 
     def __call__(self, x):
-        params = self.make_params([x[self.source]])
-        x[self.target] = self.transform(x[self.source], params)
+        params = self.make_params([self.nested_get(x, self.source)])
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), params), self.target
+        )
         values = []
         values.append(params["needs_crop"])
         values.append(params["top"])
@@ -346,10 +419,12 @@ class RandomHorizontalFlip(Transform, v2.RandomHorizontalFlip):
 
     def __call__(self, x) -> Any:
         if self.p > 0 and torch.rand(1) < self.p:
-            x[self.target] = F.horizontal_flip(x[self.source])
+            self.nested_set(
+                x, F.horizontal_flip(self.nested_get(x, self.source)), self.target
+            )
             x[self.get_name(x)] = True
         else:
-            x[self.target] = x[self.source]
+            self.nested_set(x, self.nested_get(x, self.source), self.target)
             x[self.get_name(x)] = False
         return x
 
@@ -372,8 +447,10 @@ class RandomResizedCrop(Transform, v2.RandomResizedCrop):
         self.target = target
 
     def __call__(self, x):
-        params = self.make_params([x[self.source]])
-        x[self.target] = self.transform(x[self.source], params)
+        params = self.make_params([self.nested_get(x, self.source)])
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), params), self.target
+        )
         values = []
         values.append(params["top"])
         values.append(params["left"])
@@ -392,7 +469,9 @@ class CenterCrop(Transform, v2.CenterCrop):
         self.target = target
 
     def __call__(self, x):
-        x[self.target] = self.transform(x[self.source], [])
+        self.nested_set(
+            x, self.transform(self.nested_get(x, self.source), []), self.target
+        )
         return x
 
 
