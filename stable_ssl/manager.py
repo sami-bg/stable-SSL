@@ -19,19 +19,14 @@ from .utils import get_required_fn_parameters
 
 
 class Manager(submitit.helpers.Checkpointable):
-    """_summary_
-    Args:
-        trainer (Union[dict, DictConfig, pl.Trainer]): _description_
-        module (Union[dict, DictConfig, pl.LightningModule]): _description_
-        data (Union[dict, DictConfig, pl.LightningDataModule]): _description_
-        seed (int, optional): _description_. Defaults to None.
-        ckpt_path (str, optional): _description_. Defaults to None.
+    """Manages training with logging, scheduling, and checkpointing support.
 
-    Raises
-    ------
-        ValueError: _description_
-        ValueError: _description_
-        ValueError: _description_
+    Args:
+        trainer (Union[dict, DictConfig, pl.Trainer]): PyTorch Lightning trainer configuration or instance.
+        module (Union[dict, DictConfig, pl.LightningModule]): Lightning module configuration or instance.
+        data (Union[dict, DictConfig, pl.LightningDataModule]): Data module configuration or instance.
+        seed (int, optional): Random seed for reproducibility. Defaults to None.
+        ckpt_path (str, optional): Path to checkpoint for resuming training. Defaults to None.
     """
 
     def __init__(
