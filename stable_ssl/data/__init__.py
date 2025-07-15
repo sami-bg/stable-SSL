@@ -11,6 +11,8 @@ from .utils import (
     HFDataset,
     MinariStepsDataset,
     Subset,
+    bulk_download,
+    download,
     fold_views,
     random_split,
 )
@@ -33,4 +35,6 @@ __all__ = [
     Subset,
     random_split,
     GMM,
+    download,
+    bulk_download,
 ]
