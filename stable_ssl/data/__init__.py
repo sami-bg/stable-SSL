@@ -3,6 +3,7 @@ from .collate import Collator
 from .module import DataModule
 from .sampler import RandomBatchSampler, RepeatedRandomSampler, SupervisedBatchSampler
 from .utils import (
+    GMM,
     Categorical,
     ExponentialMixtureNoiseModel,
     ExponentialNormalNoiseModel,
@@ -31,4 +32,5 @@ __all__ = [
     MinariStepsDataset,
     Subset,
     random_split,
+    GMM,
 ]
