@@ -714,24 +714,45 @@ class Compose(v2.Transform):
 
 
 class MultiBlockMask(Transform):
-    """Transform that adds block masks to batch."""
+    """Transform that adds multi-block masks to batch.
     
-    def __init__(self, patch_size=16, mask_ratio=0.75):
+    Args:
+        patch_size: Size of the patch in patches
+        num_blocks: Number of blocks to sample
+        context_scale: Scale of the context block
+        aspect_ratio: Aspect ratio of the blocks
+        min_keep: Minimum number of patches that must be in the block
+    
+    """
+    
+    def __init__(self,
+        patch_size=16,
+        num_blocks=1,
+        context_scale=(0.85, 1.0),
+        aspect_ratio=(0.75, 1.5),
+        min_keep=10,
+    ):
         super().__init__()
         self.patch_size = patch_size
-        self.mask_ratio = mask_ratio
+        self.num_blocks = num_blocks
+        self.context_scale = context_scale
+        self.aspect_ratio = aspect_ratio
+        self.min_keep = min_keep
         
     def __call__(self, x):
         H, W = x["image"].shape[-2:]
-        mask = multi_block_mask(
+        mask_context, mask_target = multi_block_mask(
             H // self.patch_size,
             W // self.patch_size,
-            self.mask_ratio,
+            num_blocks=self.num_blocks,
+            context_scale=self.context_scale,
+            aspect_ratio=self.aspect_ratio,
+            min_keep=self.min_keep,
         )
-        x["mask"] = mask
+        x["mask_context"] = mask_context
+        x["mask_target"] = mask_target
         # Mask ratio that was actually sampled (since it's not exact)
-        sample_mask_ratio = mask.sum().item() / mask.numel()
-        x[self.get_name(x)] = torch.tensor([self.mask_ratio, sample_mask_ratio])
+        x[self.get_name(x)] = mask_target.sum() / (mask_context.numel() + mask_target.numel())
         return x
 
 
