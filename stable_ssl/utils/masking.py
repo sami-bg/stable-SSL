@@ -62,8 +62,8 @@ def _sample_block_mask(
     
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
-            - mask: Binary tensor indices of masked patches (flattened)
-            - mask_complement: Binary tensor where 1 = available for future blocks
+            - mask: Binary tensor indices of patches exposed to encoder (1 = masked, 0 = visible)
+            - pred_mask: Binary tensor where of combined target block masks to be predicted (1 = masked, 0 = visible)
     """
     h, w = block_size
     height, width = image_size
@@ -90,7 +90,7 @@ def multi_block_mask(
     target_scale: Tuple[float, float] = (0.15, 0.2),  # -- pred mask scale
     aspect_ratio: Tuple[float, float] = (0.75, 1.5),
     min_keep: int = 1,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Generate block mask(s) for an image.
     
     Args:
@@ -100,10 +100,11 @@ def multi_block_mask(
         num_blocks: Number of mask blocks
         aspect_ratio: (min, max) aspect ratio for blocks
         min_keep: Minimum patches to keep unmasked
-        generator: For reproducibility
         
     Returns:
-        Binary mask of shape (height, width) where 1 = masked, 0 = visible
+        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            - Binary tensor indices of patches exposed to encoder (1 = masked, 0 = visible)
+            - Binary tensor where of combined target block masks to be predicted (1 = masked, 0 = visible)
     """
     min_scale, max_scale = context_scale
     # No aspect ratio for the context block
@@ -134,197 +135,198 @@ def multi_block_mask(
         )]
 
     # NOTE Since 1 == discard and 0 == keep, combining masks is an OR operation
-    combined_mask = (1 - mask_enc).clone()
+    combined_pred_mask = masks_pred[0].clone()
     for mask in masks_pred[1:]:
-        combined_mask = torch.logical_or(combined_mask, mask)
+        combined_pred_mask |= mask
+
+    # Remove all target masks from the context
+    compliment_mask_enc = mask_enc.clone()
+    compliment_mask_enc &= ~combined_pred_mask
 
     # -- Return masks
-    return mask_enc, masks_pred, combined_mask
+    return compliment_mask_enc, combined_pred_mask#, masks_pred
 
-def visualize_masking_strategy(height=14, width=14, num_examples=6, save_path="ijepa_masking_visualization.png"):
-    """
-    Visualize the I-JEPA masking strategy with multiple examples.
-    
-    Args:
-        height: Image height in patches
-        width: Image width in patches  
-        num_examples: Number of masking examples to show
-        save_path: Path to save the visualization
-    """
-    
-    fig, axes = plt.subplots(2, num_examples, figsize=(3*num_examples, 6))
-    if num_examples == 1:
-        axes = axes.reshape(2, 1)
-    
-    # Set random seed for reproducible examples
-    torch.manual_seed(42)
-    
-    for i in range(num_examples):
-        # Generate masks
-        context_mask, target_masks, combined_mask = multi_block_mask(
-            height, width,
-            num_blocks=4,
-            context_scale=(0.85, 1.0),
-            target_scale=(0.15, 0.2),
-            aspect_ratio=(0.75, 1.5)
-        )
-        
-        # Convert to numpy for visualization
-        context_np = context_mask.numpy()
-        combined_np = combined_mask.numpy()
-        
-        # Create visualization grids
-        vis_grid_separate = np.zeros((height, width))
-        vis_grid_combined = np.zeros((height, width))
-        
-        # Color coding: 0=visible, 1=context, 2-5=targets 1-4
-        # For separate visualization
-        vis_grid_separate[context_np == 1] = 1  # Context in blue
-        for j, target_mask in enumerate(target_masks):
-            target_np = target_mask.numpy()
-            vis_grid_separate[target_np == 1] = j + 2  # Targets in different colors
-        
-        # For combined visualization  
-        vis_grid_combined[combined_np == 1] = 1  # All masked regions
-        
-        # Plot separate masks (context + targets)
-        ax1 = axes[0, i]
-        colors = ['white', 'lightblue', 'red', 'orange', 'green', 'purple']
-        cmap = ListedColormap(colors[:6])
-        im1 = ax1.imshow(vis_grid_separate, cmap=cmap, vmin=0, vmax=5)
-        ax1.set_title(f'Example {i+1}: Context + Targets', fontsize=10)
-        ax1.set_xticks(range(0, width, 2))
-        ax1.set_yticks(range(0, height, 2))
-        ax1.grid(True, alpha=0.3)
-        
-        # Add grid lines for patches
-        for x in range(width + 1):
-            ax1.axvline(x - 0.5, color='gray', linewidth=0.5, alpha=0.5)
-        for y in range(height + 1):
-            ax1.axhline(y - 0.5, color='gray', linewidth=0.5, alpha=0.5)
-        
-        # Plot combined mask
-        ax2 = axes[1, i]
-        cmap_combined = ListedColormap(['white', 'black'])
-        im2 = ax2.imshow(vis_grid_combined, cmap=cmap_combined, vmin=0, vmax=1)
-        ax2.set_title(f'Combined Mask', fontsize=10)
-        ax2.set_xticks(range(0, width, 2))
-        ax2.set_yticks(range(0, height, 2))
-        ax2.grid(True, alpha=0.3)
-        
-        # Add grid lines for patches
-        for x in range(width + 1):
-            ax2.axvline(x - 0.5, color='gray', linewidth=0.5, alpha=0.5)
-        for y in range(height + 1):
-            ax2.axhline(y - 0.5, color='gray', linewidth=0.5, alpha=0.5)
-    
-    # Add legend
-    legend_elements = [
-        patches.Patch(color='white', label='Visible patches'),
-        patches.Patch(color='lightblue', label='Context block'),
-        patches.Patch(color='red', label='Target block 1'),
-        patches.Patch(color='orange', label='Target block 2'),
-        patches.Patch(color='green', label='Target block 3'),
-        patches.Patch(color='purple', label='Target block 4')
-    ]
-    
-    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.5, 0.02), ncol=6, fontsize=10)
-    
-    plt.suptitle('I-JEPA Masking Strategy Visualization\n(Top: Context + Target blocks, Bottom: Combined mask)', 
-                 fontsize=14, y=0.95)
-    plt.tight_layout()
-    plt.subplots_adjust(bottom=0.15, top=0.85)
-    
-    # Save the figure
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Visualization saved to: {save_path}")
-    plt.close()
 
-def analyze_masking_statistics(height=14, width=14, num_samples=1000):
-    """
-    Analyze statistics of the masking strategy.
-    """
-    context_scales = []
-    target_scales = []
-    aspect_ratios = []
+# def visualize_masking_strategy(height=14, width=14, num_examples=6, save_path="ijepa_masking_visualization.png"):
+#     """
+#     Visualize the I-JEPA masking strategy with multiple examples.
     
-    torch.manual_seed(42)
+#     Args:
+#         height: Image height in patches
+#         width: Image width in patches  
+#         num_examples: Number of masking examples to show
+#         save_path: Path to save the visualization
+#     """
     
-    for _ in range(num_samples):
-        context_mask, target_masks, combined_mask = multi_block_mask(
-            height, width,
-            num_blocks=4,
-            context_scale=(0.85, 1.0),
-            target_scale=(0.15, 0.2),
-            aspect_ratio=(0.75, 1.5)
-        )
+#     # Each example shows: context + 4 target blocks = 5 columns total
+#     fig, axes = plt.subplots(num_examples, 5, figsize=(15, 3*num_examples))
+#     if num_examples == 1:
+#         axes = axes.reshape(1, 5)
+    
+#     # Set random seed for reproducible examples
+#     torch.manual_seed(42)
+    
+#     for i in range(num_examples):
+#         # Generate masks - now returns (cleaned_context, combined_targets, individual_targets)
+#         cleaned_context_mask, individual_target_masks = multi_block_mask(
+#             height, width,
+#             num_blocks=4,
+#             context_scale=(0.85, 1.0),
+#             target_scale=(0.15, 0.2),
+#             aspect_ratio=(0.75, 1.5)
+#         )
         
-        total_patches = height * width
-        context_scale = torch.sum(context_mask).item() / total_patches
-        context_scales.append(context_scale)
+#         # Convert to numpy for visualization
+#         context_np = cleaned_context_mask.numpy()
         
-        for target_mask in target_masks:
-            target_scale = torch.sum(target_mask).item() / total_patches
-            target_scales.append(target_scale)
+#         # Column 0: Context mask only
+#         ax = axes[i, 0]
+#         cmap_context = ListedColormap(['white', 'lightblue'])
+#         ax.imshow(context_np, cmap=cmap_context, vmin=0, vmax=1)
+#         ax.set_title('Context' if i == 0 else '', fontsize=10)
+#         ax.set_xticks(range(0, width, 4))
+#         ax.set_yticks(range(0, height, 4))
+#         ax.grid(True, alpha=0.3)
+        
+#         # Add grid lines for patches
+#         for x in range(width + 1):
+#             ax.axvline(x - 0.5, color='gray', linewidth=0.5, alpha=0.5)
+#         for y in range(height + 1):
+#             ax.axhline(y - 0.5, color='gray', linewidth=0.5, alpha=0.5)
+        
+#         # Add row label
+#         if i == 0:
+#             ax.set_ylabel('Example 1', fontsize=12, rotation=0, ha='right', va='center')
+#         else:
+#             ax.set_ylabel(f'Example {i+1}', fontsize=12, rotation=0, ha='right', va='center')
+        
+#         # Columns 1-4: Individual target masks
+#         target_colors = ['red', 'orange', 'green', 'purple']
+#         for j, target_mask in enumerate(individual_target_masks):
+#             ax = axes[i, j+1]
+#             target_np = target_mask.numpy()
             
-            # Calculate aspect ratio of target
-            coords = torch.where(target_mask == 1)
-            if len(coords[0]) > 0:
-                h_extent = coords[0].max() - coords[0].min() + 1
-                w_extent = coords[1].max() - coords[1].min() + 1
-                aspect_ratios.append(h_extent.item() / w_extent.item())
+#             # Create colormap for this target
+#             cmap_target = ListedColormap(['white', target_colors[j]])
+#             ax.imshow(target_np, cmap=cmap_target, vmin=0, vmax=1)
+#             ax.set_title(f'Target {j+1}' if i == 0 else '', fontsize=10)
+#             ax.set_xticks(range(0, width, 4))
+#             ax.set_yticks(range(0, height, 4))
+#             ax.grid(True, alpha=0.3)
+            
+#             # Add grid lines for patches
+#             for x in range(width + 1):
+#                 ax.axvline(x - 0.5, color='gray', linewidth=0.5, alpha=0.5)
+#             for y in range(height + 1):
+#                 ax.axhline(y - 0.5, color='gray', linewidth=0.5, alpha=0.5)
     
-    # Create statistics plot
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+#     # Add legend
+#     legend_elements = [
+#         patches.Patch(color='white', label='Visible patches'),
+#         patches.Patch(color='lightblue', label='Context block'),
+#         patches.Patch(color='red', label='Target block 1'),
+#         patches.Patch(color='orange', label='Target block 2'),
+#         patches.Patch(color='green', label='Target block 3'),
+#         patches.Patch(color='purple', label='Target block 4')
+#     ]
     
-    axes[0].hist(context_scales, bins=30, alpha=0.7, color='lightblue', edgecolor='black')
-    axes[0].set_title('Context Block Scales')
-    axes[0].set_xlabel('Scale (fraction of image)')
-    axes[0].set_ylabel('Frequency')
-    axes[0].axvline(np.mean(context_scales), color='red', linestyle='--', 
-                   label=f'Mean: {np.mean(context_scales):.3f}')
-    axes[0].legend()
+#     fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.5, 0.02), ncol=6, fontsize=10)
     
-    axes[1].hist(target_scales, bins=30, alpha=0.7, color='orange', edgecolor='black')
-    axes[1].set_title('Target Block Scales')
-    axes[1].set_xlabel('Scale (fraction of image)')
-    axes[1].set_ylabel('Frequency')
-    axes[1].axvline(np.mean(target_scales), color='red', linestyle='--',
-                   label=f'Mean: {np.mean(target_scales):.3f}')
-    axes[1].legend()
+#     plt.suptitle('I-JEPA Masking Strategy: Context and Individual Target Blocks', 
+#                  fontsize=14, y=0.95)
+#     plt.tight_layout()
+#     plt.subplots_adjust(bottom=0.12, top=0.88)
     
-    axes[2].hist(aspect_ratios, bins=30, alpha=0.7, color='green', edgecolor='black')
-    axes[2].set_title('Target Block Aspect Ratios')
-    axes[2].set_xlabel('Aspect Ratio (height/width)')
-    axes[2].set_ylabel('Frequency')
-    axes[2].axvline(np.mean(aspect_ratios), color='red', linestyle='--',
-                   label=f'Mean: {np.mean(aspect_ratios):.3f}')
-    axes[2].legend()
-    
-    plt.tight_layout()
-    plt.savefig('ijepa_masking_statistics.png', dpi=300, bbox_inches='tight')
-    print("Statistics saved to: ijepa_masking_statistics.png")
-    plt.close()
-    
-    return {
-        'context_scales': context_scales,
-        'target_scales': target_scales, 
-        'aspect_ratios': aspect_ratios
-    }
+#     # Save the figure
+#     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+#     print(f"Visualization saved to: {save_path}")
+#     plt.close()
 
-if __name__ == "__main__":
-    print("Generating I-JEPA masking visualizations...")
+# def analyze_masking_statistics(height=14, width=14, num_samples=1000):
+#     """
+#     Analyze statistics of the masking strategy.
+#     """
+#     context_scales = []
+#     target_scales = []
+#     aspect_ratios = []
     
-    # Create main visualization
-    visualize_masking_strategy(height=14, width=14, num_examples=8, 
-                             save_path="ijepa_masking_examples.png")
+#     torch.manual_seed(42)
     
-    # Generate statistics
-    stats = analyze_masking_statistics()
+#     for _ in range(num_samples):
+#         cleaned_context_mask, combined_target_mask, individual_target_masks = multi_block_mask(
+#             height, width,
+#             num_blocks=4,
+#             context_scale=(0.85, 1.0),
+#             target_scale=(0.15, 0.2),
+#             aspect_ratio=(0.75, 1.5)
+#         )
+        
+#         total_patches = height * width
+#         context_scale = torch.sum(cleaned_context_mask).item() / total_patches
+#         context_scales.append(context_scale)
+        
+#         for target_mask in individual_target_masks:
+#             target_scale = torch.sum(target_mask).item() / total_patches
+#             target_scales.append(target_scale)
+            
+#             # Calculate aspect ratio of target
+#             coords = torch.where(target_mask == 1)
+#             if len(coords[0]) > 0:
+#                 h_extent = coords[0].max() - coords[0].min() + 1
+#                 w_extent = coords[1].max() - coords[1].min() + 1
+#                 aspect_ratios.append(h_extent.item() / w_extent.item())
     
-    print(f"\nMasking Statistics:")
-    print(f"Context scale - Mean: {np.mean(stats['context_scales']):.3f}, Std: {np.std(stats['context_scales']):.3f}")
-    print(f"Target scale - Mean: {np.mean(stats['target_scales']):.3f}, Std: {np.std(stats['target_scales']):.3f}")
-    print(f"Aspect ratio - Mean: {np.mean(stats['aspect_ratios']):.3f}, Std: {np.std(stats['aspect_ratios']):.3f}")
+#     # Create statistics plot
+#     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     
-    print("\nVisualization complete! Check the generated PNG files.")
+#     axes[0].hist(context_scales, bins=30, alpha=0.7, color='lightblue', edgecolor='black')
+#     axes[0].set_title('Context Block Scales')
+#     axes[0].set_xlabel('Scale (fraction of image)')
+#     axes[0].set_ylabel('Frequency')
+#     axes[0].axvline(np.mean(context_scales), color='red', linestyle='--', 
+#                    label=f'Mean: {np.mean(context_scales):.3f}')
+#     axes[0].legend()
+    
+#     axes[1].hist(target_scales, bins=30, alpha=0.7, color='orange', edgecolor='black')
+#     axes[1].set_title('Target Block Scales')
+#     axes[1].set_xlabel('Scale (fraction of image)')
+#     axes[1].set_ylabel('Frequency')
+#     axes[1].axvline(np.mean(target_scales), color='red', linestyle='--',
+#                    label=f'Mean: {np.mean(target_scales):.3f}')
+#     axes[1].legend()
+    
+#     axes[2].hist(aspect_ratios, bins=30, alpha=0.7, color='green', edgecolor='black')
+#     axes[2].set_title('Target Block Aspect Ratios')
+#     axes[2].set_xlabel('Aspect Ratio (height/width)')
+#     axes[2].set_ylabel('Frequency')
+#     axes[2].axvline(np.mean(aspect_ratios), color='red', linestyle='--',
+#                    label=f'Mean: {np.mean(aspect_ratios):.3f}')
+#     axes[2].legend()
+    
+#     plt.tight_layout()
+#     plt.savefig('ijepa_masking_statistics.png', dpi=300, bbox_inches='tight')
+#     print("Statistics saved to: ijepa_masking_statistics.png")
+#     plt.close()
+    
+#     return {
+#         'context_scales': context_scales,
+#         'target_scales': target_scales, 
+#         'aspect_ratios': aspect_ratios
+#     }
+
+# if __name__ == "__main__":
+#     print("Generating I-JEPA masking visualizations...")
+    
+#     # Create main visualization
+#     visualize_masking_strategy(height=14, width=14, num_examples=8, 
+#                              save_path="ijepa_masking_examples.png")
+    
+#     # Generate statistics
+#     stats = analyze_masking_statistics()
+    
+#     print(f"\nMasking Statistics:")
+#     print(f"Context scale - Mean: {np.mean(stats['context_scales']):.3f}, Std: {np.std(stats['context_scales']):.3f}")
+#     print(f"Target scale - Mean: {np.mean(stats['target_scales']):.3f}, Std: {np.std(stats['target_scales']):.3f}")
+#     print(f"Aspect ratio - Mean: {np.mean(stats['aspect_ratios']):.3f}, Std: {np.std(stats['aspect_ratios']):.3f}")
+    
+#     print("\nVisualization complete! Check the generated PNG files.")
