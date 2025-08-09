@@ -15,6 +15,8 @@ from torchvision.transforms.functional import InterpolationMode
 from torchvision.transforms.v2 import functional as F
 from torchvision.transforms.v2._utils import query_chw
 
+from stable_ssl.utils.masking import multi_block_mask
+
 
 class Transform(v2.Transform):
     """Base transform class extending torchvision v2.Transform with nested data handling."""
@@ -709,6 +711,28 @@ class Compose(v2.Transform):
         for a in self.args:
             sample = a(sample)
         return sample
+
+
+class MultiBlockMask(Transform):
+    """Transform that adds block masks to batch."""
+    
+    def __init__(self, patch_size=16, mask_ratio=0.75):
+        super().__init__()
+        self.patch_size = patch_size
+        self.mask_ratio = mask_ratio
+        
+    def __call__(self, x):
+        H, W = x["image"].shape[-2:]
+        mask = multi_block_mask(
+            H // self.patch_size,
+            W // self.patch_size,
+            self.mask_ratio,
+        )
+        x["mask"] = mask
+        # Mask ratio that was actually sampled (since it's not exact)
+        sample_mask_ratio = mask.sum().item() / mask.numel()
+        x[self.get_name(x)] = torch.tensor([self.mask_ratio, sample_mask_ratio])
+        return x
 
 
 # class MultiTransforms(v2.Transform):
