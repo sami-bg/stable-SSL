@@ -52,12 +52,8 @@ def _sample_block_mask(
     This function will retry until a valid mask is found.
 
     Args:
-        height (int): Height of the image in patches.
-        width (int): Width of the image in patches.
-        min_scale (float): Minimum scale factor for block area relative to total image area.
-        max_scale (float): Maximum scale factor for block area relative to total image area.
-        min_aspect_ratio (float): Minimum aspect ratio (height/width) for the block.
-        max_aspect_ratio (float): Maximum aspect ratio (height/width) for the block.
+        image_size: Tuple[int, int] - Size of the image in patches
+        block_size: Tuple[int, int] - Size of the block in patches
         min_keep (int): Minimum number of patches that must be in the block.
     
     Returns:
