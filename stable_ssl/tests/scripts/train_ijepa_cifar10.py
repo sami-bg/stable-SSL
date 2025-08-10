@@ -9,6 +9,7 @@ import stable_ssl as ssl
 from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.backbone.utils import TeacherStudentModule
+from stable_ssl.utils.pos_embed import get_1d_sincos_pos_embed_from_grid
 
 from timm.models.vision_transformer import VisionTransformer
 
@@ -106,19 +107,6 @@ train = torch.utils.data.DataLoader(
     collate_fn=standardize_masks
 )
 
-"""
-{
-  'image': torch.Size([64, 3, 32, 32]),
-  'label': torch.Size([64]),
-  'sample_idx': torch.Size([64]),
-  'RandomResizedCrop': torch.Size([64, 4]),
-  'mask_context': torch.Size([64, 8, 8]),
-  'mask_target': torch.Size([64, 8, 8]),
-  'MultiBlockMask': torch.Size([64])
-}
-"""
-
-
 val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
     dataset=val_dataset,
@@ -127,13 +115,6 @@ val = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
-"""
-{
-'image': torch.Size([128, 3, 32, 32]),
-'label': torch.Size([128]),
-'sample_idx': torch.Size([128])
-}
-"""
 
 data = ssl.data.DataModule(train=train, val=val)
 
