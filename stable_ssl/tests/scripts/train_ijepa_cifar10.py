@@ -196,7 +196,7 @@ predictor_kwargs    = dict(patch_size=4, embed_dim=384, depth=6, num_heads=6, qk
 predictor           = IJEPA_Predictor(**predictor_kwargs)
 
 
-def forward(self, batch, stage):
+def forward(self: ssl.Module, batch, stage):
     out = {}
     if self.training:
         mask_context, mask_target   = batch['mask_context'], batch['mask_target']
@@ -225,7 +225,7 @@ def forward(self, batch, stage):
     else:
         image_patches = patchify(batch['image'])
         patches       = self.target_encoder.patch_project(image_patches)
-        return          self.target_encoder(image_patches)
+        return          self.target_encoder(patches)
 
 
 module = ssl.Module(
