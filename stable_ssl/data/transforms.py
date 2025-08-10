@@ -15,7 +15,7 @@ from torchvision.transforms.functional import InterpolationMode
 from torchvision.transforms.v2 import functional as F
 from torchvision.transforms.v2._utils import query_chw
 
-from stable_ssl.utils.masking import multi_block_mask
+from stable_ssl.data.masking import multi_block_mask
 
 
 class Transform(v2.Transform):
@@ -729,6 +729,7 @@ class MultiBlockMask(Transform):
         patch_size=16,
         num_blocks=1,
         context_scale=(0.85, 1.0),
+        target_scale=(0.15, 0.2),
         aspect_ratio=(0.75, 1.5),
         min_keep=10,
     ):
@@ -736,23 +737,25 @@ class MultiBlockMask(Transform):
         self.patch_size = patch_size
         self.num_blocks = num_blocks
         self.context_scale = context_scale
+        self.target_scale = target_scale
         self.aspect_ratio = aspect_ratio
         self.min_keep = min_keep
         
     def __call__(self, x):
-        H, W = x["image"].shape[-2:]
+        # TODO This assumes PIL.Image because of transforms.RGB()
+        H, W = x["image"]._size
         mask_context, mask_target = multi_block_mask(
             H // self.patch_size,
             W // self.patch_size,
             num_blocks=self.num_blocks,
             context_scale=self.context_scale,
+            target_scale=self.target_scale,
             aspect_ratio=self.aspect_ratio,
             min_keep=self.min_keep,
         )
         x["mask_context"] = mask_context
         x["mask_target"] = mask_target
-        # Mask ratio that was actually sampled (since it's not exact)
-        x[self.get_name(x)] = mask_target.sum() / (mask_context.numel() + mask_target.numel())
+        x[self.get_name(x)] = torch.tensor([len(mask_context), len(mask_target)])
         return x
 
 
