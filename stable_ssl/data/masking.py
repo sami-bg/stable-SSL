@@ -1,6 +1,5 @@
 import math
 import torch
-from typing import Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
@@ -43,8 +42,8 @@ def _sample_block_size(
 
 
 def _sample_block_mask(
-    image_size: Tuple[int, int],
-    block_size: Tuple[int, int],
+    image_size: tuple[int, int],
+    block_size: tuple[int, int],
     min_keep: int = 1,
 ):
     """Sample a single block mask for an image.
@@ -58,8 +57,8 @@ def _sample_block_mask(
     
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
-            - mask: Binary tensor indices of patches exposed to encoder (1 = masked, 0 = visible)
-            - pred_mask: Binary tensor where of combined target block masks to be predicted (1 = masked, 0 = visible)
+            - mask: Binary tensor indices of patches exposed to encoder (1 = visible, 0 = masked)
+            - pred_mask: Binary tensor where of combined target block masks to be predicted (1 = visible, 0 = masked)
     """
     h, w = block_size
     height, width = image_size
@@ -82,76 +81,32 @@ def _sample_block_mask(
 def multi_block_mask(
     height: int,
     width: int,
-    num_blocks: int = 4,
-    context_scale: Tuple[float, float] = (0.85, 1.0), # -- enc mask scale
-    target_scale: Tuple[float, float] = (0.15, 0.2),  # -- pred mask scale
-    aspect_ratio: Tuple[float, float] = (0.75, 1.5),
+    block_scales: list[tuple[float, float]]  = [(0.85, 1.0), *((0.15, 0.2),)*4],
+    aspect_ratios: list[tuple[float, float]] = [(1.0, 1.0),  *((0.75, 1.5),)*4],
     min_keep: int = 1,
     seed: int = 0,
-) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
-    """Generate block mask(s) for an image.
-    
-    Args:
-        height: Height in patches
-        width: Width in patches
-        mask_ratio: Fraction to mask
-        num_blocks: Number of mask blocks
-        aspect_ratio: (min, max) aspect ratio for blocks
-        min_keep: Minimum patches to keep unmasked
-        
-    Returns:
-        tuple[list[torch.Tensor], list[torch.Tensor]]: A tuple containing:
-            - list[torch.Tensor] - Binary tensors indices of patches exposed to encoder (1 = masked, 0 = visible)
-            - list[torch.Tensor] - Binary tensors indices where of combined target block masks to be predicted (1 = masked, 0 = visible)
-    """
-
-    min_scale, max_scale = target_scale
-    min_aspect_ratio, max_aspect_ratio = aspect_ratio
+) -> list[torch.Tensor, ...]:
     g = torch.Generator()
     g.manual_seed(seed)
     
-    h, w = _sample_block_size(
-        height, width,
-        min_scale, max_scale,
-        min_aspect_ratio, max_aspect_ratio
-    )
+    # mapping from unique combinations of size x aspect ratio to the block size.
+    block_scale_to_size = {
+        (scale, ratio): _sample_block_size(
+            height, width,
+            scale[0], scale[1],
+            ratio[0], ratio[1]
+        )
+        for scale, ratio in set(zip(block_scales, aspect_ratios))
+    }
 
-    masks_pred: list[torch.Tensor] = []
-    for _ in range(num_blocks):
-        masks_pred += [
-            _sample_block_mask(
-            (height, width),
-            (h, w),
-            min_keep
-        )]
+    masks: list[torch.Tensor] = [
+        _sample_block_mask((height, width), block_scale_to_size[((sh, sw), (ah,aw))], min_keep)
+        for (sh,sw), (ah, aw) in zip(block_scales, aspect_ratios)
+    ]
+    # -- Return binary masks
+    return masks
 
 
-    min_scale, max_scale = context_scale
-    # No aspect ratio for the context block
-    h, w = _sample_block_size(height, width, min_scale, max_scale, 1., 1.)
-
-    # -- Sample context mask
-    mask_enc = _sample_block_mask(
-        (height, width),
-        (h, w),
-        min_keep,
-    )
-
-    # NOTE Since 1 == discard and 0 == keep, combining masks is an OR operation
-    # Remove all target masks from the context
-    compliment_mask_enc = mask_enc.clone()
-    
-    for mask in masks_pred:
-        compliment_mask_enc &= ~mask
-
-    # -- Return mask indices
-    return (
-        torch.nonzero(compliment_mask_enc.flatten()).squeeze(),
-        [
-            torch.nonzero(mask.flatten()).squeeze()
-            for mask in masks_pred
-        ]
-    )
 
 def visualize_masking_strategy(height=14, width=14, num_examples=6, save_path="ijepa_masking_visualization.png"):
     """
