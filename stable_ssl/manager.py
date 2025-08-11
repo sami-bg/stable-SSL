@@ -293,6 +293,22 @@ class Manager(submitit.helpers.Checkpointable):
 
             else:
                 callbacks = []
+
+            # Auto-detect TeacherStudentWrapper and add callback if needed
+            for module in self.instantiated_module.modules():
+                if hasattr(module, "update_teacher") and hasattr(module, "teacher"):
+                    # Check if TeacherStudentCallback already exists
+                    from .callbacks.teacher_student import TeacherStudentCallback
+
+                    if not any(
+                        isinstance(cb, TeacherStudentCallback) for cb in callbacks
+                    ):
+                        callbacks.append(TeacherStudentCallback())
+                        logging.info(
+                            "\t● Auto-added TeacherStudentCallback for TeacherStudentWrapper ✅"
+                        )
+                    break
+
             # we use the following partial to give our init callbacks manually since otherwise
             # hydra instantiate throws an error
             self._trainer = hydra.utils.instantiate(
