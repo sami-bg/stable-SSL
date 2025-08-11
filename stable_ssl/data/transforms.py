@@ -715,22 +715,23 @@ class Compose(v2.Transform):
 
 class ContextTargetsMultiBlockMask(Transform):
     """Transform that adds multi-block masks to batch, with multiple target blocks and one disjoint context block.
-    
+
     Args:
         patch_size: Size of the patch in patches
         num_blocks: Number of blocks to sample
         context_scale: Scale of the context block
         aspect_ratio: Aspect ratio of the blocks
         min_keep: Minimum number of patches that must be in the block
-    
+
     """
-    
-    def __init__(self,
+
+    def __init__(
+        self,
         patch_size=16,
         context_scale=(0.85, 1.0),
         context_aspect_ratio=(1.0, 1.0),
-        target_scales=((0.15, 0.2),)*4,
-        target_aspect_ratios=((0.75, 1.5),)*4,
+        target_scales=((0.15, 0.2),) * 4,
+        target_aspect_ratios=((0.75, 1.5),) * 4,
         min_keep=10,
     ):
         super().__init__()
@@ -742,8 +743,8 @@ class ContextTargetsMultiBlockMask(Transform):
 
         if len(target_scales) != len(target_aspect_ratios):
             raise ValueError(
-                f'Each scale must have its associated aspect ratio and vice versa.',
-                'Received {len(target_scales)=} {len(target_aspect_ratios)=}'
+                "Each scale must have its associated aspect ratio and vice versa.",
+                "Received {len(target_scales)=} {len(target_aspect_ratios)=}",
             )
 
         self.min_keep = min_keep
@@ -752,8 +753,8 @@ class ContextTargetsMultiBlockMask(Transform):
         H, W = x["image"]._size
         # TODO Could this ever fully hide the context? If so, should
         # the guardrail be in here or in multi_block_mask? Definitely shouldn't be after batch is formed
-        scales          = [self.context_scale, *self.target_scales]
-        aspect_ratios   = [self.context_aspect_ratio, *self.target_aspect_ratios]
+        scales = [self.context_scale, *self.target_scales]
+        aspect_ratios = [self.context_aspect_ratio, *self.target_aspect_ratios]
         context_mask, *target_masks = multi_block_mask(
             H // self.patch_size,
             W // self.patch_size,
@@ -766,7 +767,9 @@ class ContextTargetsMultiBlockMask(Transform):
             context_mask &= ~mask
 
         x["mask_context"] = torch.nonzero(context_mask).flatten().squeeze()
-        x["masks_target"] = [torch.nonzero(mask).flatten().squeeze() for mask in target_masks]
+        x["masks_target"] = [
+            torch.nonzero(mask).flatten().squeeze() for mask in target_masks
+        ]
         x[self.get_name(x)] = torch.tensor([scales, aspect_ratios])
         return x
 
