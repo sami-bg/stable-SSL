@@ -292,6 +292,11 @@ class OnlineProbe(Callback):
             )
             trainer.should_stop = True
 
+    @property
+    def state_key(self) -> str:
+        # note: we do not include `verbose` here on purpose
+        return f"OnlineProbe[name={self.name}]"
+
     def state_dict(self) -> Dict:
         """Save callback state including probe module and optimizer states."""
         return {
