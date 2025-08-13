@@ -12,7 +12,7 @@ import torchvision
 from lightning.pytorch.loggers import WandbLogger
 
 import stable_ssl as ssl
-from ssl.data import transforms
+from stable_ssl.data import transforms
 
 # Best SimCLR augmentations for CIFAR-10 based on original paper and research
 # Using symmetric augmentations (same for both views) as per SimCLR paper
