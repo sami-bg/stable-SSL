@@ -1,6 +1,6 @@
 from .checkpoint_sklearn import SklearnCheckpoint
 from .teacher_student import TeacherStudentCallback
-from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo
+from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 
 
 def default(pl_module=None):
@@ -10,6 +10,7 @@ def default(pl_module=None):
         TrainerInfo(),
         SklearnCheckpoint(),
         ModuleSummary(),
+        SLURMInfo(),
     ]
 
     # Auto-detect TeacherStudentWrapper and add callback if needed
