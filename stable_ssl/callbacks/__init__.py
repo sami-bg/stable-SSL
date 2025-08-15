@@ -1,4 +1,4 @@
-from .checkpoint_sklearn import SklearnCheckpoint
+from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
 from .image_retrieval import ImageRetrieval
 from .knn import OnlineKNN
 from .lidar import LiDAR
@@ -12,6 +12,7 @@ from .writer import OnlineWriter
 __all__ = [
     OnlineProbe,
     SklearnCheckpoint,
+    WandbCheckpoint,
     OnlineKNN,
     TrainerInfo,
     SLURMInfo,

@@ -1,4 +1,4 @@
-from .checkpoint_sklearn import SklearnCheckpoint
+from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
 from .teacher_student import TeacherStudentCallback
 from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 
@@ -9,6 +9,7 @@ def default(pl_module=None):
         LoggingCallback(),
         TrainerInfo(),
         SklearnCheckpoint(),
+        WandbCheckpoint(),
         ModuleSummary(),
         SLURMInfo(),
     ]
