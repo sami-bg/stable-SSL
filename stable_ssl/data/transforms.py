@@ -787,6 +787,45 @@ class ContextTargetsMultiBlockMask(Transform):
         return x
 
 
+class RandomMask(Transform):
+    def __init__(
+        self,
+        patch_size=16,
+        mask_ratio=0.75,
+        source: str = "image",
+        target_visible: str = "mask_visible",
+        target_masked: str = "mask_masked",
+    ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.mask_ratio = mask_ratio
+        self.source = source
+        self.target_visible = target_visible
+        self.target_masked = target_masked
+
+    def __call__(self, x):
+        source = self.nested_get(x, self.source)
+        if isinstance(source, PIL.Image.Image):
+            H, W = source.size
+        elif isinstance(source, torch.Tensor):
+            # NOTE assumes _HW
+            H, W = source.shape[-2:]
+        else:
+            raise ValueError(
+                f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead."
+            )
+
+        num_patches = (H // self.patch_size) * (W // self.patch_size)
+        num_masked = int(num_patches * self.mask_ratio)
+        indices = torch.randperm(num_patches)
+        mask_masked = indices[:num_masked]
+        mask_visible = indices[num_masked:]
+
+        x[self.target_visible] = mask_visible
+        x[self.target_masked] = mask_masked
+        return x
+
+
 # class MultiTransforms(v2.Transform):
 #     def __init__(self, transforms, repeats: list = None):
 #         super().__init__()

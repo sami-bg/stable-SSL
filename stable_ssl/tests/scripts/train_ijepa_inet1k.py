@@ -57,13 +57,13 @@ val_transform = transforms.Compose(
 
 
 inet1k_train = ssl.data.HFDataset(
-    path="ilsvrc/imagenet-1k",
+    path="ILSVRC/imagenet-1k",
     split="train",
     transform=val_transform,
 )
 
 inet1k_val = ssl.data.HFDataset(
-    path="ilsvrc/imagenet-1k",
+    path="ILSVRC/imagenet-1k",
     split="val",
     transform=val_transform,
 )
