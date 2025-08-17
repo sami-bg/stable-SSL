@@ -715,22 +715,23 @@ class Compose(v2.Transform):
 
 class ContextTargetsMultiBlockMask(Transform):
     """Transform that adds multi-block masks to batch, with multiple target blocks and one disjoint context block.
-    
+
     Args:
         patch_size: Size of the patch in patches
         num_blocks: Number of blocks to sample
         context_scale: Scale of the context block
         aspect_ratio: Aspect ratio of the blocks
         min_keep: Minimum number of patches that must be in the block
-    
+
     """
-    
-    def __init__(self,
+
+    def __init__(
+        self,
         patch_size=16,
         context_scale=(0.85, 1.0),
         context_aspect_ratio=(1.0, 1.0),
-        target_scales=((0.15, 0.2),)*4,
-        target_aspect_ratios=((0.75, 1.5),)*4,
+        target_scales=((0.15, 0.2),) * 4,
+        target_aspect_ratios=((0.75, 1.5),) * 4,
         min_keep=10,
         source: str = "image",
         target_context: str = "mask_context",
@@ -747,8 +748,8 @@ class ContextTargetsMultiBlockMask(Transform):
         self.target_targets = target_targets
         if len(target_scales) != len(target_aspect_ratios):
             raise ValueError(
-                f'Each scale must have its associated aspect ratio and vice versa.',
-                'Received {len(target_scales)=} {len(target_aspect_ratios)=}'
+                "Each scale must have its associated aspect ratio and vice versa.",
+                "Received {len(target_scales)=} {len(target_aspect_ratios)=}",
             )
 
         self.min_keep = min_keep
