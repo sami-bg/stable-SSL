@@ -1,5 +1,6 @@
 import lightning as pl
 import torch
+import math
 from torch import nn
 from typing import Optional
 import torchvision
@@ -11,7 +12,7 @@ import stable_ssl as ssl
 from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.backbone.utils import TeacherStudentModule
-from stable_ssl.utils.pos_embed import get_1d_sincos_pos_embed_from_grid
+from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 from timm.models.vision_transformer import VisionTransformer
 
@@ -79,10 +80,7 @@ def standardize_masks(batch: list[dict]):
     context_indices = [item.pop('mask_context') for item in batch]
     target_indices  = [item.pop('masks_target') for item in batch]
     batch           = torch.utils.data.default_collate(batch)
-    """
-    [c.unique().shape for c in collated_masks_pred]
-    [torch.Size([194]), torch.Size([168]), torch.Size([190]), torch.Size([158])]
-    """
+    
     min_keep_enc    = min(len(ctx) for ctx in context_indices)
     min_keep_pred   = min(
         len(block)
@@ -109,9 +107,9 @@ train_dataset = IndexedDataset(cifar_train, transform=train_transform)
 # single views and handles masking at the model level
 train = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    batch_size=64,
+    batch_size=512,
     shuffle=True,  # Regular shuffling, no RepeatedRandomSampler
-    num_workers=0,
+    num_workers=32,
     drop_last=True,
     collate_fn=standardize_masks
 )
@@ -120,7 +118,7 @@ val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=128,
-    num_workers=0,
+    num_workers=32,
     shuffle=True,
 )
 
@@ -128,22 +126,27 @@ val = torch.utils.data.DataLoader(
 data = ssl.data.DataModule(train=train, val=val)
 
 
-# TODO sinusoidal posembed. for now this is just a dummy fn
-def pos_embed(patches: torch.Tensor, device: torch.device, TMP_DIM = 768) -> torch.Tensor:
-    return torch.zeros(patches.shape[0], patches.shape[1], TMP_DIM, device=device)
+def pos_embed(patches: torch.Tensor) -> torch.Tensor:
+    return torch.from_numpy(
+        get_2d_sincos_pos_embed(
+            patches.shape[-1],
+            int(math.sqrt(patches.shape[1]))
+        )
+    ).to(patches.device).float().repeat(patches.shape[0], 1, 1)
 
 
 def apply_masks(x: torch.Tensor, *masks: torch.Tensor) -> torch.Tensor:
+    # TODO Does this assume all masks have the same number of indices?
+    # we can maybe generalize this by returning a list and stacking them for ijepa in the forward
     B, N, D = x.shape
     M = len(masks)
     idx = torch.stack([m.to(x.device, dtype=torch.long) for m in masks], dim=1)  # [B, M, K]
-    x_exp   = x.unsqueeze(1).expand(-1, M, -1, -1)                                # [B, M, N, D]
-    out     = x_exp.gather(2, idx.unsqueeze(-1).expand(-1, -1, -1, D))            # [B, M, K, D]
-    return out.reshape(B * M, idx.size(-1), D)                                     # [B*M, K, D]
+    x_exp   = x.unsqueeze(1).expand(-1, M, -1, -1)                               # [B, M, N, D]
+    out     = x_exp.gather(2, idx.unsqueeze(-1).expand(-1, -1, -1, D))           # [B, M, K, D]
+    return out.reshape(B * M, idx.size(-1), D)                                   # [B*M, K, D]
 
 
 class IJEPA_Encoder(VisionTransformer):
-    # TODO
     def __init__(self, *args, **kwargs):
         self.weight_init            = kwargs.get('weight_init', '')
         self.fix_init               = kwargs.get('fix_init', False)
@@ -204,8 +207,7 @@ class IJEPA_Predictor(VisionTransformer):
         self.fix_init               = kwargs.get('fix_init', False)
         self.predictor_num_patches  = kwargs.pop('predictor_num_patches')
         self.ijepa_encoder_dim      = kwargs.pop('ijepa_encoder_dim')
-        # TODO Fix device somehow and embeddim
-        self.predictor_pos_embed    = pos_embed(torch.zeros(1, self.predictor_num_patches, kwargs['embed_dim']), device=torch.device('cuda'), TMP_DIM=kwargs['embed_dim'])
+        self.predictor_pos_embed    = pos_embed(torch.zeros(1, self.predictor_num_patches, kwargs['embed_dim']))
         super().__init__(*args, **kwargs)
         self.predictor_pos_embed    = nn.Parameter(self.predictor_pos_embed, requires_grad=False)
         self.predictor_inproj       = nn.Linear(self.ijepa_encoder_dim, self.embed_dim) 
@@ -223,7 +225,7 @@ class IJEPA_Predictor(VisionTransformer):
         B, *_ = context_patches.shape
         M = len(masks_target)
 
-        ctx: torch.Tensor = self.predictor_inproj(context_patches)                      # [B, N_ctx, Dp]
+        ctx: torch.Tensor = self.predictor_inproj(context_patches) # [B, N_ctx, D]
 
         # target position embeddings (stacked per mask): [B*M, K_tgt, D]
         pos_all  = self.predictor_pos_embed.expand(B, -1, -1)
@@ -260,9 +262,12 @@ def forward(self: ssl.Module, batch, stage):
     ijepa_loss: nn.Module = self.ijepa_loss
 
     image_patches               = target_encoder.patchify(batch['image'])
-    pos_embedding               = pos_embed(image_patches, device=batch['image'].device)
-    target_patches              = target_encoder.project_patches(image_patches) + pos_embedding
+    target_patches              = target_encoder.project_patches(image_patches)
+    pos_embedding               = pos_embed(target_patches)
+    target_patches              = target_patches + pos_embedding
     out['embedding']            = target_encoder.encode_patches(target_patches, with_layernorm=True)
+    out['sum_embedding']        = out['embedding'].sum(dim=1)
+    out['flat_embedding']       = out['embedding'].reshape(out['embedding'].shape[0], -1)
     
     if not self.training:
         return out
@@ -292,21 +297,31 @@ module = ssl.Module(
     ijepa_loss=F.smooth_l1_loss,
 )
 
+
+linear_probe = ssl.callbacks.OnlineProbe(
+    "linear_probe",
+    "sum_embedding",
+    "label",
+    probe=torch.nn.Linear(768, 10),
+    loss_fn=torch.nn.CrossEntropyLoss(),
+    metrics={
+        "top1": torchmetrics.classification.MulticlassAccuracy(10),
+        "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
+    },
+)
+
+rankme = ssl.callbacks.RankMe(
+    name="rankme",
+    target="flat_embedding",
+    queue_length=512, # NOTE must be >= batch_size
+    target_shape=(num_patches, 768),
+)
+
 trainer = pl.Trainer(
     max_epochs=6,
     num_sanity_val_steps=0,
     precision='16-mixed',
     enable_checkpointing=False,
-)
-
-knn_probe = ssl.callbacks.OnlineKNN(
-    name="knn_probe",
-    input="embedding",
-    target="label",
-    queue_length=20000,
-    metrics={"accuracy": torchmetrics.classification.MulticlassAccuracy(10)},
-    input_dim=512,
-    k=10,
 )
 
 # Initialize W&B logger with explicit settings
@@ -315,13 +330,13 @@ wandb_logger = WandbLogger(
     entity="slightly-more-badass",  # Your W&B entity
     name="ijepa-cifar10-run",
     log_model=False,  # Set to True if you want to save model artifacts
-    offline=False,  # Ensure online mode
+    offline=True,  # Ensure offline mode
 )
 
 trainer = pl.Trainer(
     max_epochs=6,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
-    callbacks=[knn_probe],
+    callbacks=[linear_probe, rankme],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,

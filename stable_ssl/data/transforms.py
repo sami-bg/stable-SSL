@@ -732,6 +732,9 @@ class ContextTargetsMultiBlockMask(Transform):
         target_scales=((0.15, 0.2),)*4,
         target_aspect_ratios=((0.75, 1.5),)*4,
         min_keep=10,
+        source: str = "image",
+        target_context: str = "mask_context",
+        target_targets: str = "masks_target",
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -739,7 +742,9 @@ class ContextTargetsMultiBlockMask(Transform):
         self.context_aspect_ratio = context_aspect_ratio
         self.target_scales = target_scales
         self.target_aspect_ratios = target_aspect_ratios
-
+        self.source = source
+        self.target_context = target_context
+        self.target_targets = target_targets
         if len(target_scales) != len(target_aspect_ratios):
             raise ValueError(
                 f'Each scale must have its associated aspect ratio and vice versa.',
@@ -749,9 +754,15 @@ class ContextTargetsMultiBlockMask(Transform):
         self.min_keep = min_keep
 
     def __call__(self, x):
-        H, W = x["image"]._size
-        # TODO Could this ever fully hide the context? If so, should
-        # the guardrail be in here or in multi_block_mask? Definitely shouldn't be after batch is formed
+        source = self.nested_get(x, self.source)
+        if isinstance(source, PIL.Image.Image):
+            H, W = source.size
+        elif isinstance(source, torch.Tensor):
+            # NOTE assumes _HW 
+            H, W = source.shape[-2:]
+        else:
+            raise ValueError(f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead.")
+
         scales          = [self.context_scale, *self.target_scales]
         aspect_ratios   = [self.context_aspect_ratio, *self.target_aspect_ratios]
         context_mask, *target_masks = multi_block_mask(
@@ -765,8 +776,8 @@ class ContextTargetsMultiBlockMask(Transform):
         for mask in target_masks:
             context_mask &= ~mask
 
-        x["mask_context"] = torch.nonzero(context_mask).flatten().squeeze()
-        x["masks_target"] = [torch.nonzero(mask).flatten().squeeze() for mask in target_masks]
+        x[self.target_context] = torch.nonzero(context_mask).flatten().squeeze()
+        x[self.target_targets] = [torch.nonzero(mask).flatten().squeeze() for mask in target_masks]
         x[self.get_name(x)] = torch.tensor([scales, aspect_ratios])
         return x
 
