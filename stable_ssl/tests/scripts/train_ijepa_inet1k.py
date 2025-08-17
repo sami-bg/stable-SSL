@@ -1,5 +1,11 @@
-import math
+import os
 
+os.environ["HF_HOME"]           = "/mnt/data/sami/huggingface"
+os.environ["HF_DATASETS_CACHE"] = "/mnt/data/sami/huggingface/datasets"
+os.environ["HF_HUB_CACHE"]      = "/mnt/data/sami/huggingface/hub"
+os.environ["TORCH_HOME"]        = "/mnt/data/sami/torch"
+
+import math
 import lightning as pl
 import torch
 import torch.nn.functional as F
@@ -17,8 +23,8 @@ from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 4
-crop_height, crop_width = 160, 160  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
+height, width, patch_size = 256, 256, 16
+crop_height, crop_width = 224, 224  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # We precompute these so the predictor can make sinusoidal posembeds
 num_patches = (height // patch_size) * (width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
@@ -40,6 +46,7 @@ train_transform = transforms.Compose(
     transforms.ContextTargetsMultiBlockMask(**mask_transform_kwargs),
     transforms.ToImage(mean=mean, std=std),
 )
+
 # Don't mask during validation
 val_transform = transforms.Compose(
     transforms.RGB(),
@@ -48,20 +55,19 @@ val_transform = transforms.Compose(
     transforms.ToImage(mean=mean, std=std),
 )
 
-# Use torchvision CIFAR-10 wrapped in FromTorchDataset
+
 inet1k_train = ssl.data.HFDataset(
-    path="frgfm/imagenette",
-    name="160px",
+    path="ilsvrc/imagenet-1k",
     split="train",
     transform=val_transform,
 )
 
 inet1k_val = ssl.data.HFDataset(
-    path="frgfm/imagenette",
-    name="160px",
+    path="ilsvrc/imagenet-1k",
     split="val",
     transform=val_transform,
 )
+
 
 # TODO For some reason streaming=True hangs. I could also use noface imagenet from randall-lab/ on hf
 # inet1k_train = ssl.data.HFDataset(
