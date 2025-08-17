@@ -18,7 +18,7 @@ from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 height, width, patch_size = 32, 32, 4
-crop_height, crop_width = 32, 32  #   # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
+crop_height, crop_width = 160, 160  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # We precompute these so the predictor can make sinusoidal posembeds
 num_patches = (height // patch_size) * (width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
@@ -49,13 +49,34 @@ val_transform = transforms.Compose(
 )
 
 # Use torchvision CIFAR-10 wrapped in FromTorchDataset
-cifar_train = torchvision.datasets.CIFAR10(
-    root="/tmp/cifar10", train=True, download=True
-)
-cifar_val = torchvision.datasets.CIFAR10(
-    root="/tmp/cifar10", train=False, download=True
+inet1k_train = ssl.data.HFDataset(
+    path="frgfm/imagenette",
+    name="160px",
+    split="train",
+    transform=val_transform,
 )
 
+inet1k_val = ssl.data.HFDataset(
+    path="frgfm/imagenette",
+    name="160px",
+    split="val",
+    transform=val_transform,
+)
+
+# TODO For some reason streaming=True hangs. I could also use noface imagenet from randall-lab/ on hf
+# inet1k_train = ssl.data.HFDataset(
+#     path="mlx-vision/imagenet-1k",
+#     split="train",
+#     transform=train_transform,
+#     streaming=True,
+# )
+
+# inet1k_val = ssl.data.HFDataset(
+#     path="mlx-vision/imagenet-1k",
+#     split="val",
+#     transform=val_transform,
+#     streaming=True,
+# )
 
 class IndexedDataset(Dataset):
     """Custom dataset wrapper that adds sample_idx to each sample."""
@@ -96,23 +117,23 @@ def standardize_masks(batch: list[dict]):
     return batch
 
 
-train_dataset = IndexedDataset(cifar_train, transform=train_transform)
+train_dataset = IndexedDataset(inet1k_train, transform=train_transform)
 # IJEPA does not use multi-view sampling like SimCLR etc. because it processes
 # single views and handles masking at the model level
 train = torch.utils.data.DataLoader(
     dataset=train_dataset,
     batch_size=512,
     shuffle=True,  # Regular shuffling, no RepeatedRandomSampler
-    num_workers=32,
+    num_workers=0,
     drop_last=True,
     collate_fn=standardize_masks,
 )
 
-val_dataset = IndexedDataset(cifar_val, transform=val_transform)
+val_dataset = IndexedDataset(inet1k_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=128,
-    num_workers=32,
+    num_workers=0,
     shuffle=True,
 )
 
@@ -361,7 +382,7 @@ trainer = pl.Trainer(
 
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
-    project="ijepa-cifar10",
+    project="ijepa-imagenette",
     entity="slightly-more-badass",  # Your W&B entity
     name="ijepa-cifar10-run",
     log_model=False,  # Set to True if you want to save model artifacts
