@@ -352,13 +352,6 @@ rankme = ssl.callbacks.RankMe(
     target_shape=(num_patches, 768),
 )
 
-trainer = pl.Trainer(
-    max_epochs=6,
-    num_sanity_val_steps=0,
-    precision="16-mixed",
-    enable_checkpointing=False,
-)
-
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
     project="ijepa-cifar10",

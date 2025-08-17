@@ -795,6 +795,8 @@ class RandomMask(Transform):
         source: str = "image",
         target_visible: str = "mask_visible",
         target_masked: str = "mask_masked",
+        target_ids_restore: str = "ids_restore",
+        target_len_keep: str = "len_keep",
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -802,6 +804,8 @@ class RandomMask(Transform):
         self.source = source
         self.target_visible = target_visible
         self.target_masked = target_masked
+        self.target_ids_restore = target_ids_restore
+        self.target_len_keep = target_len_keep
 
     def __call__(self, x):
         source = self.nested_get(x, self.source)
@@ -816,14 +820,25 @@ class RandomMask(Transform):
             )
 
         num_patches = (H // self.patch_size) * (W // self.patch_size)
-        num_masked = int(num_patches * self.mask_ratio)
-        indices = torch.randperm(num_patches)
-        mask_masked = indices[:num_masked]
-        mask_visible = indices[num_masked:]
-
+        len_keep = int(num_patches * (1 - self.mask_ratio))
+        
+        # Generate random noise and shuffle indices (like MAE)
+        noise = torch.rand(num_patches)
+        ids_shuffle = torch.argsort(noise)
+        ids_restore = torch.argsort(ids_shuffle)  # inverse permutation
+        
+        # Split into visible and masked
+        mask_visible = ids_shuffle[:len_keep]  # first len_keep are visible
+        mask_masked = ids_shuffle[len_keep:]   # rest are masked
+        
+        # Add to sample
         x[self.target_visible] = mask_visible
-        x[self.target_masked] = mask_masked
+        x[self.target_masked] = mask_masked  
+        x[self.target_ids_restore] = ids_restore  # NEW: for reconstructing full sequence
+        x[self.target_len_keep] = len_keep
+        
         return x
+
 
 
 # class MultiTransforms(v2.Transform):

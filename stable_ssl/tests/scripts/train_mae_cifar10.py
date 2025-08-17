@@ -14,24 +14,30 @@ from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
+
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 height, width, patch_size = 32, 32, 4
 crop_height, crop_width = 32, 32
 num_patches = (height // patch_size) * (width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
+mask_ratio = 0.75
+num_visible_patches = int(num_patches * (1 - mask_ratio))
+num_classes = 10
+batch_size = 512
+val_batch_size = 128
 
 mask_transform_kwargs = dict(
     patch_size=patch_size,
-    mask_ratio=0.75,
+    mask_ratio=mask_ratio,
     source="image",
     target_visible="mask_visible",
     target_masked="mask_masked",
 )
 
 train_transform = transforms.Compose(
-    transforms.RGB(),
-    transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0)),
+    transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
+    transforms.RandomHorizontalFlip(),
     transforms.RandomMask(**mask_transform_kwargs),
     transforms.ToImage(mean=mean, std=std),
 )
@@ -43,7 +49,7 @@ val_transform = transforms.Compose(
     transforms.ToImage(mean=mean, std=std),
 )
 
-# Use torchvision CIFAR-10
+
 cifar_train = torchvision.datasets.CIFAR10(
     root="/tmp/cifar10", train=True, download=True
 )
@@ -51,7 +57,10 @@ cifar_val = torchvision.datasets.CIFAR10(
     root="/tmp/cifar10", train=False, download=True
 )
 
+
 class IndexedDataset(Dataset):
+    """Custom dataset wrapper that adds sample_idx to each sample."""
+
     def __init__(self, dataset, transform=None):
         super().__init__(transform)
         self.dataset = dataset
@@ -63,6 +72,7 @@ class IndexedDataset(Dataset):
 
     def __len__(self):
         return len(self.dataset)
+
 
 def standardize_masks(batch: list[dict]):
     """Simpler collate function for MAE - just handle visible/masked indices"""
@@ -81,22 +91,25 @@ def standardize_masks(batch: list[dict]):
     batch["mask_masked"] = torch.utils.data.default_collate(masked_batch)
     return batch
 
+
 train_dataset = IndexedDataset(cifar_train, transform=train_transform)
+val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 train = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    batch_size=512,
+    batch_size=batch_size,
     shuffle=True,
-    num_workers=32,
+    num_workers=0,
     drop_last=True,
     collate_fn=standardize_masks,
+    pin_memory=True,
 )
 
-val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
     dataset=val_dataset,
-    batch_size=128,
-    num_workers=32,
-    shuffle=True,
+    batch_size=val_batch_size,
+    num_workers=0,
+    shuffle=False,
+    pin_memory=True,
 )
 
 data = ssl.data.DataModule(train=train, val=val)
@@ -145,6 +158,16 @@ class MAE_Encoder(VisionTransformer):
         num_patch_h, num_patch_w = patches.shape[1], patches.shape[2]
         patches = patches.reshape(B, num_patch_h * num_patch_w, P * P * C)
         return patches
+
+    def unpatchify(self, patches: torch.Tensor) -> torch.Tensor:
+        B, N, P2C = patches.shape
+        P = patch_size
+        C = patch_channel_dim // (P * P)
+        assert P2C == C * P * P
+        H = W = (num_patches * P) // (P * P)
+        patches = patches.reshape(B, H, W, P, P)
+        patches = patches.permute(0, 3, 1, 4, 2) # [B, P, H, P, W]
+        return patches.reshape(B, P * P * C, H, W) # [B, P * P * C, H, W]
 
     def project_patches(self, patches: torch.Tensor) -> torch.Tensor:
         return self.mae_patch_project(patches)
@@ -255,7 +278,7 @@ def forward(self: ssl.Module, batch, stage):
     out = {}
     encoder: MAE_Encoder = self.encoder
     decoder: MAE_Decoder = self.decoder
-    mae_loss: nn.Module = self.mae_loss
+    mae_loss: nn.Module  = self.mae_loss
     
     # Patchify and get all patches with positions
     image_patches = encoder.patchify(batch["image"])  # [B, N, patch_pixels]
@@ -286,11 +309,11 @@ def forward(self: ssl.Module, batch, stage):
     out["loss"] = mae_loss(reconstructed_masked, gt_masked_patches)
     
     # For monitoring
-    out["embedding"] = encoded_visible
-    out["sum_embedding"] = encoded_visible.sum(dim=1)
-    out["reconstructed"] = reconstructed_masked
-    out["ground_truth"] = gt_masked_patches
-    
+    out["embedding"]        = encoded_visible
+    out["reconstructed"]    = reconstructed_masked
+    out["sum_embedding"]    = out["embedding"].sum(dim=1)
+    out["flat_embedding"]   = out["embedding"].reshape(out["embedding"].shape[0], -1)
+    out["ground_truth"]     = gt_masked_patches
     return out
 
 module = ssl.Module(
@@ -305,11 +328,11 @@ linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
     "sum_embedding",
     "label", 
-    probe=torch.nn.Linear(768, 10),
+    probe=torch.nn.Linear(768, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
-        "top1": torchmetrics.classification.MulticlassAccuracy(10),
-        "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
+        "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
+        "top5": torchmetrics.classification.MulticlassAccuracy(num_classes, top_k=5),
     },
 )
 
@@ -317,8 +340,8 @@ linear_probe = ssl.callbacks.OnlineProbe(
 rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding", 
-    queue_length=512,
-    target_shape=(num_patches, 768), 
+    queue_length=min(512, batch_size),
+    target_shape=(num_visible_patches, 768), 
 )
 
 # Initialize W&B logger
@@ -331,12 +354,19 @@ wandb_logger = WandbLogger(
 )
 
 trainer = pl.Trainer(
-    max_epochs=100,  # MAE typically needs more epochs
+    max_epochs=6,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, rankme],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
+    accelerator="gpu",
+    devices=1,
+    # strategy=DDPStrategy(
+    #     find_unused_parameters=True, # this is because only teacher's params are used in the teacher-student module
+    #     static_graph=True,
+    #     gradient_as_bucket_view=True,
+    # )
 )
 
 manager = ssl.Manager(trainer=trainer, module=module, data=data)

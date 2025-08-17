@@ -1,32 +1,30 @@
-import os
+import  torch
+import  math
+import  lightning as pl
+import  torch.nn.functional as F
+import  torchmetrics
+from    lightning.pytorch.loggers import WandbLogger
+from    timm.models.vision_transformer import VisionTransformer
+from    torch import nn
 
-os.environ["HF_HOME"]           = "/mnt/data/sami/huggingface"
-os.environ["HF_DATASETS_CACHE"] = "/mnt/data/sami/huggingface/datasets"
-os.environ["HF_HUB_CACHE"]      = "/mnt/data/sami/huggingface/hub"
-os.environ["TORCH_HOME"]        = "/mnt/data/sami/torch"
+import  stable_ssl as ssl
+from    stable_ssl.backbone.utils import TeacherStudentModule
+from    stable_ssl.data import transforms
+from    stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
+from    lightning.pytorch.strategies import DDPStrategy
 
-import math
-import lightning as pl
-import torch
-import torch.nn.functional as F
-import torchmetrics
-import torchvision
-from lightning.pytorch.loggers import WandbLogger
-from timm.models.vision_transformer import VisionTransformer
-from torch import nn
 
-import stable_ssl as ssl
-from stable_ssl.backbone.utils import TeacherStudentModule
-from stable_ssl.data import transforms
-from stable_ssl.data.utils import Dataset
-from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
+train_batch_size = 128
+val_batch_size   = 128
+num_workers      = 32
+num_classes      = 1000
 
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 height, width, patch_size = 256, 256, 16
 crop_height, crop_width = 224, 224  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # We precompute these so the predictor can make sinusoidal posembeds
-num_patches = (height // patch_size) * (width // patch_size)
+num_patches = (crop_height // patch_size) * (crop_width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
 
 # Based on the in1k_vith14_ep300.yaml config in the ijepa repository
@@ -59,45 +57,14 @@ val_transform = transforms.Compose(
 inet1k_train = ssl.data.HFDataset(
     path="ILSVRC/imagenet-1k",
     split="train",
-    transform=val_transform,
+    transform=train_transform,
 )
 
 inet1k_val = ssl.data.HFDataset(
     path="ILSVRC/imagenet-1k",
-    split="val",
+    split="validation",
     transform=val_transform,
 )
-
-
-# TODO For some reason streaming=True hangs. I could also use noface imagenet from randall-lab/ on hf
-# inet1k_train = ssl.data.HFDataset(
-#     path="mlx-vision/imagenet-1k",
-#     split="train",
-#     transform=train_transform,
-#     streaming=True,
-# )
-
-# inet1k_val = ssl.data.HFDataset(
-#     path="mlx-vision/imagenet-1k",
-#     split="val",
-#     transform=val_transform,
-#     streaming=True,
-# )
-
-class IndexedDataset(Dataset):
-    """Custom dataset wrapper that adds sample_idx to each sample."""
-
-    def __init__(self, dataset, transform=None):
-        super().__init__(transform)
-        self.dataset = dataset
-
-    def __getitem__(self, idx):
-        image, label = self.dataset[idx]
-        sample = {"image": image, "label": label, "sample_idx": idx}
-        return self.process_sample(sample)
-
-    def __len__(self):
-        return len(self.dataset)
 
 
 def standardize_masks(batch: list[dict]):
@@ -123,24 +90,24 @@ def standardize_masks(batch: list[dict]):
     return batch
 
 
-train_dataset = IndexedDataset(inet1k_train, transform=train_transform)
 # IJEPA does not use multi-view sampling like SimCLR etc. because it processes
 # single views and handles masking at the model level
 train = torch.utils.data.DataLoader(
-    dataset=train_dataset,
-    batch_size=512,
+    dataset=inet1k_train,
+    batch_size=train_batch_size,
     shuffle=True,  # Regular shuffling, no RepeatedRandomSampler
-    num_workers=0,
+    num_workers=num_workers,
     drop_last=True,
     collate_fn=standardize_masks,
+    pin_memory=True,
+    persistent_workers=True,
 )
 
-val_dataset = IndexedDataset(inet1k_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
-    dataset=val_dataset,
-    batch_size=128,
-    num_workers=0,
-    shuffle=True,
+    dataset=inet1k_val,
+    batch_size=val_batch_size,
+    num_workers=num_workers,
+    shuffle=False,
 )
 
 
@@ -305,8 +272,8 @@ encoder_kwargs = dict(
 predictor_kwargs = dict(
     patch_size=patch_size,
     embed_dim=384,
-    depth=6,
-    num_heads=6,
+    depth=12,
+    num_heads=12,
     qkv_bias=False,
     ijepa_encoder_dim=768,
     predictor_num_patches=num_patches,
@@ -364,33 +331,27 @@ linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
     "sum_embedding",
     "label",
-    probe=torch.nn.Linear(768, 10),
+    probe=torch.nn.Linear(768, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
-        "top1": torchmetrics.classification.MulticlassAccuracy(10),
-        "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
+        "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
+        "top5": torchmetrics.classification.MulticlassAccuracy(num_classes, top_k=5),
     },
 )
 
 rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding",
-    queue_length=512,  # NOTE must be >= batch_size
+    queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
     target_shape=(num_patches, 768),
 )
 
-trainer = pl.Trainer(
-    max_epochs=6,
-    num_sanity_val_steps=0,
-    precision="16-mixed",
-    enable_checkpointing=False,
-)
 
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
-    project="ijepa-imagenette",
+    project="ijepa-inet1k",
     entity="slightly-more-badass",  # Your W&B entity
-    name="ijepa-cifar10-run",
+    name="ijepa-inet1k-run",
     log_model=False,  # Set to True if you want to save model artifacts
     offline=True,  # Ensure offline mode
 )
@@ -402,6 +363,14 @@ trainer = pl.Trainer(
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
+    accelerator="gpu",
+    devices=8,
+    strategy=DDPStrategy(
+        find_unused_parameters=True, # this is because only teacher's params are used in the teacher-student module
+        static_graph=True,
+        gradient_as_bucket_view=True,
+    )
 )
+
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
 manager()
