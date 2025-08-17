@@ -194,7 +194,7 @@ def forward_mae(self, batch: dict, stage):
 
     # 6) compute loss ONLY on masked tokens
     mask_exp = mask_masked.unsqueeze(-1).type_as(pred_pix)  # [B,N,1]
-    loss = ((pred_pix - target_pix) ** 2 * mask_exp).sum() / mask_exp.sum().clamp_min(1.0)
+    loss = self.loss_fn(pred_pix, target_pix, mask_exp)
 
     # 7) populate outputs for logging / probes
     if stage != "train":
