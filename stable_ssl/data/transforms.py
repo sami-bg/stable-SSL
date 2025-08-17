@@ -759,13 +759,15 @@ class ContextTargetsMultiBlockMask(Transform):
         if isinstance(source, PIL.Image.Image):
             H, W = source.size
         elif isinstance(source, torch.Tensor):
-            # NOTE assumes _HW 
+            # NOTE assumes _HW
             H, W = source.shape[-2:]
         else:
-            raise ValueError(f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead.")
+            raise ValueError(
+                f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead."
+            )
 
-        scales          = [self.context_scale, *self.target_scales]
-        aspect_ratios   = [self.context_aspect_ratio, *self.target_aspect_ratios]
+        scales = [self.context_scale, *self.target_scales]
+        aspect_ratios = [self.context_aspect_ratio, *self.target_aspect_ratios]
         context_mask, *target_masks = multi_block_mask(
             H // self.patch_size,
             W // self.patch_size,
@@ -778,7 +780,9 @@ class ContextTargetsMultiBlockMask(Transform):
             context_mask &= ~mask
 
         x[self.target_context] = torch.nonzero(context_mask).flatten().squeeze()
-        x[self.target_targets] = [torch.nonzero(mask).flatten().squeeze() for mask in target_masks]
+        x[self.target_targets] = [
+            torch.nonzero(mask).flatten().squeeze() for mask in target_masks
+        ]
         x[self.get_name(x)] = torch.tensor([scales, aspect_ratios])
         return x
 
