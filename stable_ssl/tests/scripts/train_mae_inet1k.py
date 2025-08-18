@@ -8,6 +8,7 @@ import torchvision
 from lightning.pytorch.loggers import WandbLogger
 from timm.models.vision_transformer import VisionTransformer
 from torch import nn
+from lightning.pytorch.strategies import DDPStrategy
 
 import stable_ssl as ssl
 from stable_ssl.data import transforms
@@ -15,18 +16,20 @@ from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 
+train_batch_size = 128
+val_batch_size = 128
+num_workers = 32
+num_classes = 1000
+
+# TODO
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 4
-crop_height, crop_width = 32, 32
+height, width, patch_size = 256, 256, 16
+crop_height, crop_width = 224, 224
 num_patches = (crop_height // patch_size) * (crop_width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
 mask_ratio = 0.75
 num_visible_patches = int(num_patches * (1 - mask_ratio))
-num_classes = 10
-batch_size = 512
-val_batch_size = 128
-num_workers = 16
 
 mask_transform_kwargs = dict(
     patch_size=patch_size,
@@ -51,50 +54,38 @@ val_transform = transforms.Compose(
 )
 
 
-cifar_train = torchvision.datasets.CIFAR10(
-    root="/tmp/cifar10", train=True, download=True
+inet1k_train = ssl.data.HFDataset(
+    path="ILSVRC/imagenet-1k",
+    split="train",
+    transform=train_transform,
 )
-cifar_val = torchvision.datasets.CIFAR10(
-    root="/tmp/cifar10", train=False, download=True
+
+inet1k_val = ssl.data.HFDataset(
+    path="ILSVRC/imagenet-1k",
+    split="validation",
+    transform=val_transform,
 )
 
 
-class IndexedDataset(Dataset):
-    """Custom dataset wrapper that adds sample_idx to each sample."""
-
-    def __init__(self, dataset, transform=None):
-        super().__init__(transform)
-        self.dataset = dataset
-
-    def __getitem__(self, idx):
-        image, label = self.dataset[idx]
-        sample = {"image": image, "label": label, "sample_idx": idx}
-        return self.process_sample(sample)
-
-    def __len__(self):
-        return len(self.dataset)
-
-
-
-train_dataset = IndexedDataset(cifar_train, transform=train_transform)
-val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 train = torch.utils.data.DataLoader(
-    dataset=train_dataset,
-    batch_size=batch_size,
+    dataset=inet1k_train,
+    batch_size=train_batch_size,
     shuffle=True,
     num_workers=num_workers,
     drop_last=True,
     collate_fn=torch.utils.data.default_collate,
     pin_memory=True,
+    persistent_workers=True,
 )
 
 val = torch.utils.data.DataLoader(
-    dataset=val_dataset,
+    dataset=inet1k_val,
     batch_size=val_batch_size,
     num_workers=num_workers,
     shuffle=False,
     collate_fn=torch.utils.data.default_collate,
     pin_memory=True,
+    persistent_workers=True,
 )
 
 data = ssl.data.DataModule(train=train, val=val)
@@ -278,15 +269,15 @@ linear_probe = ssl.callbacks.OnlineProbe(
 rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding", 
-    queue_length=min(512, batch_size),
+    queue_length=min(512, train_batch_size),
     target_shape=(num_visible_patches, 768), 
 )
 
 # Initialize W&B logger
 wandb_logger = WandbLogger(
-    project="mae-cifar10",
+    project="mae-inet1k",
     entity="slightly-more-badass",
-    name="mae-cifar10-run",
+    name="mae-inet1k-run",
     log_model=False,
     offline=True,
 )
@@ -299,7 +290,12 @@ trainer = pl.Trainer(
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
-    devices=1
+    devices=8,
+    strategy=DDPStrategy(
+        find_unused_parameters=True,
+        static_graph=True,
+        gradient_as_bucket_view=True,
+    )
 )
 
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
