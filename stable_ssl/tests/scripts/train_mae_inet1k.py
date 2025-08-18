@@ -18,7 +18,7 @@ from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 train_batch_size = 128
 val_batch_size = 128
-num_workers = 32
+num_workers = 0
 num_classes = 1000
 
 # TODO
@@ -40,7 +40,7 @@ mask_transform_kwargs = dict(
 )
 
 train_transform = transforms.Compose(
-    transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
+    transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomMask(**mask_transform_kwargs),
     transforms.ToImage(mean=mean, std=std),
