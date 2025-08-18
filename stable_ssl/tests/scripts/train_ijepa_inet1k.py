@@ -282,9 +282,7 @@ predictor_kwargs = dict(
 
 def forward(self: ssl.Module, batch, stage):
     out = {}
-    target_encoder: IJEPA_Encoder = (
-        self.target_encoder.teacher
-    )  # NOTE Would this break anything?
+    target_encoder: IJEPA_Encoder = self.target_encoder.teacher
     context_encoder: IJEPA_Encoder = self.context_encoder
     predictor: IJEPA_Predictor = self.predictor
     ijepa_loss: nn.Module = self.ijepa_loss
@@ -357,7 +355,7 @@ wandb_logger = WandbLogger(
 )
 
 trainer = pl.Trainer(
-    max_epochs=6,
+    max_epochs=300,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
     callbacks=[linear_probe, rankme],
     precision="16-mixed",

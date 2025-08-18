@@ -757,9 +757,9 @@ class ContextTargetsMultiBlockMask(Transform):
     def __call__(self, x):
         source = self.nested_get(x, self.source)
         if isinstance(source, PIL.Image.Image):
-            H, W = source.size
+            W, H = source.size  # PIL is W,H
         elif isinstance(source, torch.Tensor):
-            # NOTE assumes _HW
+            # assumes H W
             H, W = source.shape[-2:]
         else:
             raise ValueError(
@@ -810,7 +810,7 @@ class RandomMask(Transform):
     def __call__(self, x):
         source = self.nested_get(x, self.source)
         if isinstance(source, PIL.Image.Image):
-            H, W = source.size
+            W, H = source.size  # PIL is W,H
         elif isinstance(source, torch.Tensor):
             # NOTE assumes _HW
             H, W = source.shape[-2:]
