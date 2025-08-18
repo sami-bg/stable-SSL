@@ -124,6 +124,7 @@ def apply_mask(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     mask_expanded = mask.unsqueeze(-1).expand(-1, -1, D)
     return torch.gather(x, dim=1, index=mask_expanded)
 
+
 def patchify(images: torch.Tensor, patch_size: int) -> torch.Tensor:
     """
     images: [B, C, H, W] -> [B, N, P*P*C]
@@ -144,7 +145,7 @@ class MAE_Encoder(VisionTransformer):
         super().__init__(*args, **kwargs)
         # number of patch tokens (no cls)
         self.patch_size = kwargs.get('patch_size', 16)
-        self.num_patches = self.patch_embed.num_patches  # do NOT add prefix here
+        self.num_patches = self.patch_embed.num_patches
         self.mae_patch_project = nn.Linear(mae_in_dim, self.embed_dim)
 
     def project_patches(self, patches: torch.Tensor) -> torch.Tensor:
@@ -172,6 +173,7 @@ def _forward_decoder(self, batch: dict, out: dict, stage) -> torch.Tensor:
     decoder: MAE_Decoder = self.decoder
     patches_visible = out["embeddings"]
     inverse_shuffle = batch["ids_restore"].unsqueeze(-1).expand(-1, -1, decoder.embed_dim)
+    # project encoded patches to decoder's space
     decoder_patches = decoder.decoder_embed(patches_visible)
 
     patches_cls, patches_visible = torch.split(decoder_patches, [1, decoder_patches.shape[1] - 1], dim=1)
