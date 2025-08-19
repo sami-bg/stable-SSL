@@ -24,9 +24,11 @@ patch_channel_dim = 3 * patch_size * patch_size
 mask_ratio = 0.75
 num_visible_patches = int(num_patches * (1 - mask_ratio))
 num_classes = 10
-batch_size = 512
+batch_size = 128
 val_batch_size = 128
 num_workers = 16
+encoder_embed_dim = 384
+decoder_embed_dim = 256
 
 mask_transform_kwargs = dict(
     patch_size=patch_size,
@@ -237,7 +239,7 @@ def forward(self, batch: dict, stage):
 encoder_kwargs = dict(
     img_size=(crop_height, crop_width),
     patch_size=patch_size,
-    embed_dim=768,
+    embed_dim=encoder_embed_dim,
     depth=16,
     num_heads=16,
     qkv_bias=True,  # MAE typically uses bias
@@ -247,8 +249,8 @@ encoder_kwargs = dict(
 decoder_kwargs = dict(
     img_size=(crop_height, crop_width),
     patch_size=patch_size,
-    mae_enc_dim=768,
-    embed_dim=512,
+    mae_enc_dim=encoder_embed_dim,
+    embed_dim=decoder_embed_dim,
     depth=8,
     num_heads=16,
 )
@@ -259,14 +261,25 @@ module = ssl.Module(
     decoder=MAE_Decoder(**decoder_kwargs),
     forward=forward,
     loss_fn=F.mse_loss,  # pixel MSE loss. we make implicit assumption that norm-pix-loss is False
+    optim={
+        "optimizer": {
+            "type": "LARS",
+            "lr": 1e-3,
+            "weight_decay": 1e-6,
+        },
+        "scheduler": {
+            "type": "LinearWarmupCosineAnnealing",
+        },
+        "interval": "epoch",
+    },
 )
 
 # Note: Linear probe uses visible patches only during training
 linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
-    "sum_embedding",
+    "flat_embedding",
     "label", 
-    probe=torch.nn.Linear(768, num_classes),
+    probe=torch.nn.Linear(encoder_embed_dim * num_visible_patches, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
@@ -279,20 +292,20 @@ rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding", 
     queue_length=min(512, batch_size),
-    target_shape=(num_visible_patches, 768), 
+    target_shape=(num_visible_patches, encoder_embed_dim), 
 )
 
 # Initialize W&B logger
 wandb_logger = WandbLogger(
-    project="mae-cifar10",
-    entity="slightly-more-badass",
+    project="ijepa-cifar10",
+    entity="samibg",
     name="mae-cifar10-run",
     log_model=False,
-    offline=True,
+    offline=False,
 )
 
 trainer = pl.Trainer(
-    max_epochs=6,
+    max_epochs=1000,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, rankme],
     precision="16-mixed",

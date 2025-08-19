@@ -8,25 +8,34 @@ from    timm.models.vision_transformer import VisionTransformer
 from    torch import nn
 
 import  stable_ssl as ssl
-from    stable_ssl.backbone.utils import TeacherStudentModule
+from    stable_ssl.backbone.utils import TeacherStudentWrapper
 from    stable_ssl.data import transforms
 from    stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 from    lightning.pytorch.strategies import DDPStrategy
-
+from    functools import partial
 
 train_batch_size = 128
 val_batch_size   = 128
 num_workers      = 32
 num_classes      = 1000
+num_epochs       = 300
+start_lr         = 2e-4
+lr               = 1e-3
+final_lr         = 1e-6
+max_grad_norm    = 5.0
+ema              = (0.996, 1.0)
+lr_warmup_steps  = 40
 
-# TODO
+
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 256, 256, 16
+height, width, patch_size = 256, 256, 14
 crop_height, crop_width = 224, 224  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # We precompute these so the predictor can make sinusoidal posembeds
 num_patches = (crop_height // patch_size) * (crop_width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
+encoder_embed_dim = 768
+predictor_embed_dim = 384
 
 # Based on the in1k_vith14_ep300.yaml config in the ijepa repository
 mask_transform_kwargs = dict(
@@ -35,8 +44,12 @@ mask_transform_kwargs = dict(
     context_aspect_ratio=(1.0, 1.0),
     target_scales=((0.15, 0.2),) * 4,
     target_aspect_ratios=((0.75, 1.5),) * 4,
-    min_keep=20,
+    min_keep=10,
 )
+
+optim = partial(torch.optim.AdamW, lr=lr, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
+scheduler = partial(ssl.optim.lr_scheduler.LinearWarmupCosineAnnealingLR, warmup_start_lr=start_lr, max_steps=num_epochs, warmup_steps=lr_warmup_steps, eta_min=final_lr)
+
 
 
 train_transform = transforms.Compose(
@@ -264,7 +277,7 @@ class IJEPA_Predictor(VisionTransformer):
 
 encoder_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=768,
+    embed_dim=encoder_embed_dim,
     depth=12,
     num_heads=12,
     qkv_bias=False,
@@ -272,11 +285,11 @@ encoder_kwargs = dict(
 )
 predictor_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=384,
+    embed_dim=predictor_embed_dim,
     depth=12,
     num_heads=12,
     qkv_bias=False,
-    ijepa_encoder_dim=768,
+    ijepa_encoder_dim=encoder_embed_dim,
     predictor_num_patches=num_patches,
 )
 
@@ -308,18 +321,18 @@ def forward(self: ssl.Module, batch, stage):
     context_patches = apply_masks(image_patches, mask_context)
     context_patches = context_encoder.project_patches(context_patches)
     context_patches = context_patches + apply_masks(pos_embedding, mask_context)
-    out["context_patches"] = context_encoder.encode_patches(
+    context_patches = context_encoder.encode_patches(
         context_patches, with_layernorm=False
     )
+    out["context_patches"] = context_patches
     out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
-
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
     return out
 
 
 module = ssl.Module(
     context_encoder=(ctx := IJEPA_Encoder(**encoder_kwargs)),
-    target_encoder=TeacherStudentModule(ctx),
+    target_encoder=TeacherStudentWrapper(ctx),
     predictor=IJEPA_Predictor(**predictor_kwargs),
     forward=forward,
     ijepa_loss=F.smooth_l1_loss,
@@ -330,7 +343,7 @@ linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
     "sum_embedding",
     "label",
-    probe=torch.nn.Linear(768, num_classes),
+    probe=torch.nn.Linear(encoder_embed_dim, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
@@ -342,7 +355,7 @@ rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding",
     queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
-    target_shape=(num_patches, 768),
+    target_shape=(num_patches, encoder_embed_dim),
 )
 
 

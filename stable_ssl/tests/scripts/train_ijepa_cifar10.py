@@ -10,31 +10,35 @@ from timm.models.vision_transformer import VisionTransformer
 from torch import nn
 
 import stable_ssl as ssl
-from stable_ssl.backbone.utils import TeacherStudentModule
+from stable_ssl.backbone.utils import TeacherStudentWrapper
 from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
+
+# TODO Beware - some of these are commented out eventually and 
+# not used in the optimizer below.
 # -- optim
-train_batch_size = 512
+train_batch_size = 128
 val_batch_size = 128
-num_epochs = 125
+num_epochs = 1000
 lr_warmup_epochs = 15
-lr = 2e-3
-max_grad_norm = 10.0
+lr = 5
+# max_grad_norm = 5.0
+max_grad_norm = None
 ema = (0.97, 0.999)
 ipe_scale = 1.25
 
 
 # -- data
-num_workers = 0
+num_workers = 64
 num_classes = 10
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 2
-crop_height, crop_width = 28, 28  #   # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
+height, width, patch_size = 32, 32, 4
+crop_height, crop_width = 32, 32  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # we precompute these so the predictor can make sinusoidal posembeds
-num_patches = (height // patch_size) * (width // patch_size)
+num_patches = (crop_height // patch_size) * (crop_width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
 
 # based on the in1k_vith14_ep300.yaml config in the ijepa repository
@@ -58,7 +62,7 @@ train_transform = transforms.Compose(
 val_transform = transforms.Compose(
     transforms.RGB(),
     transforms.Resize((height, width)),
-    transforms.CenterCrop((height, width)),
+    transforms.CenterCrop((crop_height, crop_width)),
     transforms.ToImage(mean=mean, std=std),
 )
 
@@ -123,6 +127,8 @@ train = torch.utils.data.DataLoader(
     num_workers=num_workers,
     drop_last=True,
     collate_fn=standardize_masks,
+    pin_memory=True,
+    persistent_workers=True,
 )
 
 val_dataset = IndexedDataset(cifar_val, transform=val_transform)
@@ -131,6 +137,8 @@ val = torch.utils.data.DataLoader(
     batch_size=val_batch_size,
     num_workers=num_workers,
     shuffle=True,
+    pin_memory=True,
+    persistent_workers=True,
 )
 
 
@@ -287,19 +295,19 @@ class IJEPA_Predictor(VisionTransformer):
 # pico vit
 encoder_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=64,
+    embed_dim=384,
     depth=12,
-    num_heads=2,
+    num_heads=6,
     qkv_bias=False,
     ijepa_in_dim=patch_channel_dim,
 )
 predictor_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=32,
+    embed_dim=192,
     depth=6,
-    num_heads=2,
+    num_heads=6,
     qkv_bias=False,
-    ijepa_encoder_dim=768,
+    ijepa_encoder_dim=384,
     predictor_num_patches=num_patches,
 )
 
@@ -334,31 +342,47 @@ def forward(self: ssl.Module, batch, stage):
     context_patches = apply_masks(image_patches, mask_context)
     context_patches = context_encoder.project_patches(context_patches)
     context_patches = context_patches + apply_masks(pos_embedding, mask_context)
-    out["context_patches"] = context_encoder.encode_patches(
+    context_patches = context_encoder.encode_patches(
         context_patches, with_layernorm=False
     )
+    out["context_patches"] = context_patches
     out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
-
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
     return out
 
 
 module = ssl.Module(
     context_encoder=context_encoder,
-    target_encoder=TeacherStudentModule(context_encoder, base_ema_coefficient=ema[0], final_ema_coefficient=ema[1]),
+    target_encoder=TeacherStudentWrapper(context_encoder, base_ema_coefficient=ema[0], final_ema_coefficient=ema[1]),
     predictor=predictor,
     forward=forward,
     ijepa_loss=F.smooth_l1_loss,
-    optim=dict(optimizer=optim, scheduler=scheduler),
+    optim={
+        "optimizer": {
+            "type": "LARS",
+            "lr": 1e-3,
+            "weight_decay": 1e-6,
+        },
+        "scheduler": {
+            "type": "LinearWarmupCosineAnnealing",
+        },
+        "interval": "epoch",
+    },
+    # optim=dict(optimizer=optim, scheduler=scheduler),
 )
 
 
+probe_optimizer = partial(torch.optim.AdamW, lr=3e-4, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
+probe_scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs))
+
 linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
-    "sum_embedding",
+    "flat_embedding",
     "label",
-    probe=torch.nn.Linear(768, 10),
+    probe=torch.nn.Linear(384 * num_patches, 10),
     loss_fn=torch.nn.CrossEntropyLoss(),
+    optimizer=probe_optimizer,
+    scheduler=probe_scheduler,
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(10),
         "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
@@ -368,17 +392,17 @@ linear_probe = ssl.callbacks.OnlineProbe(
 rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding",
-    queue_length=512,  # NOTE must be >= batch_size
-    target_shape=(num_patches, 768),
+    queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
+    target_shape=(num_patches, 384),
 )
 
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
     project="ijepa-cifar10",
-    entity="slightly-more-badass",  # Your W&B entity
+    entity="samibg",  # Your W&B entity
     name="ijepa-cifar10-run",
     log_model=False,  # Set to True if you want to save model artifacts
-    offline=True,  # Ensure offline mode
+    offline=False,  # Ensure offline mode
 )
 
 
@@ -388,7 +412,10 @@ trainer = pl.Trainer(
     callbacks=[linear_probe, rankme],
     precision="16-mixed",
     logger=wandb_logger,
+    devices=1,
     enable_checkpointing=False,
+    gradient_clip_val=max_grad_norm,
+    gradient_clip_algorithm="norm",
 )
 
 manager = ssl.Manager(trainer=trainer, module=module, data=data)

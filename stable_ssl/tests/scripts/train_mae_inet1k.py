@@ -15,7 +15,8 @@ from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
-
+encoder_embed_dim = 768
+decoder_embed_dim = 512
 train_batch_size = 128
 val_batch_size = 128
 num_workers = 0
@@ -228,7 +229,7 @@ def forward(self, batch: dict, stage):
 encoder_kwargs = dict(
     img_size=(crop_height, crop_width),
     patch_size=patch_size,
-    embed_dim=768,
+    embed_dim=encoder_embed_dim,
     depth=16,
     num_heads=16,
     qkv_bias=True,  # MAE typically uses bias
@@ -238,8 +239,8 @@ encoder_kwargs = dict(
 decoder_kwargs = dict(
     img_size=(crop_height, crop_width),
     patch_size=patch_size,
-    mae_enc_dim=768,
-    embed_dim=512,
+    mae_enc_dim=encoder_embed_dim,
+    embed_dim=decoder_embed_dim,
     depth=8,
     num_heads=16,
 )
@@ -257,7 +258,7 @@ linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
     "sum_embedding",
     "label", 
-    probe=torch.nn.Linear(768, num_classes),
+    probe=torch.nn.Linear(encoder_embed_dim, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
@@ -270,7 +271,7 @@ rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_embedding", 
     queue_length=min(512, train_batch_size),
-    target_shape=(num_visible_patches, 768), 
+    target_shape=(num_visible_patches, encoder_embed_dim), 
 )
 
 # Initialize W&B logger
