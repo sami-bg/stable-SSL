@@ -1,18 +1,23 @@
-from .checkpoint_sklearn import SklearnCheckpoint
+from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
 from .image_retrieval import ImageRetrieval
 from .knn import OnlineKNN
+from .latent_viz import LatentViz
 from .lidar import LiDAR
 from .probe import OnlineProbe
 from .rankme import RankMe
-from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo
+from .teacher_student import TeacherStudentCallback
+from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 from .utils import EarlyStopping
 from .writer import OnlineWriter
 
 __all__ = [
     OnlineProbe,
     SklearnCheckpoint,
+    WandbCheckpoint,
     OnlineKNN,
+    LatentViz,
     TrainerInfo,
+    SLURMInfo,
     LoggingCallback,
     ModuleSummary,
     EarlyStopping,
@@ -20,4 +25,5 @@ __all__ = [
     RankMe,
     LiDAR,
     ImageRetrieval,
+    TeacherStudentCallback,
 ]

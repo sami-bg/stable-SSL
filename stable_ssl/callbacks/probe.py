@@ -1,37 +1,67 @@
-"""Online probe callback."""
-
+from functools import partial
 from typing import Dict, Optional, Union
 
 import torch
 import torchmetrics
 from hydra.utils import instantiate
-from lightning.pytorch import Callback, LightningModule, Trainer
+from lightning.pytorch import LightningModule, Trainer
 from loguru import logger as logging
 
 from stable_ssl.utils import get_data_from_batch_or_outputs
 
-from ..optim import LARS
-from .utils import EarlyStopping, format_metrics_as_dict
+from .utils import EarlyStopping, OptimizedCallback, format_metrics_as_dict
 
 
-class OnlineProbe(Callback):
-    """Attaches a nn.Module for fine-tuning using the standard self-supervised protocol.
+class OnlineProbe(OptimizedCallback):
+    """Online probe for evaluating learned representations during self-supervised training.
 
-    This callback trains a probe (typically a linear classifier) on top of frozen
-    features during the main training process. It manages its own optimizer and
-    training loop without modifying the base model's methods.
+    This callback implements the standard linear evaluation protocol by training a probe
+    (typically a linear classifier) on top of frozen features from the main model. The probe
+    is trained simultaneously with the main model but maintains its own optimizer, scheduler,
+    and training loop. This allows monitoring representation quality throughout training
+    without modifying the base model.
+
+    Key features:
+    - Automatic gradient detachment to prevent probe gradients affecting the main model
+    - Independent optimizer and scheduler management
+    - Support for gradient accumulation
+    - Mixed precision training compatibility through automatic dtype conversion
+    - Built-in early stopping support
+    - Metric tracking and logging
 
     Args:
-        name: Unique identifier for this probe instance
-        input: Key in batch dict containing input features
-        target: Key in batch dict containing target labels
-        probe: The probe module (e.g., linear classifier)
-        loss_fn: Loss function for probe training
-        optimizer: Optimizer configuration for the probe
-        scheduler: Learning rate scheduler configuration
-        accumulate_grad_batches: Number of batches to accumulate gradients
-        metrics: Metrics to track during training/validation
-        early_stopping: Early stopping configuration
+        name: Unique identifier for this probe instance. Used for logging and storing
+            metrics/modules.
+        input: Key in batch dict or outputs dict containing input features to probe.
+        target: Key in batch dict containing ground truth target labels.
+        probe: The probe module to train. Can be a nn.Module instance, callable that
+            returns a module, or Hydra config to instantiate.
+        loss_fn: Loss function for probe training (e.g., nn.CrossEntropyLoss()).
+        optimizer: Optimizer configuration for the probe. Can be:
+            - str: optimizer name (e.g., "AdamW", "SGD", "LARS")
+            - dict: {"type": "AdamW", "lr": 1e-3, ...}
+            - partial: pre-configured optimizer factory
+            - optimizer instance or callable
+            - None: inherits from main Module's optimizer config (default)
+        scheduler: Learning rate scheduler configuration. Can be:
+            - str: scheduler name (e.g., "CosineAnnealingLR", "StepLR")
+            - dict: {"type": "CosineAnnealingLR", "T_max": 1000, ...}
+            - partial: pre-configured scheduler factory
+            - scheduler instance or callable
+            - None: inherits from main Module's scheduler config (default)
+        accumulate_grad_batches: Number of batches to accumulate gradients before
+            optimizer step. Default is 1 (no accumulation).
+        metrics: Metrics to track during training/validation. Can be dict, list, tuple,
+            or single metric instance.
+        early_stopping: Early stopping configuration to halt training if validation
+            metric stops improving.
+
+    Note:
+        - The probe module is stored in pl_module._callbacks_modules[name]
+        - Metrics are stored in pl_module._callbacks_metrics[name]
+        - Predictions are stored in batch dict with key '{name}_preds'
+        - Loss is logged as 'train/{name}_loss'
+        - Metrics are logged with prefix 'train/{name}_' and 'eval/{name}_'
     """
 
     def __init__(
@@ -41,36 +71,31 @@ class OnlineProbe(Callback):
         target: str,
         probe: torch.nn.Module,
         loss_fn: callable,
-        optimizer: Optional[torch.optim.Optimizer] = None,
-        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+        optimizer: Optional[Union[str, dict, partial, torch.optim.Optimizer]] = None,
+        scheduler: Optional[
+            Union[str, dict, partial, torch.optim.lr_scheduler.LRScheduler]
+        ] = None,
         accumulate_grad_batches: int = 1,
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
         early_stopping: Optional[EarlyStopping] = None,
     ) -> None:
-        super().__init__()
+        # Initialize base class
+        super().__init__(
+            name=name,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            accumulate_grad_batches=accumulate_grad_batches,
+        )
 
-        self.name = name
         self.input = input
         self.target = target
         self.loss_fn = loss_fn
-        self.accumulate_grad_batches = accumulate_grad_batches
         self.early_stopping = early_stopping
 
-        # Initialize probe module
-        if isinstance(probe, torch.nn.Module):
-            self.probe_module = probe
-        elif callable(probe):
-            self.probe_module = probe()
-        else:
-            self.probe_module = instantiate(probe, _convert_="object")
-
-        # Store optimizer and scheduler configs
-        self._optimizer_config = optimizer
-        self._scheduler_config = scheduler
+        # Store probe configuration for later initialization
+        self._probe_config = probe
 
         # These will be initialized in setup
-        self.optimizer = None
-        self.scheduler = None
         self._train_metrics = None
         self._val_metrics = None
 
@@ -82,56 +107,26 @@ class OnlineProbe(Callback):
         logging.info(f"  - Target: {target}")
         logging.info(f"  - Accumulate grad batches: {accumulate_grad_batches}")
 
+    def _initialize_module(self, pl_module: LightningModule) -> torch.nn.Module:
+        """Initialize the probe module from configuration."""
+        if isinstance(self._probe_config, torch.nn.Module):
+            probe_module = self._probe_config
+        elif callable(self._probe_config):
+            probe_module = self._probe_config()
+        else:
+            probe_module = instantiate(self._probe_config, _convert_="object")
+
+        return probe_module
+
     def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
         """Initialize optimizer, scheduler, and metrics."""
+        # Call parent setup for module/optimizer/scheduler
+        super().setup(trainer, pl_module, stage)
+
         if stage != "fit":
             return
 
-        # Move probe to correct device
-        self.probe_module = self.probe_module.to(pl_module.device)
-
-        # Initialize optimizer
-        if self._optimizer_config is None:
-            logging.warning(f"{self.name}: No optimizer given, using default LARS")
-            self.optimizer = LARS(
-                self.probe_module.parameters(),
-                lr=0.1,
-                clip_lr=True,
-                eta=0.02,
-                exclude_bias_n_norm=True,
-                weight_decay=0,
-            )
-        else:
-            if callable(self._optimizer_config):
-                self.optimizer = self._optimizer_config(self.probe_module.parameters())
-            else:
-                self.optimizer = instantiate(
-                    self._optimizer_config,
-                    params=self.probe_module.parameters(),
-                    _convert_="object",
-                )
-
-        # Initialize scheduler
-        if self._scheduler_config is None:
-            logging.warning(f"{self.name}: No scheduler given, using ConstantLR")
-            self.scheduler = torch.optim.lr_scheduler.ConstantLR(
-                self.optimizer, factor=1.0
-            )
-        else:
-            if callable(self._scheduler_config):
-                self.scheduler = self._scheduler_config(self.optimizer)
-            else:
-                self.scheduler = instantiate(
-                    self._scheduler_config, optimizer=self.optimizer, _convert_="object"
-                )
-
-        # Store probe module in pl_module for compatibility
-        logging.info(f"{self.name}: Storing probe module in _callbacks_modules")
-        if not hasattr(pl_module, "_callbacks_modules"):
-            pl_module._callbacks_modules = {}
-        pl_module._callbacks_modules[self.name] = self.probe_module
-
-        # Initialize metrics
+        # Setup metrics
         logging.info(f"{self.name}: Setting up metrics")
         if not hasattr(pl_module, "_callbacks_metrics"):
             pl_module._callbacks_metrics = {}
@@ -139,13 +134,8 @@ class OnlineProbe(Callback):
             self.metrics_config
         )
 
-        # Store references for easy access
         self._train_metrics = pl_module._callbacks_metrics[self.name]["_train"]
         self._val_metrics = pl_module._callbacks_metrics[self.name]["_val"]
-
-        # Metrics will be automatically moved to correct device by Lightning
-
-        logging.info(f"{self.name}: Setup complete")
 
     def on_train_batch_end(
         self,
@@ -156,7 +146,6 @@ class OnlineProbe(Callback):
         batch_idx: int,
     ) -> None:
         """Perform probe training step."""
-        # Get input and target data
         x = get_data_from_batch_or_outputs(
             self.input, batch, outputs, caller_name=self.name
         )
@@ -167,38 +156,27 @@ class OnlineProbe(Callback):
         if x is None or y is None:
             return
 
-        # Ensure probe is in training mode
-        self.probe_module.train()
+        self.module.train()
 
-        # Forward pass with gradient enabled
         with torch.enable_grad():
-            # Detach input features to prevent gradients flowing to main model
             x = x.detach()
 
-            # Ensure input has same dtype as probe module
-            # This handles mixed precision training where features might be float16
-            probe_dtype = next(self.probe_module.parameters()).dtype
+            probe_dtype = next(self.module.parameters()).dtype
             if x.dtype != probe_dtype:
                 x = x.to(probe_dtype)
 
-            # Forward through probe
-            preds = self.probe_module(x)
+            preds = self.module(x)
 
-            # Compute loss
             loss = self.loss_fn(preds, y)
 
-            # Scale loss for gradient accumulation
             loss = loss / self.accumulate_grad_batches
 
-            # Backward pass
             loss.backward()
 
-        # Store predictions in batch (detached)
         prediction_key = f"{self.name}_preds"
         if prediction_key not in batch:
             batch[prediction_key] = preds.detach()
 
-        # Update metrics and log
         logs = {f"train/{self.name}_loss": loss.item() * self.accumulate_grad_batches}
         for metric_name, metric in pl_module._callbacks_metrics[self.name][
             "_train"
@@ -208,14 +186,8 @@ class OnlineProbe(Callback):
 
         pl_module.log_dict(logs, on_step=True, on_epoch=True)
 
-        # Optimizer step (respecting gradient accumulation)
-        if (batch_idx + 1) % self.accumulate_grad_batches == 0:
-            self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
-
-            # Scheduler step (typically done per optimizer step, not per batch)
-            if trainer.global_step % trainer.accumulate_grad_batches == 0:
-                self.scheduler.step()
+        # Optimizer step using parent class method
+        self.optimizer_step(batch_idx, trainer)
 
     def on_validation_batch_end(
         self,
@@ -239,17 +211,17 @@ class OnlineProbe(Callback):
             return
 
         # Ensure probe is in eval mode
-        self.probe_module.eval()
+        self.module.eval()
 
         # Forward pass without gradients
         with torch.no_grad():
             # Ensure input has same dtype as probe module
             # This handles mixed precision training where features might be float16
-            probe_dtype = next(self.probe_module.parameters()).dtype
+            probe_dtype = next(self.module.parameters()).dtype
             if x.dtype != probe_dtype:
                 x = x.to(probe_dtype)
 
-            preds = self.probe_module(x)
+            preds = self.module(x)
 
         # Store predictions in batch
         prediction_key = f"{self.name}_preds"
@@ -292,19 +264,7 @@ class OnlineProbe(Callback):
             )
             trainer.should_stop = True
 
-    def state_dict(self) -> Dict:
-        """Save callback state including probe module and optimizer states."""
-        return {
-            "probe_module": self.probe_module.state_dict(),
-            "optimizer": self.optimizer.state_dict() if self.optimizer else None,
-            "scheduler": self.scheduler.state_dict() if self.scheduler else None,
-        }
-
-    def load_state_dict(self, state_dict: Dict) -> None:
-        """Load callback state including probe module and optimizer states."""
-        if "probe_module" in state_dict:
-            self.probe_module.load_state_dict(state_dict["probe_module"])
-        if "optimizer" in state_dict and self.optimizer:
-            self.optimizer.load_state_dict(state_dict["optimizer"])
-        if "scheduler" in state_dict and self.scheduler:
-            self.scheduler.load_state_dict(state_dict["scheduler"])
+    @property
+    def probe_module(self):
+        """Alias for self.module for backward compatibility."""
+        return self.module

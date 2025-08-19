@@ -287,16 +287,26 @@ class Subset(Dataset):
 
 
 class FromTorchDataset(Dataset):
-    """Wrapper for PyTorch datasets with custom column naming and transforms."""
+    """Wrapper for PyTorch datasets with custom column naming and transforms.
 
-    def __init__(self, dataset, names, transform=None):
+    Args:
+        dataset: PyTorch dataset to wrap
+        names: List of names for each element returned by the dataset
+        transform: Optional transform to apply to samples
+        add_sample_idx: If True, automatically adds 'sample_idx' field to each sample
+    """
+
+    def __init__(self, dataset, names, transform=None, add_sample_idx=True):
         super().__init__(transform)
         self.dataset = dataset
         self.names = names
+        self.add_sample_idx = add_sample_idx
 
     def __getitem__(self, idx):
         sample = self.dataset[idx]
         sample = {k: v for k, v in zip(self.names, sample)}
+        if self.add_sample_idx:
+            sample["sample_idx"] = idx
         return self.process_sample(sample)
 
     def __len__(self):
@@ -304,7 +314,10 @@ class FromTorchDataset(Dataset):
 
     @property
     def column_names(self):
-        return self.names
+        columns = list(self.names)
+        if self.add_sample_idx and "sample_idx" not in columns:
+            columns.append("sample_idx")
+        return columns
 
 
 class MinariStepsDataset(Dataset):
@@ -316,8 +329,11 @@ class MinariStepsDataset(Dataset):
         super().__init__(transform)
         self.num_steps = num_steps
         self.dataset = dataset
-        self.bounds = self.dataset.episode_indices
+
+        episode_lengths = [len(dataset[idx]) for idx in dataset.episode_indices[:-1]]
+        self.bounds = np.cumsum([0] + episode_lengths)
         self.bounds -= np.arange(self.dataset.total_episodes) * (num_steps - 1)
+
         self._length = (
             self.dataset.total_steps - (num_steps - 1) * self.dataset.total_episodes
         )

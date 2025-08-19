@@ -29,13 +29,27 @@ class EvalOnly(nn.Module):
         return self.backbone.forward(*args, **kwargs)
 
 
-class TeacherStudentModule(nn.Module):
-    """Student network and its teacher network updated as an EMA of the student network.
+class TeacherStudentWrapper(nn.Module):
+    """Backbone wrapper that implements teacher-student distillation via EMA.
+
+    This is a wrapper for backbones that creates a teacher model as an exponential moving average (EMA) of the student model.
+    It should be passed as the backbone to stable_ssl.Module and accessed via
+    forward_student() and forward_teacher() methods in your custom forward function.
 
     The teacher model is updated by taking a running average of the student's
     parameters and buffers. When `ema_coefficient == 0.0`, the teacher and student
     are literally the same object, saving memory but forward passes through the teacher
     will not produce any gradients.
+
+    Usage example:
+        backbone = ResNet18()
+        wrapped_backbone = TeacherStudentWrapper(backbone)
+        module = ssl.Module(
+            backbone=wrapped_backbone,
+            projector=projector,
+            forward=forward_with_teacher_student,
+            ...
+        )
 
     Args:
         student (torch.nn.Module): The student model whose parameters will be tracked.

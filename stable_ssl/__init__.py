@@ -13,6 +13,7 @@ from .__about__ import (
     __url__,
     __version__,
 )
+from .backbone.utils import TeacherStudentWrapper
 from .callbacks import (
     EarlyStopping,
     ImageRetrieval,
@@ -24,6 +25,7 @@ from .callbacks import (
     OnlineWriter,
     RankMe,
     SklearnCheckpoint,
+    TeacherStudentCallback,
     TrainerInfo,
 )
 from .manager import Manager
@@ -41,6 +43,7 @@ __all__ = [
     RankMe,
     LiDAR,
     ImageRetrieval,
+    TeacherStudentCallback,
     utils,
     data,
     module,
@@ -52,6 +55,7 @@ __all__ = [
     Manager,
     backbone,
     Module,
+    TeacherStudentWrapper,
     __author__,
     __license__,
     __summary__,
@@ -78,7 +82,7 @@ def rank_zero_only_filter(record):
 
     # Check common environment variables for distributed rank
     rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
-    return rank == "0"
+    return rank == "0" and record["level"].no >= logger.level("INFO").no
 
 
 logger.remove()
@@ -86,30 +90,33 @@ logger.add(
     sys.stderr,
     format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <7}</level> (<cyan>{process}, {name}</cyan>) | <level>{message}</level>",
     filter=rank_zero_only_filter,
+    level="INFO",
 )
 
 
 # Redirect standard logging to loguru
 class InterceptHandler(logging.Handler):
     def emit(self, record):
+        logger.log(record.levelname, record.getMessage())
         # Get corresponding Loguru level if it exists
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
+        # try:
+        #     level = logger.level(record.levelname).name
+        # except ValueError:
+        #     level = "INFO"
+
         # Find caller from where originated the log message
-        frame, depth = logging.currentframe(), 2
-        while frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+        # frame, depth = logging.currentframe(), 2
+        # while frame.f_code.co_filename == logging.__file__:
+        #     frame = frame.f_back
+        #     depth += 1
+        # logger.opt(depth=depth, exception=record.exc_info).log(
+        #     level, record.getMessage()
+        # )
 
 
 # Remove all handlers associated with the root logger object
 logging.root.handlers = []
-logging.basicConfig(handlers=[InterceptHandler()], level=0)
+logging.basicConfig(handlers=[InterceptHandler()], level="INFO")
 
 # Try to set datasets logging verbosity if available
 try:

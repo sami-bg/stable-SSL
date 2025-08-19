@@ -5,12 +5,13 @@ This script is extracted from the integration tests to allow manual testing
 with different datasets when the default dataset is not available.
 """
 
+import os
+
 import lightning as pl
 import torch
 import torchmetrics
 import torchvision
-from lightning.pytorch.loggers import WandbLogger
-from transformers import AutoConfig, AutoModelForImageClassification
+from lightning.pytorch.loggers import CSVLogger
 
 import stable_ssl as ssl
 from stable_ssl.data import transforms
@@ -59,7 +60,7 @@ train_dataset = IndexedDataset(cifar_train, transform=train_transform)
 train = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=ssl.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
-    batch_size=64,
+    batch_size=1024,
     num_workers=20,
     drop_last=True,
 )
@@ -85,7 +86,7 @@ data = ssl.data.DataModule(train=train, val=val)
 
 def forward(self, batch, stage):
     out = {}
-    out["embedding"] = self.backbone(batch["image"])["logits"]
+    out["embedding"] = self.backbone(batch["image"])
     if self.training:
         proj = self.projector(out["embedding"])
         views = ssl.data.fold_views(proj, batch["sample_idx"])
@@ -93,28 +94,45 @@ def forward(self, batch, stage):
     return out
 
 
-config = AutoConfig.from_pretrained("microsoft/resnet-18")
-backbone = AutoModelForImageClassification.from_config(config)
+backbone = torchvision.models.resnet18(weights=None, num_classes=10)
+backbone.fc = torch.nn.Identity()
 projector = torch.nn.Linear(512, 128)
-backbone.classifier[1] = torch.nn.Identity()
+
 module = ssl.Module(
     backbone=backbone,
     projector=projector,
     forward=forward,
     simclr_loss=ssl.losses.NTXEntLoss(temperature=0.1),
 )
-# linear_probe = ssl.callbacks.OnlineProbe(
-#     "linear_probe",
-#     module,
-#     "embedding",
-#     "label",
-#     probe=torch.nn.Linear(512, 10),
-#     loss_fn=torch.nn.CrossEntropyLoss(),
-#     metrics={
-#         "top1": torchmetrics.classification.MulticlassAccuracy(10),
-#         "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
-#     },
-# )
+
+module.optim = {
+    "encoder_opt": {
+        "modules": r"^backbone(\.|$)",
+        "optimizer": {"type": "AdamW", "lr": 3e-4, "weight_decay": 1e-4},
+        "scheduler": "CosineAnnealingLR",  # uses smart defaults (T_max from trainer)
+        "interval": "step",
+        "frequency": 1,
+    },
+    "head_opt": {
+        "modules": r"^projector(\.|$)",
+        "optimizer": {"type": "SGD", "lr": 1e-2, "momentum": 0.9},
+        "scheduler": {"type": "StepLR", "step_size": 50, "gamma": 0.5},
+        "interval": "step",
+        "frequency": 2,
+    },
+}
+
+linear_probe = ssl.callbacks.OnlineProbe(
+    name="linear_probe",
+    input="embedding",
+    target="label",
+    probe=torch.nn.Linear(512, 10),
+    loss_fn=torch.nn.CrossEntropyLoss(),
+    metrics={
+        "top1": torchmetrics.classification.MulticlassAccuracy(10),
+        "top5": torchmetrics.classification.MulticlassAccuracy(10, top_k=5),
+    },
+)
 knn_probe = ssl.callbacks.OnlineKNN(
     name="knn_probe",
     input="embedding",
@@ -125,13 +143,9 @@ knn_probe = ssl.callbacks.OnlineKNN(
     k=10,
 )
 
-# Initialize W&B logger with explicit settings
-wandb_logger = WandbLogger(
-    project="simclr-cifar10",
-    entity="badass",  # Your W&B entity
-    name="simclr-cifar10-run",
-    log_model=False,  # Set to True if you want to save model artifacts
-    offline=False,  # Ensure online mode
+# Use CSV logger for local logging without W&B
+csv_logger = CSVLogger(
+    save_dir=os.environ.get("LOG_DIR", "./logs"), name="simclr-cifar10"
 )
 
 trainer = pl.Trainer(
@@ -139,7 +153,7 @@ trainer = pl.Trainer(
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
     callbacks=[knn_probe],
     precision="16-mixed",
-    logger=wandb_logger,
+    logger=csv_logger,
     enable_checkpointing=False,
 )
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
