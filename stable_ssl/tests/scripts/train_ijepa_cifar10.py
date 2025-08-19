@@ -1,5 +1,5 @@
 import math
-
+from    functools import partial
 import lightning as pl
 import torch
 import torch.nn.functional as F
@@ -15,15 +15,29 @@ from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
+# -- optim
+train_batch_size = 512
+val_batch_size = 128
+num_epochs = 125
+lr_warmup_epochs = 15
+lr = 2e-3
+max_grad_norm = 10.0
+ema = (0.97, 0.999)
+ipe_scale = 1.25
+
+
+# -- data
+num_workers = 0
+num_classes = 10
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 4
-crop_height, crop_width = 32, 32  #   # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
-# We precompute these so the predictor can make sinusoidal posembeds
+height, width, patch_size = 32, 32, 2
+crop_height, crop_width = 28, 28  #   # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
+# we precompute these so the predictor can make sinusoidal posembeds
 num_patches = (height // patch_size) * (width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
 
-# Based on the in1k_vith14_ep300.yaml config in the ijepa repository
+# based on the in1k_vith14_ep300.yaml config in the ijepa repository
 mask_transform_kwargs = dict(
     patch_size=patch_size,
     context_scale=(0.85, 1.0),
@@ -55,6 +69,9 @@ cifar_train = torchvision.datasets.CIFAR10(
 cifar_val = torchvision.datasets.CIFAR10(
     root="/tmp/cifar10", train=False, download=True
 )
+
+optim = partial(torch.optim.AdamW, lr=lr, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
+scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs))
 
 
 class IndexedDataset(Dataset):
@@ -101,9 +118,9 @@ train_dataset = IndexedDataset(cifar_train, transform=train_transform)
 # single views and handles masking at the model level
 train = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    batch_size=512,
+    batch_size=train_batch_size,
     shuffle=True,  # Regular shuffling, no RepeatedRandomSampler
-    num_workers=32,
+    num_workers=num_workers,
     drop_last=True,
     collate_fn=standardize_masks,
 )
@@ -111,8 +128,8 @@ train = torch.utils.data.DataLoader(
 val_dataset = IndexedDataset(cifar_val, transform=val_transform)
 val = torch.utils.data.DataLoader(
     dataset=val_dataset,
-    batch_size=128,
-    num_workers=32,
+    batch_size=val_batch_size,
+    num_workers=num_workers,
     shuffle=True,
 )
 
@@ -267,30 +284,32 @@ class IJEPA_Predictor(VisionTransformer):
         return pred
 
 
+# pico vit
 encoder_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=768,
+    embed_dim=64,
     depth=12,
-    num_heads=12,
+    num_heads=2,
     qkv_bias=False,
     ijepa_in_dim=patch_channel_dim,
 )
 predictor_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=384,
+    embed_dim=32,
     depth=6,
-    num_heads=6,
+    num_heads=2,
     qkv_bias=False,
     ijepa_encoder_dim=768,
     predictor_num_patches=num_patches,
 )
 
+context_encoder = IJEPA_Encoder(**encoder_kwargs)
+predictor       = IJEPA_Predictor(**predictor_kwargs)
+
 
 def forward(self: ssl.Module, batch, stage):
     out = {}
-    target_encoder: IJEPA_Encoder = (
-        self.target_encoder.teacher
-    )  # NOTE Would this break anything?
+    target_encoder: IJEPA_Encoder = self.target_encoder.teacher
     context_encoder: IJEPA_Encoder = self.context_encoder
     predictor: IJEPA_Predictor = self.predictor
     ijepa_loss: nn.Module = self.ijepa_loss
@@ -325,11 +344,12 @@ def forward(self: ssl.Module, batch, stage):
 
 
 module = ssl.Module(
-    context_encoder=(ctx := IJEPA_Encoder(**encoder_kwargs)),
-    target_encoder=TeacherStudentModule(ctx),
-    predictor=IJEPA_Predictor(**predictor_kwargs),
+    context_encoder=context_encoder,
+    target_encoder=TeacherStudentModule(context_encoder, base_ema_coefficient=ema[0], final_ema_coefficient=ema[1]),
+    predictor=predictor,
     forward=forward,
     ijepa_loss=F.smooth_l1_loss,
+    optim=dict(optimizer=optim, scheduler=scheduler),
 )
 
 
@@ -361,13 +381,15 @@ wandb_logger = WandbLogger(
     offline=True,  # Ensure offline mode
 )
 
+
 trainer = pl.Trainer(
-    max_epochs=6,
+    max_epochs=num_epochs,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
     callbacks=[linear_probe, rankme],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
 )
+
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
 manager()

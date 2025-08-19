@@ -299,7 +299,8 @@ trainer = pl.Trainer(
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
-    devices=1
+    devices=1,
+    
 )
 
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
