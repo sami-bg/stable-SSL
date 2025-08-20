@@ -779,9 +779,9 @@ class ContextTargetsMultiBlockMask(Transform):
         for mask in target_masks:
             context_mask &= ~mask
 
-        x[self.target_context] = torch.nonzero(context_mask).flatten().squeeze()
+        x[self.target_context] = torch.nonzero(context_mask.flatten()).squeeze()
         x[self.target_targets] = [
-            torch.nonzero(mask).flatten().squeeze() for mask in target_masks
+            torch.nonzero(mask.flatten()).squeeze() for mask in target_masks
         ]
         x[self.get_name(x)] = torch.tensor([scales, aspect_ratios])
         return x

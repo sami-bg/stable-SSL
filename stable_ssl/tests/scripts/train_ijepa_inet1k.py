@@ -6,25 +6,26 @@ import  torchmetrics
 from    lightning.pytorch.loggers import WandbLogger
 from    timm.models.vision_transformer import VisionTransformer
 from    torch import nn
+from    functools import partial
 
 import  stable_ssl as ssl
 from    stable_ssl.backbone.utils import TeacherStudentWrapper
 from    stable_ssl.data import transforms
 from    stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 from    lightning.pytorch.strategies import DDPStrategy
-from    functools import partial
 
 train_batch_size = 128
 val_batch_size   = 128
 num_workers      = 32
-num_classes      = 1000
+num_classes      = 10
 num_epochs       = 300
-start_lr         = 2e-4
-lr               = 1e-3
-final_lr         = 1e-6
-max_grad_norm    = 5.0
+lr_warmup_epochs = 60
+start_lr         = 0.0002
+lr               = 0.001
+final_lr         = 1.0e-6
+# max_grad_norm    = 5.0
+max_grad_norm    = None
 ema              = (0.996, 1.0)
-lr_warmup_steps  = 40
 
 
 mean = [0.485, 0.456, 0.406]
@@ -47,10 +48,6 @@ mask_transform_kwargs = dict(
     min_keep=10,
 )
 
-optim = partial(torch.optim.AdamW, lr=lr, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
-scheduler = partial(ssl.optim.lr_scheduler.LinearWarmupCosineAnnealingLR, warmup_start_lr=start_lr, max_steps=num_epochs, warmup_steps=lr_warmup_steps, eta_min=final_lr)
-
-
 
 train_transform = transforms.Compose(
     transforms.RGB(),
@@ -63,19 +60,21 @@ train_transform = transforms.Compose(
 val_transform = transforms.Compose(
     transforms.RGB(),
     transforms.Resize((height, width)),
-    transforms.CenterCrop((height, width)),
+    transforms.CenterCrop((crop_height, crop_width)),
     transforms.ToImage(mean=mean, std=std),
 )
 
 
 inet1k_train = ssl.data.HFDataset(
-    path="ILSVRC/imagenet-1k",
+    path="frgfm/imagenette",
+    name="320px",
     split="train",
     transform=train_transform,
 )
 
 inet1k_val = ssl.data.HFDataset(
-    path="ILSVRC/imagenet-1k",
+    path="frgfm/imagenette",
+    name="320px",
     split="validation",
     transform=val_transform,
 )
@@ -305,18 +304,28 @@ def forward(self: ssl.Module, batch, stage):
     target_patches = target_encoder.project_patches(image_patches)
     pos_embedding = pos_embed(target_patches)
     target_patches = target_patches + pos_embedding
-    out["embedding"] = target_encoder.encode_patches(
+    out["target_embedding"] = target_encoder.encode_patches(
         target_patches, with_layernorm=True
     )
-    out["sum_embedding"] = out["embedding"].sum(dim=1)
-    out["flat_embedding"] = out["embedding"].reshape(out["embedding"].shape[0], -1)
 
+    # need this here (and not in if statement) so we can still compute rankme and eval properly
+    with torch.no_grad():
+        unmasked_context_patches = context_encoder.project_patches(image_patches)
+        unmasked_pos_embedding = pos_embed(unmasked_context_patches)
+        out["context_embedding"] = context_encoder.encode_patches(
+            unmasked_context_patches + unmasked_pos_embedding,
+            with_layernorm = False
+        )
+        out["meanpool_context_embedding"] = out["context_embedding"].mean(dim=1)
+        out["sum_context_embedding"] = out["context_embedding"].sum(dim=1)
+        out["flat_context_embedding"] = out["context_embedding"].reshape(out["context_embedding"].shape[0], -1)
+    
     if not self.training:
         return out
 
     mask_context, masks_target = batch["mask_context"], batch["masks_target"]
     # target encoder is applied on full patches, then masked
-    out["target_patches"] = apply_masks(out["embedding"], *masks_target)
+    out["target_patches"] = apply_masks(out["target_embedding"], *masks_target)
     # context encoder is applied on masked patches
     context_patches = apply_masks(image_patches, mask_context)
     context_patches = context_encoder.project_patches(context_patches)
@@ -325,8 +334,10 @@ def forward(self: ssl.Module, batch, stage):
         context_patches, with_layernorm=False
     )
     out["context_patches"] = context_patches
+    # use context_patches.shape[0] because applying 4 masks quadruples the batch dimension for the predictor output
     out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
+    # context embedding
     return out
 
 
@@ -335,15 +346,32 @@ module = ssl.Module(
     target_encoder=TeacherStudentWrapper(ctx),
     predictor=IJEPA_Predictor(**predictor_kwargs),
     forward=forward,
-    ijepa_loss=F.smooth_l1_loss,
+    ijepa_loss=partial(F.mse_loss, reduction='mean'),
+    optim={
+        "optimizer": {
+            "type": "AdamW",
+            "lr": lr,
+            "weight_decay": 0.04,
+        },
+        "scheduler": {
+            "type": "LinearWarmupCosineAnnealing",
+            "peak_step": lr_warmup_epochs * len(train),
+            "total_steps": num_epochs * len(train),
+            "end_lr": final_lr,
+        },
+        "interval": "step",
+    }
 )
 
 
 linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
-    "sum_embedding",
+    "meanpool_context_embedding",
     "label",
-    probe=torch.nn.Linear(encoder_embed_dim, num_classes),
+    probe=torch.nn.Sequential(
+        torch.nn.BatchNorm1d(encoder_embed_dim, affine=False),
+        torch.nn.Linear(encoder_embed_dim, num_classes)
+    ),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
@@ -353,30 +381,31 @@ linear_probe = ssl.callbacks.OnlineProbe(
 
 rankme = ssl.callbacks.RankMe(
     name="rankme",
-    target="flat_embedding",
+    target="flat_context_embedding",
     queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
-    target_shape=(num_patches, encoder_embed_dim),
+    target_shape=(encoder_embed_dim * num_patches),
 )
 
 
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
-    project="ijepa-inet1k",
-    entity="slightly-more-badass",  # Your W&B entity
-    name="ijepa-inet1k-run",
+    project="ijepa-cifar10",
+    entity="samibg",  # Your W&B entity
+    name="ijepa-inette-run",
     log_model=False,  # Set to True if you want to save model artifacts
-    offline=True,  # Ensure offline mode
+    offline=False,  # Ensure offline mode
 )
 
 trainer = pl.Trainer(
-    max_epochs=300,
+    max_epochs=num_epochs,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
     callbacks=[linear_probe, rankme],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
-    devices=8,
+    devices=1,
+    gradient_clip_val=max_grad_norm,
     strategy=DDPStrategy(
         find_unused_parameters=True, # this is because only teacher's params are used in the teacher-student module
         static_graph=True,

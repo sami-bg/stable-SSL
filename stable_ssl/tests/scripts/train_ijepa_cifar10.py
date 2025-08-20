@@ -16,15 +16,11 @@ from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 
-# TODO Beware - some of these are commented out eventually and 
-# not used in the optimizer below.
-# -- optim
 train_batch_size = 128
 val_batch_size = 128
-num_epochs = 1000
-lr_warmup_epochs = 15
-lr = 5
-# max_grad_norm = 5.0
+num_epochs = 300
+lr_warmup_epochs = 60
+# max_grad_norm = 10.0
 max_grad_norm = None
 ema = (0.97, 0.999)
 ipe_scale = 1.25
@@ -48,12 +44,15 @@ mask_transform_kwargs = dict(
     context_aspect_ratio=(1.0, 1.0),
     target_scales=((0.15, 0.2),) * 4,
     target_aspect_ratios=((0.75, 1.5),) * 4,
-    min_keep=20,
+    min_keep=10,
 )
+
 
 
 train_transform = transforms.Compose(
     transforms.RGB(),
+    # transforms.CenterCrop((crop_height, crop_width)),
+    # transforms.RandomHorizontalFlip(),
     transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.3, 1.0)),
     transforms.ContextTargetsMultiBlockMask(**mask_transform_kwargs),
     transforms.ToImage(mean=mean, std=std),
@@ -73,9 +72,6 @@ cifar_train = torchvision.datasets.CIFAR10(
 cifar_val = torchvision.datasets.CIFAR10(
     root="/tmp/cifar10", train=False, download=True
 )
-
-optim = partial(torch.optim.AdamW, lr=lr, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
-scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs))
 
 
 class IndexedDataset(Dataset):
@@ -136,7 +132,7 @@ val = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=val_batch_size,
     num_workers=num_workers,
-    shuffle=True,
+    shuffle=False,
     pin_memory=True,
     persistent_workers=True,
 )
@@ -295,19 +291,19 @@ class IJEPA_Predictor(VisionTransformer):
 # pico vit
 encoder_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=384,
+    embed_dim=192,
     depth=12,
-    num_heads=6,
+    num_heads=3,
     qkv_bias=False,
     ijepa_in_dim=patch_channel_dim,
 )
 predictor_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=192,
+    embed_dim=96,
     depth=6,
-    num_heads=6,
+    num_heads=3,
     qkv_bias=False,
-    ijepa_encoder_dim=384,
+    ijepa_encoder_dim=192,
     predictor_num_patches=num_patches,
 )
 
@@ -326,18 +322,28 @@ def forward(self: ssl.Module, batch, stage):
     target_patches = target_encoder.project_patches(image_patches)
     pos_embedding = pos_embed(target_patches)
     target_patches = target_patches + pos_embedding
-    out["embedding"] = target_encoder.encode_patches(
+    out["target_embedding"] = target_encoder.encode_patches(
         target_patches, with_layernorm=True
     )
-    out["sum_embedding"] = out["embedding"].sum(dim=1)
-    out["flat_embedding"] = out["embedding"].reshape(out["embedding"].shape[0], -1)
 
+    # need this here (and not in if statement) so we can still compute rankme and eval properly
+    with torch.no_grad():
+        unmasked_context_patches = context_encoder.project_patches(image_patches)
+        unmasked_pos_embedding = pos_embed(unmasked_context_patches)
+        out["context_embedding"] = context_encoder.encode_patches(
+            unmasked_context_patches + unmasked_pos_embedding,
+            with_layernorm = False
+        )
+        out["meanpool_context_embedding"] = out["context_embedding"].mean(dim=1)
+        out["sum_context_embedding"] = out["context_embedding"].sum(dim=1)
+        out["flat_context_embedding"] = out["context_embedding"].reshape(out["context_embedding"].shape[0], -1)
+    
     if not self.training:
         return out
 
     mask_context, masks_target = batch["mask_context"], batch["masks_target"]
     # target encoder is applied on full patches, then masked
-    out["target_patches"] = apply_masks(out["embedding"], *masks_target)
+    out["target_patches"] = apply_masks(out["target_embedding"], *masks_target)
     # context encoder is applied on masked patches
     context_patches = apply_masks(image_patches, mask_context)
     context_patches = context_encoder.project_patches(context_patches)
@@ -346,8 +352,10 @@ def forward(self: ssl.Module, batch, stage):
         context_patches, with_layernorm=False
     )
     out["context_patches"] = context_patches
+    # use context_patches.shape[0] because applying 4 masks quadruples the batch dimension for the predictor output
     out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
+    # context embedding
     return out
 
 
@@ -356,30 +364,35 @@ module = ssl.Module(
     target_encoder=TeacherStudentWrapper(context_encoder, base_ema_coefficient=ema[0], final_ema_coefficient=ema[1]),
     predictor=predictor,
     forward=forward,
-    ijepa_loss=F.smooth_l1_loss,
+    ijepa_loss=lambda pred, tgt: ((pred - tgt) ** 2).sum(-1).sum(-1).mean(),
+    # ijepa_loss=partial(F.mse_loss, reduction='mean'),
     optim={
         "optimizer": {
-            "type": "LARS",
-            "lr": 1e-3,
-            "weight_decay": 1e-6,
+            "type": "AdamW",
+            "lr": 0.002,
+            "weight_decay": 0.0,
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
+            "peak_step": lr_warmup_epochs * len(train),
+            "total_steps": num_epochs * len(train),
         },
-        "interval": "epoch",
+        "interval": "step",
     },
-    # optim=dict(optimizer=optim, scheduler=scheduler),
 )
 
 
-probe_optimizer = partial(torch.optim.AdamW, lr=3e-4, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
-probe_scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs))
+probe_optimizer = partial(torch.optim.AdamW, lr=1e-4, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
+probe_scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs * len(train)))
 
 linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
-    "flat_embedding",
+    "meanpool_context_embedding",
     "label",
-    probe=torch.nn.Linear(384 * num_patches, 10),
+    probe=torch.nn.Sequential(
+        torch.nn.BatchNorm1d(192, affine=False),
+        torch.nn.Linear(192, 10)
+    ),
     loss_fn=torch.nn.CrossEntropyLoss(),
     optimizer=probe_optimizer,
     scheduler=probe_scheduler,
@@ -391,9 +404,9 @@ linear_probe = ssl.callbacks.OnlineProbe(
 
 rankme = ssl.callbacks.RankMe(
     name="rankme",
-    target="flat_embedding",
+    target="flat_context_embedding",
     queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
-    target_shape=(num_patches, 384),
+    target_shape=(192 * num_patches),
 )
 
 # Initialize W&B logger with explicit settings
@@ -405,11 +418,31 @@ wandb_logger = WandbLogger(
     offline=False,  # Ensure offline mode
 )
 
+class PerModuleGradLogger(pl.Callback):
+    def __init__(self, modules=("predictor", "context_encoder", "target_encoder"), norm_type=2):
+        self.modules = modules
+        self.norm_type = norm_type
+
+    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+        device = pl_module.device
+        if trainer.global_step % 1000 == 0:
+            for mod in self.modules:
+                group = [(n, p) for n, p in pl_module.named_parameters() if n.startswith(f"{mod}.")]
+                grads = [p.grad for _, p in group if p.grad is not None]
+                if not grads:
+                    pl_module.log(f"grad/{mod}_norm", torch.tensor(0.0, device=device), on_step=True, logger=True, sync_dist=True)
+                    pl_module.log(f"grad/{mod}_nz_params", torch.tensor(0, device=device), on_step=True, logger=True, sync_dist=True)
+                    continue
+                norms = torch.stack([g.detach().data.float().norm(self.norm_type).to(device) for g in grads])
+                total_norm = torch.norm(norms, self.norm_type)
+                nonzero = (norms > 0).sum()
+                pl_module.log(f"grad/{mod}_norm", total_norm, on_step=True, logger=True, sync_dist=True)
+                pl_module.log(f"grad/{mod}_nz_params", nonzero, on_step=True, logger=True, sync_dist=True)
 
 trainer = pl.Trainer(
     max_epochs=num_epochs,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
-    callbacks=[linear_probe, rankme],
+    callbacks=[linear_probe, rankme, PerModuleGradLogger(modules=("predictor","context_encoder","target_encoder"))],
     precision="16-mixed",
     logger=wandb_logger,
     devices=1,

@@ -15,20 +15,36 @@ from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
 
+# Dataset configuration
+num_classes = 10
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 4
+
+# Image and patch configuration
+height, width = 32, 32
 crop_height, crop_width = 32, 32
+patch_size = 2
 num_patches = (crop_height // patch_size) * (crop_width // patch_size)
 patch_channel_dim = 3 * patch_size * patch_size
+
+# Masking configuration
 mask_ratio = 0.75
 num_visible_patches = int(num_patches * (1 - mask_ratio))
-num_classes = 10
+
+# Training configuration
 batch_size = 128
 val_batch_size = 128
+num_epochs = 2000
 num_workers = 16
-encoder_embed_dim = 384
-decoder_embed_dim = 256
+
+# Optimization configuration
+lr = 1.5e-4
+warmup_epochs = 400
+weight_decay = 0.05
+
+# Model configuration
+encoder_embed_dim = 192
+decoder_embed_dim = 192
 
 mask_transform_kwargs = dict(
     patch_size=patch_size,
@@ -39,7 +55,7 @@ mask_transform_kwargs = dict(
 )
 
 train_transform = transforms.Compose(
-    transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
+    # transforms.RandomResizedCrop((crop_height, crop_width), scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
     transforms.RandomHorizontalFlip(),
     transforms.RandomMask(**mask_transform_kwargs),
     transforms.ToImage(mean=mean, std=std),
@@ -47,8 +63,8 @@ train_transform = transforms.Compose(
 
 val_transform = transforms.Compose(
     transforms.RGB(),
-    transforms.Resize((height, width)),
-    transforms.CenterCrop((height, width)),
+    # transforms.Resize((height, width)),
+    # transforms.CenterCrop((height, width)),
     transforms.ToImage(mean=mean, std=std),
 )
 
@@ -88,6 +104,7 @@ train = torch.utils.data.DataLoader(
     drop_last=True,
     collate_fn=torch.utils.data.default_collate,
     pin_memory=True,
+    persistent_workers=True,
 )
 
 val = torch.utils.data.DataLoader(
@@ -97,6 +114,7 @@ val = torch.utils.data.DataLoader(
     shuffle=False,
     collate_fn=torch.utils.data.default_collate,
     pin_memory=True,
+    persistent_workers=True,
 )
 
 data = ssl.data.DataModule(train=train, val=val)
@@ -230,9 +248,6 @@ def forward(self, batch: dict, stage):
         patches = encoder.norm(patches)
         out["embeddings"] = patches
     
-    # exclude cls token for rankme (flat_embedding) and linear probe (sum_embedding)
-    out["flat_embedding"] = out["embeddings"][:, 1:, :].flatten(start_dim=1)
-    out["sum_embedding"] = out["embeddings"][:, 1:, :].sum(dim=1)
     return out
 
 
@@ -240,8 +255,8 @@ encoder_kwargs = dict(
     img_size=(crop_height, crop_width),
     patch_size=patch_size,
     embed_dim=encoder_embed_dim,
-    depth=16,
-    num_heads=16,
+    depth=12,
+    num_heads=3,
     qkv_bias=True,  # MAE typically uses bias
     mae_in_dim=patch_channel_dim,
 )
@@ -251,8 +266,8 @@ decoder_kwargs = dict(
     patch_size=patch_size,
     mae_enc_dim=encoder_embed_dim,
     embed_dim=decoder_embed_dim,
-    depth=8,
-    num_heads=16,
+    depth=4,
+    num_heads=3,
 )
 
 
@@ -263,23 +278,38 @@ module = ssl.Module(
     loss_fn=F.mse_loss,  # pixel MSE loss. we make implicit assumption that norm-pix-loss is False
     optim={
         "optimizer": {
-            "type": "LARS",
-            "lr": 1e-3,
-            "weight_decay": 1e-6,
+            "type": "AdamW",
+            "lr": lr * (batch_size / 256),
+            "weight_decay": weight_decay,
+            "betas": (0.9, 0.999),
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
+            "peak_step": warmup_epochs * len(train),
+            "total_steps": num_epochs * len(train),
         },
-        "interval": "epoch",
+        "interval": "step",
     },
 )
+
+
+class MAE_Classifier(torch.nn.Module):
+    def __init__(self, patch_dim: int, num_classes: int):
+        super().__init__()
+        # classifies from the cls token
+        self.classifier = torch.nn.Linear(patch_dim, num_classes)
+
+    def forward(self, embedding: torch.Tensor) -> torch.Tensor:
+        cls_token = embedding[:, 0, :]
+        return self.classifier(cls_token)
+
 
 # Note: Linear probe uses visible patches only during training
 linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
-    "flat_embedding",
+    "embeddings",
     "label", 
-    probe=torch.nn.Linear(encoder_embed_dim * num_visible_patches, num_classes),
+    probe=MAE_Classifier(encoder_embed_dim, num_classes),
     loss_fn=torch.nn.CrossEntropyLoss(),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes),
@@ -287,13 +317,6 @@ linear_probe = ssl.callbacks.OnlineProbe(
     },
 )
 
-# RankMe on encoder outputs
-rankme = ssl.callbacks.RankMe(
-    name="rankme",
-    target="flat_embedding", 
-    queue_length=min(512, batch_size),
-    target_shape=(num_visible_patches, encoder_embed_dim), 
-)
 
 # Initialize W&B logger
 wandb_logger = WandbLogger(
@@ -305,15 +328,14 @@ wandb_logger = WandbLogger(
 )
 
 trainer = pl.Trainer(
-    max_epochs=1000,
+    max_epochs=num_epochs,
     num_sanity_val_steps=0,
-    callbacks=[linear_probe, rankme],
+    callbacks=[linear_probe],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
     devices=1,
-    
 )
 
 manager = ssl.Manager(trainer=trainer, module=module, data=data)
