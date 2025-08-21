@@ -13,11 +13,12 @@ from    stable_ssl.backbone.utils import TeacherStudentWrapper
 from    stable_ssl.data import transforms
 from    stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 from    lightning.pytorch.strategies import DDPStrategy
+from    stable_ssl.callbacks.teacher_student import TeacherStudentCallback
 
 train_batch_size = 128
 val_batch_size   = 128
 num_workers      = 32
-num_classes      = 10
+num_classes      = 1000
 num_epochs       = 300
 lr_warmup_epochs = 60
 start_lr         = 0.0002
@@ -66,15 +67,13 @@ val_transform = transforms.Compose(
 
 
 inet1k_train = ssl.data.HFDataset(
-    path="frgfm/imagenette",
-    name="320px",
+    path="ILSVRC/imagenet-1k",
     split="train",
     transform=train_transform,
 )
 
 inet1k_val = ssl.data.HFDataset(
-    path="frgfm/imagenette",
-    name="320px",
+    path="ILSVRC/imagenet-1k",
     split="validation",
     transform=val_transform,
 )
@@ -158,7 +157,7 @@ class IJEPA_Encoder(VisionTransformer):
 
     def __init__(self, *args, **kwargs):
         self.weight_init = kwargs.get("weight_init", "")
-        self.fix_init = kwargs.get("fix_init", False)
+        self.fix_init = kwargs.get("fix_init", True)
         ijepa_in_dim = kwargs.pop("ijepa_in_dim")
         super().__init__(*args, **kwargs)
 
@@ -222,7 +221,7 @@ class IJEPA_Predictor(VisionTransformer):
 
     def __init__(self, *args, **kwargs):
         self.weight_init = kwargs.get("weight_init", "")
-        self.fix_init = kwargs.get("fix_init", False)
+        self.fix_init = kwargs.get("fix_init", True)
         self.predictor_num_patches = kwargs.pop("predictor_num_patches")
         self.ijepa_encoder_dim = kwargs.pop("ijepa_encoder_dim")
         self.predictor_pos_embed = pos_embed(
@@ -242,6 +241,9 @@ class IJEPA_Predictor(VisionTransformer):
         if self.fix_init:
             self.fix_init_weight()
 
+    def project_context(self, context_patches: torch.Tensor) -> torch.Tensor:
+        return self.predictor_inproj(context_patches)
+
     def predict_targets(
         self, context_patches: torch.Tensor, masks_target: list[torch.Tensor]
     ) -> torch.Tensor:
@@ -249,7 +251,8 @@ class IJEPA_Predictor(VisionTransformer):
         B, *_ = context_patches.shape
         M = len(masks_target)
 
-        ctx: torch.Tensor = self.predictor_inproj(context_patches)  # [B, N_ctx, D]
+        # NOTE: These are already projected -> posembedded 
+        ctx: torch.Tensor = context_patches
 
         # target position embeddings (stacked per mask): [B*M, K_tgt, D]
         pos_all = self.predictor_pos_embed.expand(B, -1, -1)
@@ -279,7 +282,7 @@ encoder_kwargs = dict(
     embed_dim=encoder_embed_dim,
     depth=12,
     num_heads=12,
-    qkv_bias=False,
+    qkv_bias=True,
     ijepa_in_dim=patch_channel_dim,
 )
 predictor_kwargs = dict(
@@ -287,7 +290,7 @@ predictor_kwargs = dict(
     embed_dim=predictor_embed_dim,
     depth=12,
     num_heads=12,
-    qkv_bias=False,
+    qkv_bias=True,
     ijepa_encoder_dim=encoder_embed_dim,
     predictor_num_patches=num_patches,
 )
@@ -299,17 +302,14 @@ def forward(self: ssl.Module, batch, stage):
     context_encoder: IJEPA_Encoder = self.context_encoder
     predictor: IJEPA_Predictor = self.predictor
     ijepa_loss: nn.Module = self.ijepa_loss
-
-    image_patches = target_encoder.patchify(batch["image"])
-    target_patches = target_encoder.project_patches(image_patches)
-    pos_embedding = pos_embed(target_patches)
-    target_patches = target_patches + pos_embedding
-    out["target_embedding"] = target_encoder.encode_patches(
-        target_patches, with_layernorm=True
-    )
-
-    # need this here (and not in if statement) so we can still compute rankme and eval properly
     with torch.no_grad():
+        image_patches = target_encoder.patchify(batch["image"])
+        target_patches = target_encoder.project_patches(image_patches)
+        pos_embedding = pos_embed(target_patches)
+        target_patches = target_patches + pos_embedding
+        out["target_embedding"] = target_encoder.encode_patches(
+            target_patches, with_layernorm=True
+        )
         unmasked_context_patches = context_encoder.project_patches(image_patches)
         unmasked_pos_embedding = pos_embed(unmasked_context_patches)
         out["context_embedding"] = context_encoder.encode_patches(
@@ -334,11 +334,18 @@ def forward(self: ssl.Module, batch, stage):
         context_patches, with_layernorm=False
     )
     out["context_patches"] = context_patches
+    # TODO Re-write this whole thing with the patchembeds inside the models themselves and using timms patchembed/block
+    # but making ur own vits.
     # use context_patches.shape[0] because applying 4 masks quadruples the batch dimension for the predictor output
-    out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
+    predictor_pos_embed = apply_masks(predictor.predictor_pos_embed.repeat(context_patches.shape[0],1,1), mask_context)
+    out["predicted_patches"] = predictor.predict_targets(
+        predictor.project_context(context_patches) + predictor_pos_embed,
+        masks_target
+    )
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
     # context embedding
     return out
+
 
 
 module = ssl.Module(
@@ -346,7 +353,7 @@ module = ssl.Module(
     target_encoder=TeacherStudentWrapper(ctx),
     predictor=IJEPA_Predictor(**predictor_kwargs),
     forward=forward,
-    ijepa_loss=partial(F.mse_loss, reduction='mean'),
+    ijepa_loss=F.smooth_l1_loss,
     optim={
         "optimizer": {
             "type": "AdamW",
@@ -386,12 +393,33 @@ rankme = ssl.callbacks.RankMe(
     target_shape=(encoder_embed_dim * num_patches),
 )
 
+class PerModuleGradLogger(pl.Callback):
+    def __init__(self, modules=("predictor", "context_encoder", "target_encoder"), norm_type=2):
+        self.modules = modules
+        self.norm_type = norm_type
+
+    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+        device = pl_module.device
+        if trainer.global_step % 100 == 0:
+            for mod in self.modules:
+                group = [(n, p) for n, p in pl_module.named_parameters() if n.startswith(f"{mod}.")]
+                grads = [p.grad for _, p in group if p.grad is not None]
+                if not grads:
+                    pl_module.log(f"grad/{mod}_norm", torch.tensor(0.0, device=device), on_step=True, logger=True, sync_dist=True)
+                    pl_module.log(f"grad/{mod}_nz_params", torch.tensor(0, device=device), on_step=True, logger=True, sync_dist=True)
+                    continue
+                norms = torch.stack([g.detach().data.float().norm(self.norm_type).to(device) for g in grads])
+                total_norm = torch.norm(norms, self.norm_type)
+                nonzero = (norms > 0).sum()
+                pl_module.log(f"grad/{mod}_norm", total_norm, on_step=True, logger=True, sync_dist=True)
+                pl_module.log(f"grad/{mod}_nz_params", nonzero, on_step=True, logger=True, sync_dist=True)
+
 
 # Initialize W&B logger with explicit settings
 wandb_logger = WandbLogger(
     project="ijepa-cifar10",
     entity="samibg",  # Your W&B entity
-    name="ijepa-inette-run",
+    name="ijepa-inet1k-run",
     log_model=False,  # Set to True if you want to save model artifacts
     offline=False,  # Ensure offline mode
 )
@@ -399,12 +427,14 @@ wandb_logger = WandbLogger(
 trainer = pl.Trainer(
     max_epochs=num_epochs,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
-    callbacks=[linear_probe, rankme],
+    callbacks=[linear_probe, rankme, PerModuleGradLogger(modules=("predictor","context_encoder","target_encoder")),
+    TeacherStudentCallback(update_frequency=1, update_after_backward=True),
+    ],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
-    devices=1,
+    devices=8,
     gradient_clip_val=max_grad_norm,
     strategy=DDPStrategy(
         find_unused_parameters=True, # this is because only teacher's params are used in the teacher-student module

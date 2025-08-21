@@ -14,24 +14,27 @@ from stable_ssl.backbone.utils import TeacherStudentWrapper
 from stable_ssl.data import transforms
 from stable_ssl.data.utils import Dataset
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
+from stable_ssl.callbacks.teacher_student import TeacherStudentCallback
 
 
-train_batch_size = 128
+train_batch_size = 512
 val_batch_size = 128
-num_epochs = 300
-lr_warmup_epochs = 60
+num_epochs = 100
+lr_warmup_epochs = 15
 # max_grad_norm = 10.0
 max_grad_norm = None
 ema = (0.97, 0.999)
 ipe_scale = 1.25
-
+encoder_embed_dim = 64
+predictor_embed_dim = 32
+lr = 0.02
 
 # -- data
 num_workers = 64
 num_classes = 10
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
-height, width, patch_size = 32, 32, 4
+height, width, patch_size = 32, 32, 2
 crop_height, crop_width = 32, 32  # CIFAR-10 is 32x32, but on INET, IJEPA uses 224
 # we precompute these so the predictor can make sinusoidal posembeds
 num_patches = (crop_height // patch_size) * (crop_width // patch_size)
@@ -44,7 +47,7 @@ mask_transform_kwargs = dict(
     context_aspect_ratio=(1.0, 1.0),
     target_scales=((0.15, 0.2),) * 4,
     target_aspect_ratios=((0.75, 1.5),) * 4,
-    min_keep=10,
+    min_keep=4,
 )
 
 
@@ -172,7 +175,7 @@ class IJEPA_Encoder(VisionTransformer):
 
     def __init__(self, *args, **kwargs):
         self.weight_init = kwargs.get("weight_init", "")
-        self.fix_init = kwargs.get("fix_init", False)
+        self.fix_init = kwargs.get("fix_init", True)
         ijepa_in_dim = kwargs.pop("ijepa_in_dim")
         super().__init__(*args, **kwargs)
 
@@ -236,7 +239,7 @@ class IJEPA_Predictor(VisionTransformer):
 
     def __init__(self, *args, **kwargs):
         self.weight_init = kwargs.get("weight_init", "")
-        self.fix_init = kwargs.get("fix_init", False)
+        self.fix_init = kwargs.get("fix_init", True)
         self.predictor_num_patches = kwargs.pop("predictor_num_patches")
         self.ijepa_encoder_dim = kwargs.pop("ijepa_encoder_dim")
         self.predictor_pos_embed = pos_embed(
@@ -256,14 +259,17 @@ class IJEPA_Predictor(VisionTransformer):
         if self.fix_init:
             self.fix_init_weight()
 
+    def project_context(self, context_patches: torch.Tensor) -> torch.Tensor:
+        return self.predictor_inproj(context_patches)
+
     def predict_targets(
         self, context_patches: torch.Tensor, masks_target: list[torch.Tensor]
     ) -> torch.Tensor:
-        # NOTE context_patches already positionally embedded
         B, *_ = context_patches.shape
         M = len(masks_target)
 
-        ctx: torch.Tensor = self.predictor_inproj(context_patches)  # [B, N_ctx, D]
+        # NOTE: These are already projected -> posembedded 
+        ctx: torch.Tensor = context_patches
 
         # target position embeddings (stacked per mask): [B*M, K_tgt, D]
         pos_all = self.predictor_pos_embed.expand(B, -1, -1)
@@ -291,19 +297,19 @@ class IJEPA_Predictor(VisionTransformer):
 # pico vit
 encoder_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=192,
+    embed_dim=encoder_embed_dim,
     depth=12,
-    num_heads=3,
-    qkv_bias=False,
+    num_heads=2,
+    qkv_bias=True,
     ijepa_in_dim=patch_channel_dim,
 )
 predictor_kwargs = dict(
     patch_size=patch_size,
-    embed_dim=96,
+    embed_dim=predictor_embed_dim,
     depth=6,
-    num_heads=3,
-    qkv_bias=False,
-    ijepa_encoder_dim=192,
+    num_heads=2,
+    qkv_bias=True,
+    ijepa_encoder_dim=encoder_embed_dim,
     predictor_num_patches=num_patches,
 )
 
@@ -317,17 +323,14 @@ def forward(self: ssl.Module, batch, stage):
     context_encoder: IJEPA_Encoder = self.context_encoder
     predictor: IJEPA_Predictor = self.predictor
     ijepa_loss: nn.Module = self.ijepa_loss
-
-    image_patches = target_encoder.patchify(batch["image"])
-    target_patches = target_encoder.project_patches(image_patches)
-    pos_embedding = pos_embed(target_patches)
-    target_patches = target_patches + pos_embedding
-    out["target_embedding"] = target_encoder.encode_patches(
-        target_patches, with_layernorm=True
-    )
-
-    # need this here (and not in if statement) so we can still compute rankme and eval properly
     with torch.no_grad():
+        image_patches = target_encoder.patchify(batch["image"])
+        target_patches = target_encoder.project_patches(image_patches)
+        pos_embedding = pos_embed(target_patches)
+        target_patches = target_patches + pos_embedding
+        out["target_embedding"] = target_encoder.encode_patches(
+            target_patches, with_layernorm=True
+        )
         unmasked_context_patches = context_encoder.project_patches(image_patches)
         unmasked_pos_embedding = pos_embed(unmasked_context_patches)
         out["context_embedding"] = context_encoder.encode_patches(
@@ -353,7 +356,10 @@ def forward(self: ssl.Module, batch, stage):
     )
     out["context_patches"] = context_patches
     # use context_patches.shape[0] because applying 4 masks quadruples the batch dimension for the predictor output
-    out["predicted_patches"] = predictor.predict_targets(context_patches, masks_target)
+    out["predicted_patches"] = predictor.predict_targets(
+        predictor.project_context(context_patches) + apply_masks(predictor.predictor_pos_embed.repeat(context_patches.shape[0],1,1), mask_context),
+        masks_target
+    )
     out["loss"] = ijepa_loss(out["predicted_patches"], out["target_patches"])
     # context embedding
     return out
@@ -364,12 +370,12 @@ module = ssl.Module(
     target_encoder=TeacherStudentWrapper(context_encoder, base_ema_coefficient=ema[0], final_ema_coefficient=ema[1]),
     predictor=predictor,
     forward=forward,
-    ijepa_loss=lambda pred, tgt: ((pred - tgt) ** 2).sum(-1).sum(-1).mean(),
+    ijepa_loss=F.smooth_l1_loss,
     # ijepa_loss=partial(F.mse_loss, reduction='mean'),
     optim={
         "optimizer": {
             "type": "AdamW",
-            "lr": 0.002,
+            "lr": lr,
             "weight_decay": 0.0,
         },
         "scheduler": {
@@ -382,7 +388,7 @@ module = ssl.Module(
 )
 
 
-probe_optimizer = partial(torch.optim.AdamW, lr=1e-4, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
+probe_optimizer = partial(torch.optim.AdamW, lr=1e-3, weight_decay=0.0, betas=(0.9, 0.999), eps=1e-8)
 probe_scheduler = partial(torch.optim.lr_scheduler.CosineAnnealingLR, T_max=int(ipe_scale * num_epochs * len(train)))
 
 linear_probe = ssl.callbacks.OnlineProbe(
@@ -390,8 +396,8 @@ linear_probe = ssl.callbacks.OnlineProbe(
     "meanpool_context_embedding",
     "label",
     probe=torch.nn.Sequential(
-        torch.nn.BatchNorm1d(192, affine=False),
-        torch.nn.Linear(192, 10)
+        torch.nn.BatchNorm1d(encoder_embed_dim, affine=False),
+        torch.nn.Linear(encoder_embed_dim, 10)
     ),
     loss_fn=torch.nn.CrossEntropyLoss(),
     optimizer=probe_optimizer,
@@ -406,7 +412,7 @@ rankme = ssl.callbacks.RankMe(
     name="rankme",
     target="flat_context_embedding",
     queue_length=min(512, train_batch_size),  # NOTE must be >= batch_size
-    target_shape=(192 * num_patches),
+    target_shape=(encoder_embed_dim * num_patches),
 )
 
 # Initialize W&B logger with explicit settings
@@ -442,7 +448,10 @@ class PerModuleGradLogger(pl.Callback):
 trainer = pl.Trainer(
     max_epochs=num_epochs,
     num_sanity_val_steps=0,  # Skip sanity check as queues need to be filled first
-    callbacks=[linear_probe, rankme, PerModuleGradLogger(modules=("predictor","context_encoder","target_encoder"))],
+    callbacks=[
+        linear_probe, rankme, PerModuleGradLogger(modules=("predictor","context_encoder","target_encoder")),
+        TeacherStudentCallback(update_frequency=100),
+    ],
     precision="16-mixed",
     logger=wandb_logger,
     devices=1,
