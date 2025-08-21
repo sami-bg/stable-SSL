@@ -395,3 +395,7 @@ class LinearWarmupCosineAnnealingLR(_LRScheduler):
                 / 2
                 for base_lr in self.base_lrs
             ]
+
+
+if __name__ == "__main__":
+    _resolve_scheduler_callable("StepLR")

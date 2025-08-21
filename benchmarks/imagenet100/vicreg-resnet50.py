@@ -155,9 +155,9 @@ knn_probe = ssl.callbacks.OnlineKNN(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
-    project="imagenet100-vicreg",
-    name="vicreg-resnet18",
+    entity="samibg",
+    project="ijepa-cifar10",
+    name="vicreg-resnet50",
     log_model=False,
 )
 

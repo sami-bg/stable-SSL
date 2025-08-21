@@ -5,6 +5,9 @@ import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
 from timm.models.vision_transformer import PatchEmbed, Block
 import lightning.pytorch.loggers as pl_loggers
+import lightning.pytorch as pl
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+
 import torchmetrics
 from stable_ssl.backbone.utils import TeacherStudentWrapper
 from stable_ssl.callbacks.teacher_student import TeacherStudentCallback
@@ -16,11 +19,18 @@ import stable_ssl as ssl
 import lightning as pl
 from stable_ssl.utils.pos_embed import get_2d_sincos_pos_embed
 
-NUM_DEVICES = 8
-BATCH_SIZE = 256
-VAL_BATCH_SIZE = (16384 // NUM_DEVICES)
-# VAL_LR_SWEEPS = [0.01, 0.05, 0.001]
-LR_MULTIPLIER = (BATCH_SIZE * NUM_DEVICES) / (128 * 16)
+NUM_DEVICES = 1
+
+# Match paper's setup exactly
+EFFECTIVE_BATCH_SIZE = 2048
+BATCH_SIZE = EFFECTIVE_BATCH_SIZE // NUM_DEVICES
+
+EFFECTIVE_VAL_BATCH_SIZE = 16384
+VAL_BATCH_SIZE = EFFECTIVE_VAL_BATCH_SIZE // NUM_DEVICES
+
+# Use paper's learning rates directly
+effective_lr = 0.001
+effective_probe_lr = 0.005
 
 
 def apply_masks(x: torch.Tensor, masks: list[torch.Tensor]) -> torch.Tensor:
@@ -281,32 +291,43 @@ target_encoder = TeacherStudentWrapper(encoder, base_ema_coefficient=0.996, fina
 ema_callback = TeacherStudentCallback(update_frequency=1, update_after_backward=True)
 rankme = ssl.callbacks.RankMe(
     name="rankme", target="flat",
-    queue_length=min(512, BATCH_SIZE),
+    queue_length=max(512, BATCH_SIZE),
     target_shape=(encoder.embed_dim * encoder.patch_embed.num_patches)
 )
-sweep_lr = 0.005
+
 linear_probe = ssl.callbacks.OnlineProbe(
-        name=f'linear_probe_lr{sweep_lr:.0e}', input='meanpool', target='label',
+        name=f'linear_probe', input='meanpool', target='label',
         probe=torch.nn.Sequential(
             torch.nn.BatchNorm1d(encoder.embed_dim, affine=False),
             torch.nn.Linear(encoder.embed_dim, 100)
         ),
         loss_fn=torch.nn.CrossEntropyLoss(),
-        optimizer={
-            "type": "LARS",
-            "lr": sweep_lr,
-            "weight_decay": 1e-6,
-        },
-        scheduler={
-            "type": "StepLR",
-            "step_size": 15,
-            "gamma": 0.1,
-        },
+        # optimizer={
+        #     "type": "LARS",
+        #     "lr": effective_probe_lr,
+        #     "weight_decay": 1e-6,
+        # },
+        # scheduler={
+        #     "type": "StepLR",
+        #     "step_size": 15 * len(train),
+        #     "gamma": 1.0,
+        # },
         metrics={
             "top1": torchmetrics.classification.MulticlassAccuracy(100),
             "top5": torchmetrics.classification.MulticlassAccuracy(100, top_k=5),
         }
     )
+
+knn_probe = ssl.callbacks.OnlineKNN(
+    name="knn_probe",
+    input="meanpool",
+    target="label",
+    queue_length=20000,
+    metrics={"accuracy": torchmetrics.classification.MulticlassAccuracy(100)},
+    input_dim=768,
+    k=20,
+)
+
 
 module = ssl.Module(
     context_encoder=encoder,
@@ -317,15 +338,15 @@ module = ssl.Module(
     optim={
         "optimizer": {
             "type": "AdamW",
-            "lr": 0.001 * LR_MULTIPLIER,
+            "lr": effective_lr,
             "weight_decay": 0.04,  # TODO Scheduler to 0.4
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "peak_step": 40 * len(train),
+            "peak_step": 40 * int(len(train) / NUM_DEVICES),
             "start_factor": 1 / 5,
-            "total_steps": 300 * len(train),
-            "end_lr": 1.0e-6 * LR_MULTIPLIER,
+            "total_steps": 300 * int(len(train) / NUM_DEVICES),
+            "end_lr": 1.0e-6,
         },
         "interval": "step",
     }
@@ -334,14 +355,16 @@ module = ssl.Module(
 trainer = pl.Trainer(
     max_epochs=300, num_sanity_val_steps=0,
     callbacks=[
-        linear_probe, rankme, ema_callback
+        linear_probe, knn_probe, rankme, ema_callback,
+        ModelCheckpoint(monitor='train/loss', mode='min', save_top_k=1, save_last=True, every_n_epochs=10),
+        LearningRateMonitor(logging_interval='step')
     ],
     precision='16-mixed',
     logger=pl_loggers.WandbLogger(
-        project="ijepa-cifar10", entity="samibg", name="new-ijepa-inet100",
+        project="ijepa-cifar10", entity="samibg", name=f"new-ijepa-inet100-num-devices{NUM_DEVICES}",
         log_model=False, offline=False,
     ),
-    enable_checkpointing=False,
+    # enable_checkpointing=False,
     accelerator="gpu", devices=NUM_DEVICES, gradient_clip_val=None,
     strategy=DDPStrategy(
         find_unused_parameters=True, # this is because only teacher's params are used in the teacher-student module
