@@ -10,13 +10,11 @@ from functools import partial
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from stable_pretraining.losses import InfoNCELoss
 import torch.nn.functional as F
-from stable_pretraining.utils import all_gather, all_reduce
 
 # Batch size per GPU
 
 num_devices = 8
 global_batch = 4096
-global_batch = 128
 batch_size = global_batch // num_devices
 lr = 5e-4
 
@@ -48,7 +46,7 @@ image_transform = spt.data.transforms.Compose(
 # Load DiffusionDB dataset
 train_dataset = spt.data.HFDataset(
     "poloclub/diffusiondb",
-    "2m_first_1k",  # Change to "2m_all" for full 2M dataset
+    "2m_all",  # Change to "2m_all" for full 2M dataset
     split="train",
     trust_remote_code=True,
     transform=image_transform,
@@ -184,8 +182,8 @@ module = spt.Module(
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "total_steps": (total_step := len(train_dataloader) // num_devices),
-            "peak_step": 500 / total_step,
+            "total_steps": (total_step := len(train_dataloader)),
+            "peak_step": 0.1,
         },
         "interval": "step",
     },
@@ -211,12 +209,12 @@ wandb_logger = WandbLogger(
 )
 
 trainer = pl.Trainer(
-    max_epochs=32,
+    max_epochs=8,
     num_sanity_val_steps=0,
     callbacks = [ 
-        ModelCheckpoint(monitor="train/loss", mode="min", every_n_epochs=10, dirpath='/mnt/data/sami/stable-pretraining/checkpoints', save_top_k=1),
+        ModelCheckpoint(monitor="train/loss", mode="min", every_n_epochs=1, dirpath='/mnt/data/sami/stable-pretraining/checkpoints', save_top_k=1),
         LearningRateMonitor(logging_interval="step"),
-        CLIPMonitor(log_every_n_steps=1)
+        CLIPMonitor(log_every_n_steps=10)
     ],
     precision="bf16-mixed",
     logger=wandb_logger,
