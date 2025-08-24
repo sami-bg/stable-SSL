@@ -215,7 +215,6 @@ trainer = pl.Trainer(
             mode="min",
             every_n_epochs=1,
             dirpath="/mnt/data/sami/stable-pretraining/checkpoints",
-            save_top_k=1,
         ),
         LearningRateMonitor(logging_interval="step"),
         CLIPMonitor(log_every_n_steps=10),
