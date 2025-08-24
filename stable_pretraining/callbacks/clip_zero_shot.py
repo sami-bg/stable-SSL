@@ -23,7 +23,7 @@ class CLIPZeroShot(Callback):
         class_names: List of class names in index order.
         image_backbone: Module/callable to encode images into embeddings.
         text_backbone: Module/callable to encode tokenized text into embeddings.
-        tokenizer_fn: Callable that maps str -> tensor of shape (T,).
+        tokenizer_fn: Callable that maps str | list[str] -> tensor of shape (T,).
         metrics: Dict of torchmetrics to compute on validation (e.g., {"top1": MulticlassAccuracy(...)}).
     """
     def __init__(
@@ -34,7 +34,7 @@ class CLIPZeroShot(Callback):
         class_names: list[str],
         image_backbone: torch.nn.Module,
         text_backbone: torch.nn.Module,
-        tokenizer_fn: Callable[[str], torch.Tensor],
+        tokenizer_fn: Callable[[str | list[str]], torch.Tensor],
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
     ) -> None:
         super().__init__()
@@ -78,8 +78,8 @@ class CLIPZeroShot(Callback):
 
         self._train_metrics = pl_module._callbacks_metrics[self.name]["_train"]
         self._val_metrics = pl_module._callbacks_metrics[self.name]["_val"]
-        self.class_tokens = self.tokenizer_fn(self.class_names)
-        self.class_embeds = self.text_backbone(self.class_tokens)
+        self.class_tokens = self.tokenizer_fn(self.class_names).to(device=pl_module.device)
+        self.class_embeds = self.text_backbone(input_ids=self.class_tokens).text_embeds
         self.class_embeds = F.normalize(self.class_embeds, dim=-1)
 
 
@@ -97,14 +97,13 @@ class CLIPZeroShot(Callback):
         classes = get_data_from_batch_or_outputs(
             self.class_key, batch, outputs, caller_name=self.name
         )
-
         if image is None:
             return
         
         image = image.to(device=pl_module.device)
         
         with torch.no_grad():
-            image_features = self.image_backbone(image)
+            image_features = self.image_backbone(image).image_embeds
             image_features = F.normalize(image_features, dim=-1)
             logits = (image_features @ self.class_embeds.T)
         
@@ -119,4 +118,4 @@ class CLIPZeroShot(Callback):
             metric(logits.detach(), torch.tensor(classes))
             logs[f"val/{self.name}_{metric_name}"] = metric
 
-        pl_module.log_dict(logs, on_step=True, on_epoch=True)
+        pl_module.log_dict(logs, on_step=False, on_epoch=True)

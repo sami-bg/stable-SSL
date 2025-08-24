@@ -7,6 +7,7 @@ from lightning.pytorch.loggers import WandbLogger
 from transformers import (
     AutoTokenizer,
     CLIPVisionModelWithProjection,
+    CLIPTextModelWithProjection,
 )
 import stable_pretraining as spt
 from functools import partial
@@ -19,8 +20,9 @@ val_percent = 1.0
 
 tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32", trust_remote_code=True)
+text_model = CLIPTextModelWithProjection.from_pretrained("openai/clip-vit-base-patch32", trust_remote_code=True)
 
-def tokenize(text: str, tokenizer: AutoTokenizer) -> torch.Tensor:
+def tokenize(text: str | list[str], tokenizer: AutoTokenizer) -> torch.Tensor:
     data = tokenizer(
         text,
         return_tensors="pt",
@@ -28,7 +30,7 @@ def tokenize(text: str, tokenizer: AutoTokenizer) -> torch.Tensor:
         max_length=tokenizer.model_max_length,
         truncation=True,
     )
-    return data["input_ids"].squeeze(0)
+    return data["input_ids"]
 
 image_transform = spt.data.transforms.Compose(
     spt.data.transforms.Resize((224, 224)),
@@ -39,17 +41,14 @@ image_transform = spt.data.transforms.Compose(
     ),
 )
 
-
 val_dataset = spt.data.HFDataset(
     "clane9/imagenet-100",
     split="validation",
-    trust_remote_code=True,
     transform=image_transform,
 )
 train_dataset = spt.data.HFDataset(
     "clane9/imagenet-100",
     split="train",
-    trust_remote_code=True,
     transform=image_transform,
 )
 # just one batch for finetuning, and we set lr to 0, as a dummy
@@ -63,17 +62,13 @@ train_dataloader = torch.utils.data.DataLoader(
     shuffle=True,
     drop_last=True,
     pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=4,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=batch_size,
     num_workers=0,
-    shuffle=False,
+    shuffle=True,
     pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=4,
 )
 
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
@@ -93,6 +88,7 @@ def forward(self: spt.Module, batch: dict, stage: str) -> dict:
 
 module = spt.Module(
     vision_model=vision_model,
+    text_model=text_model,
     forward=forward,
     clip_loss=spt.losses.InfoNCELoss(temperature=0.07),
     optim={
@@ -118,7 +114,7 @@ zero_shot_callback = spt.callbacks.CLIPZeroShot(
     class_key="label",
     class_names=classes,
     image_backbone=vision_model,
-    text_backbone=vision_model,
+    text_backbone=text_model,
     tokenizer_fn=partial(tokenize, tokenizer=tokenizer),
     metrics={
         "top1": torchmetrics.classification.MulticlassAccuracy(num_classes=len(classes)),
@@ -136,7 +132,7 @@ trainer = pl.Trainer(
     enable_checkpointing=False,
     devices=num_devices,
     accelerator="gpu",
-    strategy="ddp",
+    strategy="ddp_find_unused_parameters_true",
 )
 
 # Run training (resume optional)
