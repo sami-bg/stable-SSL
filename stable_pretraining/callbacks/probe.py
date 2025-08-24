@@ -187,7 +187,7 @@ class OnlineProbe(TrainableCallback):
             metric(preds.detach(), y)
             logs[f"train/{self.name}_{metric_name}"] = metric
 
-        pl_module.log_dict(logs, on_step=True, on_epoch=True)
+        pl_module.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
 
         # Optimizer step using parent class method
         self.optimizer_step(batch_idx, trainer)
@@ -242,7 +242,7 @@ class OnlineProbe(TrainableCallback):
             metric(preds, y)
             logs[f"eval/{self.name}_{metric_name}"] = metric
 
-        pl_module.log_dict(logs, on_step=False, on_epoch=True)
+        pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
 
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
