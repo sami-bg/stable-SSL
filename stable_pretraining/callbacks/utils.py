@@ -10,7 +10,7 @@ from ..optim.utils import create_optimizer, create_scheduler
 from ..optim import LARS
 
 
-class OptimizedCallback(Callback):
+class TrainableCallback(Callback):
     """Base callback class with optimizer and scheduler management.
 
     This base class handles the common logic for callbacks that need their own

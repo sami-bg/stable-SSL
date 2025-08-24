@@ -9,10 +9,10 @@ from loguru import logger as logging
 
 from ..utils import get_data_from_batch_or_outputs
 
-from .utils import EarlyStopping, OptimizedCallback, format_metrics_as_dict
+from .utils import EarlyStopping, TrainableCallback, format_metrics_as_dict
 
 
-class OnlineProbe(OptimizedCallback):
+class OnlineProbe(TrainableCallback):
     """Online probe for evaluating learned representations during self-supervised training.
 
     This callback implements the standard linear evaluation protocol by training a probe
@@ -129,6 +129,9 @@ class OnlineProbe(OptimizedCallback):
         # Setup metrics
         logging.info(f"{self.name}: Setting up metrics")
         if not hasattr(pl_module, "_callbacks_metrics"):
+            logging.info(
+                "attaching a `_callbacks_metrics` to your LightningModule for callbacks"
+            )
             pl_module._callbacks_metrics = {}
         pl_module._callbacks_metrics[self.name] = format_metrics_as_dict(
             self.metrics_config
@@ -208,13 +211,16 @@ class OnlineProbe(OptimizedCallback):
         )
 
         if x is None or y is None:
+            logging.warning(
+                "OnlineProbe callback doesn't have access to its `x` or `y` tensor!"
+            )
             return
 
         # Ensure probe is in eval mode
         self.module.eval()
 
         # Forward pass without gradients
-        with torch.no_grad():
+        with torch.inference_mode():
             # Ensure input has same dtype as probe module
             # This handles mixed precision training where features might be float16
             probe_dtype = next(self.module.parameters()).dtype
@@ -244,7 +250,7 @@ class OnlineProbe(OptimizedCallback):
         """Handle early stopping if configured."""
         if self.early_stopping is None:
             return
-
+        logging.info(f"{self.name} checking for early stopping condition")
         # Get the metric value for early stopping
         metric_name = f"eval/{self.name}_{self.early_stopping.monitor}"
         if metric_name not in trainer.callback_metrics:
@@ -260,7 +266,7 @@ class OnlineProbe(OptimizedCallback):
 
         if should_stop:
             logging.info(
-                f"{self.name}: Early stopping triggered at epoch {trainer.current_epoch}"
+                f"{self.name}: Early stopping triggered at epoch {trainer.current_epoch} by {self.name}"
             )
             trainer.should_stop = True
 
