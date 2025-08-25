@@ -20,12 +20,14 @@ from functools import partial
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--lr", type=float, default=0.001)
+parser.add_argument("--num_devices", type=int, default=8)
+parser.add_argument("--global_batch", type=int, default=4096)
 args = parser.parse_args()
 
+lr = args.lr
 num_devices = 8
 global_batch = 4096
 batch_size = global_batch // num_devices  # per-GPU
-lr = args.lr
 num_epochs = 8
 val_percent = 0.10
 
@@ -219,6 +221,7 @@ trainer = pl.Trainer(
             monitor="train/loss_step",  # this appears in your progress bar
             mode="min",
             every_n_epochs=1,
+            save_top_k=-1,
             dirpath="/mnt/data/sami/stable-pretraining/checkpoints",
             filename=f'wd={wd:.0e}' + '{epoch}-{step}'
         ),

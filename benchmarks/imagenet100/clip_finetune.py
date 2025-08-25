@@ -114,7 +114,6 @@ wandb_logger = WandbLogger(
     entity="samibg",
     project="ijepa-cifar10",
     name="clip-vit-b32",
-    save_top_k=-1,
     log_model=False,
     
 )
