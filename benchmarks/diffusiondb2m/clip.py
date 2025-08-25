@@ -16,10 +16,16 @@ from functools import partial
 # -----------------------
 # Config
 # -----------------------
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--lr", type=float, default=0.001)
+args = parser.parse_args()
+
 num_devices = 8
 global_batch = 4096
 batch_size = global_batch // num_devices  # per-GPU
-lr = 5e-4
+lr = args.lr
 num_epochs = 8
 val_percent = 0.10
 
@@ -59,7 +65,6 @@ train_base = spt.data.HFDataset(
     "poloclub/diffusiondb",
     "2m_all",
     split="train",
-    trust_remote_code=True,
     transform=image_transform,
     remove_columns=["timestamp", "user_name", "prompt_nsfw", "image_nsfw", "sampler",],
 )
@@ -187,12 +192,12 @@ module = spt.Module(
         "optimizer": {
             "type": "AdamW",
             "lr": lr,
-            "weight_decay": 0.1,
+            "weight_decay": (wd := 1.0e-6),
             "betas": (0.9, 0.98),
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "total_steps": len(train_dataloader) * num_epochs,
+            "total_steps": (len(train_dataloader) // num_devices) * num_epochs,
             "peak_step": 0.1,
         },
         "interval": "step",
@@ -215,6 +220,7 @@ trainer = pl.Trainer(
             mode="min",
             every_n_epochs=1,
             dirpath="/mnt/data/sami/stable-pretraining/checkpoints",
+            filename=f'wd={wd:.0e}' + '{epoch}-{step}'
         ),
         LearningRateMonitor(logging_interval="step"),
         CLIPMonitor(log_every_n_steps=10),

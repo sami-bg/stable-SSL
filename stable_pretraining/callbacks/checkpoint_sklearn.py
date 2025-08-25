@@ -129,6 +129,6 @@ class WandbCheckpoint(Callback):
             trainer.logger._checkpoint_name = checkpoint["wandb_checkpoint_name"]
             logging.info("Updated Wandb parameters: ")
             logging.info(f"\t- project={trainer.logger._project}")
-            logging.info(f"\t- _save_dir={trainer.logger.__save_dir}")
+            logging.info(f"\t- _save_dir={trainer.logger._save_dir}")
             logging.info(f"\t- name={trainer.logger._name}")
             logging.info(f"\t- id={trainer.logger._id}")

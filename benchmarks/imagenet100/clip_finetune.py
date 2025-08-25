@@ -12,11 +12,20 @@ from transformers import (
 import stable_pretraining as spt
 from functools import partial
 
-num_devices = 1
-global_batch = 1024
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--ckpt_path", type=str, default=None)
+parser.add_argument("--num_devices", type=int, default=1)
+parser.add_argument("--global_batch", type=int, default=1024)
+args = parser.parse_args()
+
+
+ckpt_path = args.ckpt_path
+num_devices = args.num_devices
+global_batch = args.global_batch
+
 batch_size = global_batch // num_devices  # per-GPU
-lr = 5e-4
-val_percent = 1.0
 
 tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32", trust_remote_code=True)
@@ -52,7 +61,7 @@ train_dataset = spt.data.HFDataset(
     transform=image_transform,
 )
 # just one batch for finetuning, and we set lr to 0, as a dummy
-train_dataset = spt.data.Subset(train_dataset, range(batch_size))
+train_dataset = spt.data.Subset(train_dataset, range(global_batch))
 classes = val_dataset.dataset.features["label"].names
 
 train_dataloader = torch.utils.data.DataLoader(
@@ -66,8 +75,8 @@ train_dataloader = torch.utils.data.DataLoader(
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=batch_size,
-    num_workers=0,
-    shuffle=True,
+    num_workers=32,
+    shuffle=False,
     pin_memory=True,
 )
 
@@ -105,7 +114,9 @@ wandb_logger = WandbLogger(
     entity="samibg",
     project="ijepa-cifar10",
     name="clip-vit-b32",
+    save_top_k=-1,
     log_model=False,
+    
 )
 
 zero_shot_callback = spt.callbacks.CLIPZeroShot(
@@ -124,7 +135,7 @@ zero_shot_callback = spt.callbacks.CLIPZeroShot(
 )
 
 trainer = pl.Trainer(
-    max_epochs=8,
+    max_epochs=9,
     num_sanity_val_steps=0,
     callbacks=[zero_shot_callback],
     precision="bf16-mixed",
@@ -140,5 +151,6 @@ manager = spt.Manager(
     trainer=trainer,
     module=module,
     data=data,
+    ckpt_path=ckpt_path,
 )
 manager()
