@@ -139,15 +139,9 @@ class OnlineProbe(TrainableCallback):
 
         self._train_metrics = pl_module._callbacks_metrics[self.name]["_train"]
         self._val_metrics = pl_module._callbacks_metrics[self.name]["_val"]
+        pl_module.register_forward_hook(self.forward_hook_fn)
 
-    def on_train_batch_end(
-        self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs: Dict,
-        batch: Dict,
-        batch_idx: int,
-    ) -> None:
+    def forward_hook_fn(self, pl_module, batch, outputs) -> None:
         """Perform probe training step."""
         x = get_data_from_batch_or_outputs(
             self.input, batch, outputs, caller_name=self.name
@@ -157,6 +151,7 @@ class OnlineProbe(TrainableCallback):
         )
 
         if x is None or y is None:
+            logging.warning(f"Callback {self.name} missing x or y")
             return
 
         self.module.train()
@@ -169,18 +164,23 @@ class OnlineProbe(TrainableCallback):
                 x = x.to(probe_dtype)
 
             preds = self.module(x)
+            if pl_module.trainer.training:
+                loss = self.loss_fn(preds, y)
 
-            loss = self.loss_fn(preds, y)
+                loss = loss / self.accumulate_grad_batches
 
-            loss = loss / self.accumulate_grad_batches
-
-            loss.backward()
+                outputs["loss"] += loss
+                logs = {
+                    f"train/{self.name}_loss": loss.item()
+                    * self.accumulate_grad_batches
+                }
+            else:
+                logs = {}
 
         prediction_key = f"{self.name}_preds"
         if prediction_key not in batch:
-            batch[prediction_key] = preds.detach()
+            outputs[prediction_key] = preds.detach()
 
-        logs = {f"train/{self.name}_loss": loss.item() * self.accumulate_grad_batches}
         for metric_name, metric in pl_module._callbacks_metrics[self.name][
             "_train"
         ].items():
@@ -189,6 +189,14 @@ class OnlineProbe(TrainableCallback):
 
         pl_module.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
 
+    def on_train_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Dict,
+        batch: Dict,
+        batch_idx: int,
+    ) -> None:
         # Optimizer step using parent class method
         self.optimizer_step(batch_idx, trainer)
 
