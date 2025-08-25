@@ -13,23 +13,24 @@ from transformers import (
 import stable_pretraining as spt
 from functools import partial
 
-# -----------------------
-# Config
-# -----------------------
 
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--num_devices", type=int, default=8)
 parser.add_argument("--global_batch", type=int, default=4096)
+parser.add_argument("--num_epochs", type=int, default=8)
+parser.add_argument("--val_percent", type=float, default=0.10)
+parser.add_argument("--resume_ckpt_path", type=str, default=None)
 args = parser.parse_args()
 
 lr = args.lr
-num_devices = 8
-global_batch = 4096
-batch_size = global_batch // num_devices  # per-GPU
-num_epochs = 8
-val_percent = 0.10
+num_devices = args.num_devices
+global_batch = args.global_batch
+batch_size = global_batch // num_devices
+num_epochs = args.num_epochs
+val_percent = args.val_percent
+resume_ckpt_path = args.resume_ckpt_path
 
 tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 vision_model = CLIPVisionModelWithProjection.from_pretrained(
@@ -52,8 +53,8 @@ def tokenize(text: str, tokenizer: AutoTokenizer):
 image_transform = spt.data.transforms.Compose(
     spt.data.transforms.Resize((224, 224)),
     spt.data.transforms.ToImage(
-        mean=[0.48145466, 0.4578275, 0.40821073],
-        std=[0.26862954, 0.26130258, 0.27577711],
+        mean=[0.481, 0.457, 0.408],
+        std=[0.268, 0.261, 0.275],
     ),
     spt.data.transforms.LambdaTransform(
         fn=partial(tokenize, tokenizer=tokenizer),
@@ -99,9 +100,7 @@ val_dataloader = torch.utils.data.DataLoader(
 
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
 
-# -----------------------
-# Forward & monitor
-# -----------------------
+
 def forward(self: spt.Module, batch: dict, stage: str) -> dict:
     out = {}
     vision_outputs = self.vision_model(pixel_values=batch["image"])
@@ -118,6 +117,7 @@ def forward(self: spt.Module, batch: dict, stage: str) -> dict:
     if self.training:
         out["loss"] = self.clip_loss(image_embeds, text_embeds)
     return out
+
 
 class CLIPMonitor(pl.Callback):
     """Fixed-temp CLIP monitor that expects outputs['image_embeds'/'text_embeds']."""
@@ -181,10 +181,6 @@ class CLIPMonitor(pl.Callback):
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         self._log(trainer, outputs, "val")
 
-# -----------------------
-# Module & trainer
-# -----------------------
-
 module = spt.Module(
     vision_model=vision_model,
     text_model=text_model,
@@ -241,5 +237,6 @@ manager = spt.Manager(
     trainer=trainer,
     module=module,
     data=data,
+    ckpt_path=resume_ckpt_path,
 )
 manager()
