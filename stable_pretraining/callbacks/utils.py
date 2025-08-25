@@ -218,9 +218,7 @@ class TrainableCallback(Callback):
         if (batch_idx + 1) % self.accumulate_grad_batches == 0:
             self.optimizer.step()
             self.optimizer.zero_grad(set_to_none=True)
-
-            if trainer.global_step % trainer.accumulate_grad_batches == 0:
-                self.scheduler.step()
+            self.scheduler.step()
 
     @property
     def module(self):

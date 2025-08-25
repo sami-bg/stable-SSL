@@ -111,6 +111,10 @@ class WandbCheckpoint(Callback):
             checkpoint["wandb_init"] = trainer.logger._wandb_init
             checkpoint["wandb_checkpoint_name"] = trainer.logger._checkpoint_name
             logging.info("Saving Wandb params 🔧")
+            logging.info(f"\t\t- wandb_init={checkpoint['wandb_init']}")
+            logging.info(
+                f"\t\t- wandb_checkpoint_name={checkpoint['wandb_checkpoint_name']}"
+            )
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
         logging.info("Checking for Wandb init params... 🔧")
@@ -129,6 +133,6 @@ class WandbCheckpoint(Callback):
             trainer.logger._checkpoint_name = checkpoint["wandb_checkpoint_name"]
             logging.info("Updated Wandb parameters: ")
             logging.info(f"\t- project={trainer.logger._project}")
-            logging.info(f"\t- _save_dir={trainer.logger.__save_dir}")
+            logging.info(f"\t- _save_dir={trainer.logger._save_dir}")
             logging.info(f"\t- name={trainer.logger._name}")
             logging.info(f"\t- id={trainer.logger._id}")
