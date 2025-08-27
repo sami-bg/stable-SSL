@@ -115,7 +115,7 @@ class CLIPZeroShot(Callback):
         for metric_name, metric in pl_module._callbacks_metrics[self.name][
             "_val"
         ].items():
-            metric(logits.detach(), torch.tensor(classes))
+            metric(logits.detach(), torch.tensor(classes) if isinstance(classes, list) else classes)
             logs[f"val/{self.name}_{metric_name}"] = metric
 
         pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
