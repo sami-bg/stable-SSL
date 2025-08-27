@@ -12,12 +12,13 @@ from transformers import (
 import stable_pretraining as spt
 from functools import partial
 
-import argparse
 
+import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--ckpt_path", type=str, default=None)
 parser.add_argument("--num_devices", type=int, default=1)
 parser.add_argument("--global_batch", type=int, default=1024)
+
 args = parser.parse_args()
 
 
@@ -111,11 +112,10 @@ module = spt.Module(
 )
 
 wandb_logger = WandbLogger(
-    entity="samibg",
-    project="ijepa-cifar10",
-    name="clip-vit-b32",
+    entity="your-entity",
+    project="your-project",
+    name=f"imagenet100-eval-clip-vit-b32",
     log_model=False,
-    
 )
 
 zero_shot_callback = spt.callbacks.CLIPZeroShot(

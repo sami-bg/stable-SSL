@@ -120,7 +120,6 @@ def forward(self: spt.Module, batch: dict, stage: str) -> dict:
 
 
 class CLIPMonitor(pl.Callback):
-    """Fixed-temp CLIP monitor that expects outputs['image_embeds'/'text_embeds']."""
     def __init__(self, log_every_n_steps: int = 10):
         super().__init__()
         self.every = log_every_n_steps
@@ -203,9 +202,9 @@ module = spt.Module(
 )
 
 wandb_logger = WandbLogger(
-    entity="samibg",
-    project="ijepa-cifar10",
-    name="clip-vit-b32",
+    entity="your-entity",
+    project="your-project",
+    name="clip-vit-b32-diffusiondb2m",
     log_model=False,
 )
 
