@@ -67,7 +67,7 @@ train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=batch_size,
-    num_workers=8,
+    num_workers=16,
     drop_last=True,
     persistent_workers=True,
 )
@@ -183,8 +183,8 @@ knn_probe = spt.callbacks.OnlineKNN(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
-    project="imagenet100-byol",
+    entity="samibg",
+    project="ijepa-cifar10",
     name="byol-resnet18",
     log_model=False,
 )
@@ -193,7 +193,7 @@ trainer = pl.Trainer(
     max_epochs=200,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, knn_probe],
-    precision="16-mixed",
+    precision="bf16-mixed",
     logger=wandb_logger,
 )
 

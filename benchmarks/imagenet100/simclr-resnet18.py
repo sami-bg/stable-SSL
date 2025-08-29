@@ -62,14 +62,14 @@ val_dataset = spt.data.HFDataset(
     transform=val_transform,
 )
 
-batch_size = 512
+batch_size = 256
 world_size = 1
 total_batch_size = batch_size * world_size
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=batch_size,
-    num_workers=4,
+    num_workers=16,
     drop_last=True,
     persistent_workers=True,
 )
@@ -149,17 +149,17 @@ knn_probe = spt.callbacks.OnlineKNN(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
-    project="imagenet100-simclr",
+    entity="samibg",
+    project="ijepa-cifar10",
     name="simclr-resnet18-1gpu",
     log_model=False,
 )
 
 trainer = pl.Trainer(
-    max_epochs=400,
+    max_epochs=200,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, knn_probe],
-    precision="16-mixed",
+    precision="bf16-mixed",
     logger=wandb_logger,
     enable_checkpointing=True,
     devices=1,
