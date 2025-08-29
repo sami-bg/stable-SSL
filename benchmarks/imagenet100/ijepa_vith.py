@@ -17,7 +17,7 @@ from stable_pretraining.data import transforms
 import stable_pretraining as spt
 from stable_pretraining.utils.pos_embed import get_2d_sincos_pos_embed
 
-NUM_DEVICES = 8
+NUM_DEVICES = 4
 ZERO_LOSS = False
 
 # Match paper's setup exactly
@@ -358,10 +358,17 @@ trainer = pl.Trainer(
     callbacks=[
         linear_probe,
         rankme, ema_callback,
-        ModelCheckpoint(monitor='train/loss', mode='min', save_top_k=-1, save_last=True),
+        ModelCheckpoint(
+            monitor='train/loss',
+            mode='min',
+            every_n_epochs=15,
+            save_top_k=-1,
+            save_last=True,
+            dirpath="/mnt/data/sami/stable-pretraining/checkpoints",
+        ),
         LearningRateMonitor(logging_interval='step')
     ],
-    precision='16-mixed',
+    precision='bf16-mixed',
     logger=pl_loggers.WandbLogger(
         project="ijepa-cifar10", entity="samibg", name=f"new-ijepa-inet100-num-devices{NUM_DEVICES}-zero-loss{ZERO_LOSS}",
         log_model=False, offline=False,
