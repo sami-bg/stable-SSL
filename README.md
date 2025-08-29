@@ -14,6 +14,7 @@ AI is moving beyond labels. Today's models learn through **self-supervision** an
 
 `stable-pretraining` is a PyTorch framework built on top of Lightning for this new paradigm. What sets us apart is **real-time visibility into training quality** through extensive logging and monitoring. Our callback ecosystem (`OnlineProbe`, `OnlineKNN`, `RankMe`, and many more) provides insights into feature collapse, training dynamics, and downstream performance. Data flow as dictionaries through model components, metrics, and callbacks, making any intermediate value accessible and debuggable. With `stable-pretraining`: track everything, debug faster, iterate sooner.
 
+Join our Discord: https://discord.gg/8M6hT39X
 
 ## How?
 
@@ -51,7 +52,7 @@ To reach flexibility, scalability and stability, we rely on battle-tested third 
     ```python
     datamodule = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
     ```
-2. **module**: The key differentiator from PyTorch Lightning - **you only define the `forward` function**, not `training_step`! This unique approach unifies loss computation and monitoring in one place:
+2. **module**: The key differentiator from PyTorch Lightning - **you only define the `forward` function**, not `training_step`! This unified approach computes losses and generates useful quantities that can be retrieved for monitoring and analysis:
 
     ```python
     def forward(self, batch, stage):
@@ -69,7 +70,7 @@ To reach flexibility, scalability and stability, we rely on battle-tested third 
     - The `forward` method defines both the loss and any quantities to monitor
     - No need to override `training_step`, `validation_step`, etc.
     - Return a dictionary with a `"loss"` key for training
-    - All components are passed as kwargs to `spt.Module`:
+    - All model components are passed as kwargs to `spt.Module`:
 
     ```python
     # First define your model components
@@ -94,7 +95,7 @@ To reach flexibility, scalability and stability, we rely on battle-tested third 
     ```python
     # Monitor SSL representations with a linear probe
     linear_probe = spt.callbacks.OnlineProbe(
-        name="linear_probe",
+        name="linear_probe",  # Useful for retrieving metrics and values in logging
         input="embedding",  # Which output from forward to monitor
         target="label",      # Ground truth from batch
         probe=torch.nn.Linear(512, 10),
@@ -115,7 +116,7 @@ To reach flexibility, scalability and stability, we rely on battle-tested third 
     )
     ```
 
-    Callbacks are powered by an intelligent queue management system that automatically shares memory between callbacks monitoring the same data, optimizing memory usage and eliminating redundant computations.
+    Callbacks are powered by an intelligent queue management system that automatically shares memory between callbacks monitoring the same data thus eliminating redundant computations.
 
     **Why callbacks matter:**
     - **Real-time feedback**: Know if your SSL method is learning useful representations.
@@ -135,7 +136,7 @@ To reach flexibility, scalability and stability, we rely on battle-tested third 
     manager = spt.Manager(trainer=trainer, module=module, data=data)
     manager()
     ```
-    Once configured, the `Manager` connects all components and handles the training loop with precise logging and monitoring.
+    Once configured, the `Manager` connects all components and handles the training loop with precise logging and monitoring (optional).
 
 ## Complete Example
 
