@@ -9,7 +9,7 @@ from lightning.pytorch.loggers import WandbLogger
 from timm.models.vision_transformer import VisionTransformer
 from torch import nn
 
-import stable_pretraining as spt
+import stable_pretraining as ssl
 from stable_pretraining.data import transforms
 from stable_pretraining.data.utils import Dataset
 from stable_pretraining.utils.pos_embed import get_2d_sincos_pos_embed
@@ -32,10 +32,9 @@ mask_ratio = 0.75
 num_visible_patches = int(num_patches * (1 - mask_ratio))
 
 # Training configuration
-num_devices = 4
-batch_size = 128 * num_devices
+batch_size = 128
 val_batch_size = 128
-num_epochs = 300
+num_epochs = 2000
 num_workers = 16
 
 # Optimization configuration
@@ -118,7 +117,7 @@ val = torch.utils.data.DataLoader(
     persistent_workers=True,
 )
 
-data = spt.data.DataModule(train=train, val=val)
+data = ssl.data.DataModule(train=train, val=val)
 
 
 def pos_embed(patches: torch.Tensor, with_cls: bool = True) -> torch.Tensor:
@@ -272,11 +271,20 @@ decoder_kwargs = dict(
 )
 
 
-module = spt.Module(
+def mae_norm_pix_loss(pred_masked: torch.Tensor, tgt_masked: torch.Tensor) -> torch.Tensor:
+    # MAE normalizes the *target* per patch (mean=0, var=1)
+    mu = tgt_masked.mean(dim=-1, keepdim=True)
+    var = tgt_masked.var(dim=-1, unbiased=False, keepdim=True)
+    tgt = (tgt_masked - mu) / (var + 1e-6).sqrt()
+    return F.mse_loss(pred_masked, tgt)
+
+
+
+module = ssl.Module(
     encoder=MAE_Encoder(**encoder_kwargs),
     decoder=MAE_Decoder(**decoder_kwargs),
     forward=forward,
-    loss_fn=F.mse_loss,  # pixel MSE loss. we make implicit assumption that norm-pix-loss is False
+    loss_fn=mae_norm_pix_loss,  # pixel MSE loss. we make implicit assumption that norm-pix-loss is False
     optim={
         "optimizer": {
             "type": "AdamW",
@@ -306,7 +314,7 @@ class MAE_Classifier(torch.nn.Module):
 
 
 # Note: Linear probe uses visible patches only during training
-linear_probe = spt.callbacks.OnlineProbe(
+linear_probe = ssl.callbacks.OnlineProbe(
     "linear_probe",
     "embeddings",
     "label", 
@@ -332,12 +340,13 @@ trainer = pl.Trainer(
     max_epochs=num_epochs,
     num_sanity_val_steps=0,
     callbacks=[linear_probe],
-    precision="16-mixed",
+    precision="bf16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,
     accelerator="gpu",
-    devices=num_devices,
+    gradient_clip_val=5.0,
+    devices=1,
 )
 
-manager = spt.Manager(trainer=trainer, module=module, data=data)
+manager = ssl.Manager(trainer=trainer, module=module, data=data)
 manager()

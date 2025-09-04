@@ -776,7 +776,6 @@ class RandomMask(Transform):
         
         return x
 
-
 # class RandomClassSwitch(v2.Transform):
 #     def __init__(
 #         self,
