@@ -15,6 +15,8 @@ from torchvision.transforms.functional import InterpolationMode
 from torchvision.transforms.v2 import functional as F
 from torchvision.transforms.v2._utils import query_chw
 
+from stable_pretraining.data.masking import multi_block_mask
+
 
 class Transform(v2.Transform):
     """Base transform class extending torchvision v2.Transform with nested data handling."""
@@ -631,6 +633,167 @@ class MultiViewTransform(v2.Transform):
         transform_idx = self.counter % self.n_transforms
         self.counter += 1
         return self.transforms[transform_idx](sample)
+
+
+class ContextTargetsMultiBlockMask(Transform):
+    """Transform that adds multi-block masks to batch, with multiple target blocks and one disjoint context block.
+
+    Args:
+        patch_size: Size of the patch in patches
+        num_blocks: Number of blocks to sample
+        context_scale: Scale of the context block
+        aspect_ratio: Aspect ratio of the blocks
+        min_keep: Minimum number of patches that must be in the block
+
+    """
+
+    def __init__(
+        self,
+        patch_size=16,
+        context_scale=(0.85, 1.0),
+        context_aspect_ratio=(1.0, 1.0),
+        target_scales=((0.15, 0.2),) * 4,
+        target_aspect_ratios=((0.75, 1.5),) * 4,
+        min_keep=10,
+        source: str = "image",
+        target_context: str = "mask_context",
+        target_targets: str = "masks_target",
+    ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.context_scale = context_scale
+        self.context_aspect_ratio = context_aspect_ratio
+        self.target_scales = target_scales
+        self.target_aspect_ratios = target_aspect_ratios
+        self.source = source
+        self.target_context = target_context
+        self.target_targets = target_targets
+        if len(target_scales) != len(target_aspect_ratios):
+            raise ValueError(
+                "Each scale must have its associated aspect ratio and vice versa.",
+                "Received {len(target_scales)=} {len(target_aspect_ratios)=}",
+            )
+
+        self.min_keep = min_keep
+
+    def __call__(self, x):
+        source = self.nested_get(x, self.source)
+        if isinstance(source, PIL.Image.Image):
+            W, H = source.size  # PIL is W,H
+        elif isinstance(source, torch.Tensor):
+            # assumes H W
+            H, W = source.shape[-2:]
+        else:
+            raise ValueError(
+                f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead."
+            )
+
+        scales = [self.context_scale, *self.target_scales]
+        aspect_ratios = [self.context_aspect_ratio, *self.target_aspect_ratios]
+        context_mask, *target_masks = multi_block_mask(
+            H // self.patch_size,
+            W // self.patch_size,
+            block_scales=scales,
+            aspect_ratios=aspect_ratios,
+            min_keep=self.min_keep,
+        )
+        # makes targets disjoint with context
+        for mask in target_masks:
+            context_mask &= ~mask
+
+        x[self.target_context] = torch.nonzero(context_mask.flatten()).squeeze()
+        x[self.target_targets] = [
+            torch.nonzero(mask.flatten()).squeeze() for mask in target_masks
+        ]
+        x[self.get_name(x)] = torch.tensor([scales, aspect_ratios])
+        return x
+
+
+class RandomMask(Transform):
+    r"""Creates a random MAE-style mask for an image.
+
+    This transform generates a random permutation of all patch indices for an
+    input image. It then splits these indices into two disjoint sets:
+    'visible' and 'masked', according to the specified `mask_ratio`.
+
+    It also provides an `ids_restore` tensor, which can un-shuffle a sequence
+    of patches back to its original 2D grid order. All outputs are added as
+    new keys to the sample dictionary.
+
+    Example:
+        >>> # xdoctest: +SKIP
+        >>> transform = RandomMask(patch_size=16, mask_ratio=0.75)
+        >>> sample = {"image": torch.randn(3, 224, 224)}
+        >>> result = transform(sample)
+        >>> sorted(result.keys())
+        ['image', 'ids_restore', 'len_keep', 'mask_masked', 'mask_visible']
+        >>> result["len_keep"]
+        49
+        >>> result["mask_visible"].shape
+        torch.Size([49])
+
+    Args:
+        patch_size (int): The height and width of each square patch.
+        mask_ratio (float): The fraction of patches to be masked (e.g., 0.75).
+        source (str): The key in the sample dict for the source image tensor.
+        target_visible (str): The key to use when storing visible patch indices.
+        target_masked (str): The key to use when storing masked patch indices.
+        target_ids_restore (str): The key to use for the restoration indices.
+        target_len_keep (str): The key to use for the count of visible patches.
+    """
+
+    def __init__(
+        self,
+        patch_size=16,
+        mask_ratio=0.75,
+        source: str = "image",
+        target_visible: str = "mask_visible",
+        target_masked: str = "mask_masked",
+        target_ids_restore: str = "ids_restore",
+        target_len_keep: str = "len_keep",
+    ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.mask_ratio = mask_ratio
+        self.source = source
+        self.target_visible = target_visible
+        self.target_masked = target_masked
+        self.target_ids_restore = target_ids_restore
+        self.target_len_keep = target_len_keep
+
+    def __call__(self, x):
+        source = self.nested_get(x, self.source)
+        if isinstance(source, PIL.Image.Image):
+            W, H = source.size  # PIL is W,H
+        elif isinstance(source, torch.Tensor):
+            # NOTE assumes _HW
+            H, W = source.shape[-2:]
+        else:
+            raise ValueError(
+                f"Source must be a PIL.Image.Image or a torch.Tensor, but got {type(source)} instead."
+            )
+
+        num_patches = (H // self.patch_size) * (W // self.patch_size)
+        len_keep = int(num_patches * (1 - self.mask_ratio))
+
+        # Generate random noise and shuffle indices (like MAE)
+        noise = torch.rand(num_patches)
+        ids_shuffle = torch.argsort(noise)
+        ids_restore = torch.argsort(ids_shuffle)  # inverse permutation
+
+        # Split into visible and masked
+        mask_visible = ids_shuffle[:len_keep]  # first len_keep are visible
+        mask_masked = ids_shuffle[len_keep:]  # rest are masked
+
+        # Add to sample
+        x[self.target_visible] = mask_visible
+        x[self.target_masked] = mask_masked
+        x[self.target_ids_restore] = (
+            ids_restore  # NEW: for reconstructing full sequence
+        )
+        x[self.target_len_keep] = len_keep
+
+        return x
 
 
 # class RandomClassSwitch(v2.Transform):
