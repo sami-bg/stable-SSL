@@ -121,7 +121,6 @@ def multi_block_mask(
             `(height, width)`, where `1`s indicate the masked block and `0`s are
             the background.
     """
-
     g = torch.Generator()
     g.manual_seed(seed)
 
