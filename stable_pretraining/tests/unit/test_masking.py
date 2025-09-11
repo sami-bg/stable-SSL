@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from stable_pretraining.data.transforms import ContextTargetsMultiBlockMask
+from stable_pretraining.data.transforms import ContextTargetsMultiBlockMask, RandomMask
 from stable_pretraining.data.utils import apply_masks
 
 
@@ -63,3 +63,59 @@ class TestMasking:
         expected_patch = x_patches[0, first_context_idx, :]
         actual_patch = masked_context[0, 0, :]
         assert torch.equal(expected_patch, actual_patch), "Value mismatch after masking"
+
+    def test_random_mask_transform(self):
+        """Tests random mask generation and verifies its logical properties."""
+        # Config
+        patch_size = 16
+        img_size = 224
+        mask_ratio = 0.75
+
+        # Calculate expected sizes
+        num_patches = (img_size // patch_size)**2
+        len_keep = int(num_patches * (1 - mask_ratio))
+        len_masked = num_patches - len_keep
+
+        # Create Transform and Dummy Data
+        transform = RandomMask(patch_size=patch_size, mask_ratio=mask_ratio)
+        sample = {"image": torch.randn(3, img_size, img_size)}
+
+        # Generate masks for one sample
+        result = transform(sample)
+
+        # Check for correct keys and simple values
+        assert "mask_visible" in result
+        assert "mask_masked" in result
+        assert "ids_restore" in result
+        assert "len_keep" in result
+        assert result["len_keep"] == len_keep
+
+        # Check tensor shapes
+        visible_indices = result["mask_visible"]
+        masked_indices = result["mask_masked"]
+        ids_restore = result["ids_restore"]
+
+        assert visible_indices.shape == (len_keep,)
+        assert masked_indices.shape == (len_masked,)
+        assert ids_restore.shape == (num_patches,)
+
+        # Check logical properties of the masks
+        visible_set = set(visible_indices.tolist())
+        masked_set = set(masked_indices.tolist())
+        full_set = set(range(num_patches))
+
+        # 1. Visible and masked indices should have no overlap
+        assert visible_set.isdisjoint(masked_set), "Visible and masked indices overlap"
+
+        # 2. Their union should contain all possible patch indices
+        assert (visible_set | masked_set) == full_set, "Union of indices is not complete"
+
+        # Verify that `ids_restore` correctly reconstructs the original order
+        original_indices = torch.arange(num_patches)
+        # The shuffled sequence is the concatenation of visible and masked indices
+        shuffled_indices = torch.cat([visible_indices, masked_indices])
+        # Applying `ids_restore` to the shuffled sequence should yield the original
+        restored_indices = shuffled_indices[ids_restore]
+
+        assert torch.equal(original_indices, restored_indices), "`ids_restore` failed reconstruction"
+
