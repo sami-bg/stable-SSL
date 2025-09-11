@@ -86,6 +86,42 @@ def multi_block_mask(
     min_keep: int = 1,
     seed: int = 0,
 ) -> list[torch.Tensor, ...]:
+    r"""Generates a list of distinct, randomly placed, block-shaped binary masks.
+
+    This function creates a series of block masks based on provided scale and
+    aspect ratio specifications. For each pair of `(scale, aspect_ratio)`,
+    it first samples a block size (height, width). It then places
+    this block at a random location within the grid of the specified `height` and `width`.
+
+    The process is repeated for all items in the input lists to produce a
+    list of independent masks.
+
+    Example:
+        >>> # xdoctest: +SKIP
+        >>> # Generate masks for a 14x14 patch grid
+        >>> masks = multi_block_mask(height=14, width=14)
+        >>> len(masks)
+        5
+        >>> masks[0].nonzero().size(0)
+        169
+        >>> masks[1].nonzero().size(0)
+        30
+    Args:
+        height (int): The height of the grid to generate masks for (in patches).
+        width (int): The width of the grid to generate masks for (in patches).
+        block_scales (list[tuple[float, float]]): A list of tuples, each defining
+            the min/max scale of a block's area relative to the total grid area.
+        aspect_ratios (list[tuple[float, float]]): A list of tuples, each defining
+            the min/max aspect ratio (height/width) for a corresponding block.
+        min_keep (int): The minimum number of `1`s required for a valid block mask.
+        seed (int): A seed for the random number generator to ensure reproducibility.
+
+    Returns:
+        list[torch.Tensor]: A list of 2D binary masks. Each tensor has a shape of
+            `(height, width)`, where `1`s indicate the masked block and `0`s are
+            the background.
+    """
+
     g = torch.Generator()
     g.manual_seed(seed)
 
