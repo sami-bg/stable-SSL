@@ -44,6 +44,7 @@ def _sample_block_mask(
     min_keep: int = 1,
 ):
     """Sample a single block mask for an image.
+
     Because mask positions are chosen randomly, we can occasionally end up with a mask that is too small.
     This function will retry until a valid mask is found.
 
