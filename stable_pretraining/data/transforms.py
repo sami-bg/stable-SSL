@@ -710,6 +710,38 @@ class ContextTargetsMultiBlockMask(Transform):
 
 
 class RandomMask(Transform):
+    r"""Creates a random MAE-style mask for an image.
+
+    This transform generates a random permutation of all patch indices for an
+    input image. It then splits these indices into two disjoint sets:
+    'visible' and 'masked', according to the specified `mask_ratio`.
+
+    It also provides an `ids_restore` tensor, which can un-shuffle a sequence
+    of patches back to its original 2D grid order. All outputs are added as
+    new keys to the sample dictionary.
+
+    Example:
+        >>> # xdoctest: +SKIP
+        >>> transform = RandomMask(patch_size=16, mask_ratio=0.75)
+        >>> sample = {"image": torch.randn(3, 224, 224)}
+        >>> result = transform(sample)
+        >>> sorted(result.keys())
+        ['image', 'ids_restore', 'len_keep', 'mask_masked', 'mask_visible']
+        >>> result["len_keep"]
+        49
+        >>> result["mask_visible"].shape
+        torch.Size([49])
+
+    Args:
+        patch_size (int): The height and width of each square patch.
+        mask_ratio (float): The fraction of patches to be masked (e.g., 0.75).
+        source (str): The key in the sample dict for the source image tensor.
+        target_visible (str): The key to use when storing visible patch indices.
+        target_masked (str): The key to use when storing masked patch indices.
+        target_ids_restore (str): The key to use for the restoration indices.
+        target_len_keep (str): The key to use for the count of visible patches.
+    """
+
     def __init__(
         self,
         patch_size=16,
@@ -743,22 +775,24 @@ class RandomMask(Transform):
 
         num_patches = (H // self.patch_size) * (W // self.patch_size)
         len_keep = int(num_patches * (1 - self.mask_ratio))
-        
+
         # Generate random noise and shuffle indices (like MAE)
         noise = torch.rand(num_patches)
         ids_shuffle = torch.argsort(noise)
         ids_restore = torch.argsort(ids_shuffle)  # inverse permutation
-        
+
         # Split into visible and masked
         mask_visible = ids_shuffle[:len_keep]  # first len_keep are visible
-        mask_masked = ids_shuffle[len_keep:]   # rest are masked
-        
+        mask_masked = ids_shuffle[len_keep:]  # rest are masked
+
         # Add to sample
         x[self.target_visible] = mask_visible
-        x[self.target_masked] = mask_masked  
-        x[self.target_ids_restore] = ids_restore  # NEW: for reconstructing full sequence
+        x[self.target_masked] = mask_masked
+        x[self.target_ids_restore] = (
+            ids_restore  # NEW: for reconstructing full sequence
+        )
         x[self.target_len_keep] = len_keep
-        
+
         return x
 
 

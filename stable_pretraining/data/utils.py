@@ -99,6 +99,7 @@ def random_split(
         for offset, length in zip(itertools.accumulate(lengths), lengths)
     ]
 
+
 def apply_masks(x: torch.Tensor, *masks: torch.Tensor) -> torch.Tensor:
     r"""Apply one or more masks to a batch of patched images.
 
@@ -139,17 +140,16 @@ def apply_masks(x: torch.Tensor, *masks: torch.Tensor) -> torch.Tensor:
 
     B, N, D = x.shape
     M = len(masks)
-    
-    idx = torch.stack(
-        [m.to(x.device, dtype=torch.long) for m in masks], dim=1
-    )
+
+    idx = torch.stack([m.to(x.device, dtype=torch.long) for m in masks], dim=1)
     K = idx.size(-1)
 
     x_expanded = x.unsqueeze(1).expand(-1, M, -1, -1)
     idx_expanded = idx.unsqueeze(-1).expand(-1, -1, -1, D)
     out = x_expanded.gather(2, idx_expanded)
-    
+
     return out.reshape(B * M, K, D)
+
 
 if __name__ == "__main__":
     x = torch.randn(4, 196, 128)

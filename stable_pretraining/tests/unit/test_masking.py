@@ -72,7 +72,7 @@ class TestMasking:
         mask_ratio = 0.75
 
         # Calculate expected sizes
-        num_patches = (img_size // patch_size)**2
+        num_patches = (img_size // patch_size) ** 2
         len_keep = int(num_patches * (1 - mask_ratio))
         len_masked = num_patches - len_keep
 
@@ -108,7 +108,9 @@ class TestMasking:
         assert visible_set.isdisjoint(masked_set), "Visible and masked indices overlap"
 
         # 2. Their union should contain all possible patch indices
-        assert (visible_set | masked_set) == full_set, "Union of indices is not complete"
+        assert (visible_set | masked_set) == full_set, (
+            "Union of indices is not complete"
+        )
 
         # Verify that `ids_restore` correctly reconstructs the original order
         original_indices = torch.arange(num_patches)
@@ -117,5 +119,6 @@ class TestMasking:
         # Applying `ids_restore` to the shuffled sequence should yield the original
         restored_indices = shuffled_indices[ids_restore]
 
-        assert torch.equal(original_indices, restored_indices), "`ids_restore` failed reconstruction"
-
+        assert torch.equal(original_indices, restored_indices), (
+            "`ids_restore` failed reconstruction"
+        )

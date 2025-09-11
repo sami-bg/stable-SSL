@@ -1,6 +1,7 @@
 import math
 import torch
 
+
 def _sample_block_size(
     height: int,
     width: int,
