@@ -149,11 +149,3 @@ def apply_masks(x: torch.Tensor, *masks: torch.Tensor) -> torch.Tensor:
     out = x_expanded.gather(2, idx_expanded)
 
     return out.reshape(B * M, K, D)
-
-
-if __name__ == "__main__":
-    x = torch.randn(4, 196, 128)
-    mask1 = torch.randint(0, 196, (4, 50))
-    mask2 = torch.randint(0, 196, (4, 50))
-    out = apply_masks(x, mask1, mask2)
-    print(out.shape)
