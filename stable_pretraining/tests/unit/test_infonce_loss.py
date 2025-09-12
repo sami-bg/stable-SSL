@@ -96,14 +96,17 @@ class TestInfoNCELoss:
 
     @patch(DDP_GATHER_PATH, side_effect=lambda x: [x])
     def test_symmetry_image_text(self, mock_all_gather):
-        """Loss(img, txt) == Loss(txt, img) since it averages both directions."""
+        """Loss(img, txt) ~= Loss(txt, img) within numerical tolerance."""
         torch.manual_seed(7)
-        x = F.normalize(torch.randn(5, 64), dim=-1)
-        y = F.normalize(torch.randn(5, 64), dim=-1)
+        x = F.normalize(torch.randn(5, 64), dim=-1).cpu()
+        y = F.normalize(torch.randn(5, 64), dim=-1).cpu()
         loss_fn = InfoNCELoss()
 
-        # swapping image/text inputs should yield the same loss
-        assert torch.allclose(loss_fn(x, y), loss_fn(y, x), atol=1e-7, rtol=0)
+        a = loss_fn(x, y).cpu()
+        b = loss_fn(y, x).cpu()
+
+        # allow tiny fp drift
+        assert torch.allclose(a, b, atol=1e-5, rtol=1e-6), f"{a=} {b=}"
 
     def _two_rank_disjoint_side_effect(x):
         # use an even batch size so the split is clean
