@@ -1,15 +1,19 @@
-import os
 import torch
 import torch.nn.functional as F
 import lightning as pl
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
-from transformers import AutoTokenizer, CLIPTextModelWithProjection, CLIPVisionModelWithProjection
+from transformers import (
+    AutoTokenizer,
+    CLIPTextModelWithProjection,
+    CLIPVisionModelWithProjection,
+)
 import stable_pretraining as spt
 from functools import partial
 
 
 import argparse
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--num_devices", type=int, default=8)
@@ -35,6 +39,7 @@ text_model = CLIPTextModelWithProjection.from_pretrained(
     "openai/clip-vit-base-patch32", trust_remote_code=True
 )
 
+
 def tokenize(text: str, tokenizer: AutoTokenizer):
     data = tokenizer(
         text,
@@ -44,6 +49,7 @@ def tokenize(text: str, tokenizer: AutoTokenizer):
         truncation=True,
     )
     return data["input_ids"].squeeze(0), data["attention_mask"].squeeze(0)
+
 
 image_transform = spt.data.transforms.Compose(
     spt.data.transforms.Resize((224, 224)),
@@ -64,7 +70,13 @@ train_base = spt.data.HFDataset(
     "2m_all",
     split="train",
     transform=image_transform,
-    remove_columns=["timestamp", "user_name", "prompt_nsfw", "image_nsfw", "sampler",],
+    remove_columns=[
+        "timestamp",
+        "user_name",
+        "prompt_nsfw",
+        "image_nsfw",
+        "sampler",
+    ],
 )
 
 size = len(train_base)
@@ -115,6 +127,13 @@ def forward(self: spt.Module, batch: dict, stage: str) -> dict:
 
 
 class CLIPMonitor(pl.Callback):
+    """PyTorch Lightning callback that logs CLIP-style training metrics.
+
+    Computes retrieval (R@1), contrastive statistics (pos prob, margin, entropy),
+    and embedding alignment (cosine sim, norms) from image/text embeddings, and
+    logs them during training and validation.
+    """
+
     def __init__(self, log_every_n_steps: int = 10):
         super().__init__()
         self.every = log_every_n_steps
@@ -143,7 +162,9 @@ class CLIPMonitor(pl.Callback):
         pos_prob = probs[diag, diag]
         entropy = -(probs * probs.clamp_min(1e-12).log()).sum(dim=1)
 
-        neg = logits.masked_fill(torch.eye(B, dtype=torch.bool, device=logits.device), float("-inf"))
+        neg = logits.masked_fill(
+            torch.eye(B, dtype=torch.bool, device=logits.device), float("-inf")
+        )
         top_neg = neg.max(dim=1).values
         margin = logits[diag, diag] - top_neg
 
@@ -172,7 +193,9 @@ class CLIPMonitor(pl.Callback):
         if trainer.global_step % self.every == 0:
             self._log(trainer, outputs, "train")
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+    def on_validation_batch_end(
+        self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0
+    ):
         self._log(trainer, outputs, "val")
 
 

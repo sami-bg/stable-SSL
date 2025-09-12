@@ -29,7 +29,6 @@ class TestInfoNCELoss:
         # check that all_gather was called twice (once for images, once for texts)
         assert mock_all_gather.call_count == 2
 
-
     @patch(DDP_GATHER_PATH, side_effect=lambda x: [x])
     def test_loss_is_high_for_mismatch(self, mock_all_gather):
         """Loss should be high when positive pairs are swapped/orthogonal."""
@@ -77,9 +76,17 @@ class TestInfoNCELoss:
         loss_fn = InfoNCELoss(temperature=0.01)
 
         # compare three cases: no logit_scale, float logit_scale, tensor logit_scale
-        loss_temp   = loss_fn(image_feats=image_feats, text_feats=text_feats, logit_scale=None)
-        loss_float  = loss_fn(image_feats=image_feats, text_feats=text_feats, logit_scale=20.0)
-        loss_tensor = loss_fn(image_feats=image_feats, text_feats=text_feats, logit_scale=torch.tensor(20.0, requires_grad=True))
+        loss_temp = loss_fn(
+            image_feats=image_feats, text_feats=text_feats, logit_scale=None
+        )
+        loss_float = loss_fn(
+            image_feats=image_feats, text_feats=text_feats, logit_scale=20.0
+        )
+        loss_tensor = loss_fn(
+            image_feats=image_feats,
+            text_feats=text_feats,
+            logit_scale=torch.tensor(20.0, requires_grad=True),
+        )
 
         # different scales => different loss
         assert not torch.allclose(loss_temp, loss_float)
