@@ -106,7 +106,7 @@ module = spt.Module(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
+    entity="stable-pretraining",
     project="imagenet100-clip",
     name="imagenet100-finetune-clip-vit-b32",
     log_model=False,
