@@ -246,7 +246,7 @@ class InfoNCELoss(torch.nn.Module):
     def forward(
         self,
         image_feats: torch.Tensor,  # [B, D]
-        text_feats: torch.Tensor,   # [B, D]
+        text_feats: torch.Tensor,  # [B, D]
         logit_scale: torch.Tensor | float | None = None,
     ) -> torch.Tensor:
         """Compute CLIP loss.
@@ -263,16 +263,18 @@ class InfoNCELoss(torch.nn.Module):
         """
         # Gather across devices (DDP) to form global batch
         img = torch.cat(all_gather(F.normalize(image_feats, dim=-1)), dim=0)
-        txt = torch.cat(all_gather(F.normalize(text_feats,  dim=-1)), dim=0)
+        txt = torch.cat(all_gather(F.normalize(text_feats, dim=-1)), dim=0)
 
         # Compute pairwise logits
         if logit_scale is None:
             scale = 1.0 / self.temperature
         else:
             # Accept float or 0-dim tensor; detach is not applied so scale can be learnable
-            scale = float(logit_scale) if not torch.is_tensor(logit_scale) else logit_scale
+            scale = (
+                float(logit_scale) if not torch.is_tensor(logit_scale) else logit_scale
+            )
         logits_per_image = scale * (img @ txt.T)  # [N, N]
-        logits_per_text  = logits_per_image.T     # [N, N]
+        logits_per_text = logits_per_image.T  # [N, N]
 
         # Ground-truth matches are on the diagonal after all_gather
         N = logits_per_image.size(0)
@@ -280,5 +282,5 @@ class InfoNCELoss(torch.nn.Module):
         targets = torch.arange(N, device=device)
 
         loss_i = F.cross_entropy(logits_per_image, targets)
-        loss_t = F.cross_entropy(logits_per_text,  targets)
+        loss_t = F.cross_entropy(logits_per_text, targets)
         return 0.5 * (loss_i + loss_t)

@@ -1,7 +1,14 @@
 from functools import partial
 from lightning.pytorch.loggers import WandbLogger
-import torch, torchmetrics, torch.nn.functional as F, lightning as pl
-from transformers import AutoTokenizer, CLIPVisionModelWithProjection, CLIPTextModelWithProjection
+import torch
+import torchmetrics
+import torch.nn.functional as F
+import lightning as pl
+from transformers import (
+    AutoTokenizer,
+    CLIPVisionModelWithProjection,
+    CLIPTextModelWithProjection,
+)
 
 import stable_pretraining as spt
 
@@ -10,8 +17,13 @@ global_batch = 1024
 batch_size = global_batch // num_devices  # per-GPU
 
 tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-vision_model = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32", trust_remote_code=True)
-text_model = CLIPTextModelWithProjection.from_pretrained("openai/clip-vit-base-patch32", trust_remote_code=True)
+vision_model = CLIPVisionModelWithProjection.from_pretrained(
+    "openai/clip-vit-base-patch32", trust_remote_code=True
+)
+text_model = CLIPTextModelWithProjection.from_pretrained(
+    "openai/clip-vit-base-patch32", trust_remote_code=True
+)
+
 
 def tokenize(text: str | list[str], tokenizer: AutoTokenizer) -> torch.Tensor:
     data = tokenizer(
@@ -22,6 +34,7 @@ def tokenize(text: str | list[str], tokenizer: AutoTokenizer) -> torch.Tensor:
         truncation=True,
     )
     return data["input_ids"]
+
 
 image_transform = spt.data.transforms.Compose(
     spt.data.transforms.Resize((224, 224)),
@@ -70,10 +83,10 @@ def forward(self: spt.Module, batch: dict, stage: str) -> dict:
     vision_outputs = self.vision_model(pixel_values=batch["image"])
     image_embeds = F.normalize(vision_outputs.image_embeds, dim=-1)
     out["image_embeds"] = image_embeds
-    
+
     if self.training:
-        out["loss"] = 0. * self.clip_loss(image_embeds, image_embeds)
-    
+        out["loss"] = 0.0 * self.clip_loss(image_embeds, image_embeds)
+
     return out
 
 
@@ -95,7 +108,7 @@ module = spt.Module(
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet100-clip",
-    name=f"imagenet100-finetune-clip-vit-b32",
+    name="imagenet100-finetune-clip-vit-b32",
     log_model=False,
 )
 
@@ -108,10 +121,16 @@ zero_shot_callback = spt.callbacks.CLIPZeroShot(
     text_backbone=text_model,
     tokenizer_fn=partial(tokenize, tokenizer=tokenizer),
     metrics={
-        "top1": torchmetrics.classification.MulticlassAccuracy(num_classes=len(classes)),
-        "top5": torchmetrics.classification.MulticlassAccuracy(num_classes=len(classes), top_k=5),
-        "top10": torchmetrics.classification.MulticlassAccuracy(num_classes=len(classes), top_k=10),
-    }
+        "top1": torchmetrics.classification.MulticlassAccuracy(
+            num_classes=len(classes)
+        ),
+        "top5": torchmetrics.classification.MulticlassAccuracy(
+            num_classes=len(classes), top_k=5
+        ),
+        "top10": torchmetrics.classification.MulticlassAccuracy(
+            num_classes=len(classes), top_k=10
+        ),
+    },
 )
 
 trainer = pl.Trainer(

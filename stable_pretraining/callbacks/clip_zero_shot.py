@@ -26,6 +26,7 @@ class CLIPZeroShot(Callback):
         tokenizer_fn: Callable that maps str | list[str] -> tensor of shape (T,).
         metrics: Dict of torchmetrics to compute on validation (e.g., {"top1": MulticlassAccuracy(...)}).
     """
+
     def __init__(
         self,
         name: str,
@@ -59,7 +60,6 @@ class CLIPZeroShot(Callback):
         logging.info(f"  - Class names: [{', '.join(class_names[:5])}...]")
         logging.info(f"  - Image backbone: {image_backbone.__class__.__name__}")
 
-
     def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
         """Initialize optimizer, scheduler, and metrics."""
         # Call parent setup for module/optimizer/scheduler
@@ -78,10 +78,11 @@ class CLIPZeroShot(Callback):
 
         self._train_metrics = pl_module._callbacks_metrics[self.name]["_train"]
         self._val_metrics = pl_module._callbacks_metrics[self.name]["_val"]
-        self.class_tokens = self.tokenizer_fn(self.class_names).to(device=pl_module.device)
+        self.class_tokens = self.tokenizer_fn(self.class_names).to(
+            device=pl_module.device
+        )
         self.class_embeds = self.text_backbone(input_ids=self.class_tokens).text_embeds
         self.class_embeds = F.normalize(self.class_embeds, dim=-1)
-
 
     def on_validation_batch_end(
         self,
@@ -99,23 +100,26 @@ class CLIPZeroShot(Callback):
         )
         if image is None:
             return
-        
+
         image = image.to(device=pl_module.device)
-        
+
         with torch.no_grad():
             image_features = self.image_backbone(image).image_embeds
             image_features = F.normalize(image_features, dim=-1)
             logits = image_features @ self.class_embeds.T
-        
+
         prediction_key = f"{self.name}_preds"
         if prediction_key not in batch:
             batch[prediction_key] = logits.detach()
-        
+
         logs = {}
         for metric_name, metric in pl_module._callbacks_metrics[self.name][
             "_val"
         ].items():
-            metric(logits.detach(), torch.tensor(classes) if isinstance(classes, list) else classes)
+            metric(
+                logits.detach(),
+                torch.tensor(classes) if isinstance(classes, list) else classes,
+            )
             logs[f"val/{self.name}_{metric_name}"] = metric
 
         pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
