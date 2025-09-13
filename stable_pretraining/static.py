@@ -155,7 +155,7 @@ TORCHVISION_EMBEDDINGS = {
         "features.7.0",
         "features.7.1",
     ],
-    "convext_tiny": [
+    "convnext_tiny": [
         "features.0",
         "features.1.0",
         "features.1.1",
@@ -179,7 +179,7 @@ TORCHVISION_EMBEDDINGS = {
         "features.7.1",
         "features.7.2",
     ],
-    "convext_large": [
+    "convnext_large": [
         "features.0",
         "features.1.0",
         "features.1.1",
@@ -222,7 +222,7 @@ TORCHVISION_EMBEDDINGS = {
         "features.7.2",
     ],
 }
-TORCHVISION_EMBEDDINGS["convext_base"] = TORCHVISION_EMBEDDINGS["convext_large"]
+TORCHVISION_EMBEDDINGS["convnext_base"] = TORCHVISION_EMBEDDINGS["convnext_large"]
 TORCHVISION_EMBEDDINGS["swin_v2_s"] = TORCHVISION_EMBEDDINGS["swin_v2_b"]
 TORCHVISION_EMBEDDINGS["vit_b_32"] = TORCHVISION_EMBEDDINGS["vit_b_16"]
 TORCHVISION_EMBEDDINGS["vit_l_32"] = TORCHVISION_EMBEDDINGS["vit_l_16"]
