@@ -127,12 +127,12 @@ def main(cfg):
         precision="16-mixed",  # Use mixed precision for faster training
         logger=wandb_logger,
         enable_checkpointing=False,
-        sync_batchnorm=True,  # Synchronize batch norm across GPUs
-        # Performance optimizations
-        log_every_n_steps=50,
+        sync_batchnorm=True,
     )
 
-    manager = ssl.Manager(trainer=trainer, module=module, data=data)
+    manager = ssl.Manager(
+        trainer=trainer, module=module, data=data, ckpt_path="restart"
+    )
     manager()
 
     print("Training completed!")
@@ -140,7 +140,7 @@ def main(cfg):
 
 if __name__ == "__main__":
     # run with
-    # python train_supervised_multigpu_requeue.py --multirun hydra/launcher=submitit_slurm hydra.launcher.timeout_min=4 hydra.launcher.partition=scavenge hydra.launcher.max_num_timeout=10 hydra.launcher.gpus_per_node=2 hydra.launcher.tasks_per_node=2 ++batch_size=256
+    # python train_supervised_multigpu_requeue.py --multirun hydra/launcher=submitit_slurm hydra.launcher.timeout_min=7 hydra.launcher.partition=scavenge hydra.launcher.max_num_timeout=10 hydra.launcher.gpus_per_node=8 hydra.launcher.tasks_per_node=8 ++batch_size=256 ++signal_delay_s=240
     # python train_supervised_multigpu_requeue.py --multirun hydra/launcher=submitit_slurm hydra.launcher.timeout_min=4 hydra.launcher.partition=scavenge hydra.launcher.max_num_timeout=10 hydra.launcher.gpus_per_node=1 hydra.launcher.tasks_per_node=1 ++batch_size=512
 
     main()
