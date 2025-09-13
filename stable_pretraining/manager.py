@@ -91,7 +91,10 @@ class Manager(submitit.helpers.Checkpointable):
             )
 
         self.seed = seed
-        self.ckpt_path = Path(ckpt_path).with_suffix(".ckpt").resolve()
+        if ckpt_path is not None:
+            self.ckpt_path = Path(ckpt_path).with_suffix(".ckpt").resolve()
+        else:
+            self.ckpt_path = None
         # self.slurm_requeue_signal = slurm_requeue_signal
 
     @rank_zero_only
@@ -431,7 +434,9 @@ class Manager(submitit.helpers.Checkpointable):
         #             ckpt_path = None
         # if ckpt_path is None:
         #     logging.error(f"\t\t● No checkpoint found! ❌")
-        if not self.ckpt_path.is_file():
+        if self.ckpt_path is None:
+            ckpt_path = None
+        elif not self.ckpt_path.is_file():
             logging.warning(f"{self.ckpt_path} does not exist, using None for now!")
             ckpt_path = None
         else:
