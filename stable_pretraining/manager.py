@@ -334,13 +334,15 @@ class Manager(submitit.helpers.Checkpointable):
             for callback in self._trainer.callbacks:
                 if isinstance(callback, pl.pytorch.callbacks.ModelCheckpoint):
                     saving_names = [
-                        (Path(callback.dir).resolve() / callback.filename).with_suffix(
-                            "ckpt"
-                        )
+                        (
+                            Path(callback.dirpath).resolve() / callback.filename
+                        ).with_suffix("ckpt")
                     ]
                     if callback.save_last:
                         saving_names.append(
-                            (Path(callback.dir).resolve() / "last").with_suffix("ckpt")
+                            (Path(callback.dirpath).resolve() / "last").with_suffix(
+                                "ckpt"
+                            )
                         )
                     logging.info(
                         f"\t\t - we found a Checkpoint callback with name(s) {saving_names}"
