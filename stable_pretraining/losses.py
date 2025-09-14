@@ -1,5 +1,6 @@
 """SSL losses."""
 
+from typing import Optional
 import torch
 import torch.nn.functional as F
 from loguru import logger as logging
@@ -283,4 +284,120 @@ class InfoNCELoss(torch.nn.Module):
 
         loss_i = F.cross_entropy(logits_i, targets)
         loss_j = F.cross_entropy(logits_j, targets)
+        return 0.5 * (loss_i + loss_j)
+
+
+class ContrastiveLoss(torch.nn.Module):
+    """A general-purpose engine for InfoNCE-style contrastive loss.
+
+    This module computes the cross-entropy loss between anchor embeddings
+    and a set of candidate embeddings, given the ground-truth targets. It
+    forms the core mathematical operation for losses like those in CLIP
+    and SimCLR.
+
+    Args:
+        temperature (float, optional): The temperature scaling factor.
+            Default is 0.07.
+    """
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+
+    def _compute(
+        self,
+        anchors: torch.Tensor,
+        candidates: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Computes the contrastive loss.
+
+        Args:
+            anchors (torch.Tensor): The primary set of embeddings (queries) of shape `[N, D]`.
+            candidates (torch.Tensor): The set of embeddings to contrast against (keys)
+                of shape `[M, D]`.
+            targets (torch.Tensor): A 1D tensor of ground-truth indices of shape `[N]`,
+                where `targets[i]` is the index of the positive candidate for `anchors[i]`.
+            mask (torch.Tensor, optional): A boolean mask of shape `[N, M]` to exclude
+                certain anchor-candidate pairs from the loss calculation. Values set to
+                `True` will be ignored.
+
+        Returns:
+            torch.Tensor: A scalar loss value.
+        """
+
+        anchors = torch.cat(all_gather(F.normalize(anchors, dim=-1)), 0)
+        candidates = torch.cat(all_gather(F.normalize(candidates, dim=-1)), 0)
+        
+        logits = (anchors @ candidates.T) / self.temperature
+        
+        if mask is not None:
+            logits = logits.masked_fill(mask, -torch.inf)
+            
+        return F.cross_entropy(logits, targets)
+
+    def forward(self,
+        anchors: torch.Tensor,
+        candidates: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        return self._compute(anchors, candidates, targets, mask)
+
+
+class NTXEntLoss(ContrastiveLoss):
+    """Normalized temperature-scaled cross entropy loss.
+
+    Introduced in the SimCLR paper :cite:`chen2020simple`.
+    Also used in MoCo :cite:`he2020momentum`.
+
+    Args:
+        temperature (float, optional): The temperature scaling factor.
+            Default is 0.5.
+    """
+    def __init__(self, temperature: float = 0.5):
+        super().__init__()
+
+    def forward(self, z_i: torch.Tensor, z_j: torch.Tensor) -> torch.Tensor:
+        """Compute the NT-Xent loss.
+
+        Args:
+            z_i (torch.Tensor): Latent representation of the first augmented view of the batch.
+            z_j (torch.Tensor): Latent representation of the second augmented view of the batch.
+
+        Returns:
+            float: The computed contrastive loss.
+        """
+        anchors = torch.cat([z_i, z_j], dim=0)
+        candidates = anchors
+
+        N = z_i.size(0)
+        targets = torch.cat([torch.arange(N, 2 * N), torch.arange(N)], device=z_i.device)
+        # prevent self-matching by masking diagonal 
+        mask = torch.eye(2 * N, dtype=torch.bool, device=z_i.device)
+
+        return self._compute(anchors, candidates, targets, mask=mask)
+
+
+class SymmetricContrastiveLoss(ContrastiveLoss):
+    r"""Symmetric contrastive image-text loss, as used in CLIP :cite:`radford2021learningtransferablevisualmodels`.
+
+    Computes symmetric cross-entropy over image-text and text-image logits.
+
+    Args:
+        temperature (float, optional): Softmax temperature. Default is 0.07.
+            (If you use a learnable logit_scale in your model, pass it to
+            forward(...) and this temperature will be ignored.)
+    """
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+
+    def forward(self, feats_i: torch.Tensor, feats_j: torch.Tensor) -> torch.Tensor:
+        # for CLIP, targets are always the diagonal
+        targets = torch.arange(feats_i.size(0), device=feats_i.device)
+
+        # calculate loss in both directions
+        loss_i = self._compute(anchors=feats_i, candidates=feats_j, targets=targets)
+        loss_j = self._compute(anchors=feats_j, candidates=feats_i, targets=targets)
+        
         return 0.5 * (loss_i + loss_j)
