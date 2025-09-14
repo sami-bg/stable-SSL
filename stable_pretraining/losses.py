@@ -245,25 +245,25 @@ class InfoNCELoss(torch.nn.Module):
 
     def forward(
         self,
-        image_feats: torch.Tensor,  # [B, D]
-        text_feats: torch.Tensor,  # [B, D]
+        feats_i: torch.Tensor,  # [B, D]
+        feats_j: torch.Tensor,  # [B, D]
         logit_scale: torch.Tensor | float | None = None,
     ) -> torch.Tensor:
         """Compute CLIP loss.
 
         Args:
-            image_feats: Image embeddings for the batch.
-            text_feats: Text embeddings for the batch (paired with images).
+            feats_i: First set of embeddings for the batch.
+            feats_j: Second set of embeddings for the batch (paired with images).
             logit_scale: Optional scalar (float or 0-dim tensor). If provided,
-                logits = logit_scale * (img @ txt^T). If None, uses
+                logits = logit_scale * (feats_i @ feats_j^T). If None, uses
                 1/temperature.
 
         Returns:
             torch.Tensor: Scalar loss value.
         """
         # Gather across devices (DDP) to form global batch
-        img = torch.cat(all_gather(F.normalize(image_feats, dim=-1)), dim=0)
-        txt = torch.cat(all_gather(F.normalize(text_feats, dim=-1)), dim=0)
+        f_i = torch.cat(all_gather(F.normalize(feats_i, dim=-1)), 0)
+        f_j = torch.cat(all_gather(F.normalize(feats_j, dim=-1)), 0)
 
         # Compute pairwise logits
         if logit_scale is None:
@@ -273,14 +273,14 @@ class InfoNCELoss(torch.nn.Module):
             scale = (
                 float(logit_scale) if not torch.is_tensor(logit_scale) else logit_scale
             )
-        logits_per_image = scale * (img @ txt.T)  # [N, N]
-        logits_per_text = logits_per_image.T  # [N, N]
+        logits_i = scale * (f_i @ f_j.T)  # [N, N]
+        logits_j = logits_i.T  # [N, N]
 
         # Ground-truth matches are on the diagonal after all_gather
-        N = logits_per_image.size(0)
-        device = logits_per_image.device
+        N = logits_i.size(0)
+        device = logits_i.device
         targets = torch.arange(N, device=device)
 
-        loss_i = F.cross_entropy(logits_per_image, targets)
-        loss_t = F.cross_entropy(logits_per_text, targets)
-        return 0.5 * (loss_i + loss_t)
+        loss_i = F.cross_entropy(logits_i, targets)
+        loss_j = F.cross_entropy(logits_j, targets)
+        return 0.5 * (loss_i + loss_j)
