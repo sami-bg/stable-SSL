@@ -203,6 +203,26 @@ class ContrastiveLoss(torch.nn.Module):
         candidates: torch.Tensor,
         targets: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        logit_scale: Optional[torch.Tensor | float] = None,
+    ) -> torch.Tensor:
+        logit_scale = self.temperature if logit_scale is None else logit_scale
+
+        anchors = torch.cat(all_gather(F.normalize(anchors, dim=-1)), 0)
+        candidates = torch.cat(all_gather(F.normalize(candidates, dim=-1)), 0)
+        
+        logits = (anchors @ candidates.T) / logit_scale
+        
+        if mask is not None:
+            logits = logits.masked_fill(mask, -torch.inf)
+            
+        return F.cross_entropy(logits, targets)
+
+    def forward(self,
+        anchors: torch.Tensor,
+        candidates: torch.Tensor,
+        targets: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        logit_scale: Optional[torch.Tensor | float] = None,
     ) -> torch.Tensor:
         """Computes the contrastive loss.
 
@@ -215,28 +235,13 @@ class ContrastiveLoss(torch.nn.Module):
             mask (torch.Tensor, optional): A boolean mask of shape `[N, M]` to exclude
                 certain anchor-candidate pairs from the loss calculation. Values set to
                 `True` will be ignored.
+            logit_scale (torch.Tensor | float, optional): The temperature scaling factor.
+                Default is `self.temperature`.
 
         Returns:
             torch.Tensor: A scalar loss value.
         """
-
-        anchors = torch.cat(all_gather(F.normalize(anchors, dim=-1)), 0)
-        candidates = torch.cat(all_gather(F.normalize(candidates, dim=-1)), 0)
-        
-        logits = (anchors @ candidates.T) / self.temperature
-        
-        if mask is not None:
-            logits = logits.masked_fill(mask, -torch.inf)
-            
-        return F.cross_entropy(logits, targets)
-
-    def forward(self,
-        anchors: torch.Tensor,
-        candidates: torch.Tensor,
-        targets: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        return self._compute(anchors, candidates, targets, mask)
+        return self._compute(anchors, candidates, targets, mask, logit_scale)
 
 
 class NTXEntLoss(ContrastiveLoss):
@@ -289,12 +294,17 @@ class SymmetricContrastiveLoss(ContrastiveLoss):
     def __init__(self, temperature: float = 0.07):
         super().__init__(temperature=temperature)
 
-    def forward(self, feats_i: torch.Tensor, feats_j: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        feats_i: torch.Tensor,
+        feats_j: torch.Tensor,
+        logit_scale: Optional[torch.Tensor | float] = None,
+    ) -> torch.Tensor:
         # for CLIP, targets are always the diagonal
         targets = torch.arange(feats_i.size(0), device=feats_i.device)
 
         # calculate loss in both directions
-        loss_i = self._compute(anchors=feats_i, candidates=feats_j, targets=targets)
-        loss_j = self._compute(anchors=feats_j, candidates=feats_i, targets=targets)
+        loss_i = self._compute(anchors=feats_i, candidates=feats_j, targets=targets, logit_scale=logit_scale)
+        loss_j = self._compute(anchors=feats_j, candidates=feats_i, targets=targets, logit_scale=logit_scale)
         
         return 0.5 * (loss_i + loss_j)

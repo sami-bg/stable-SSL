@@ -26,8 +26,9 @@ class TestSymmetricContrastiveLoss:
         assert loss.ndim == 0
         # relax tolerance slightly to avoid rare numerical flakes
         assert loss.item() < 1e-5
-        # check that all_gather was called twice (once for images, once for texts)
-        assert mock_all_gather.call_count == 2
+        # check that all_gather was called four times: 
+        # once for images, once for texts, each twice for _compute 
+        assert mock_all_gather.call_count == 4
 
     @patch(DDP_GATHER_PATH, side_effect=lambda x: [x])
     def test_loss_is_high_for_mismatch(self, mock_all_gather):
