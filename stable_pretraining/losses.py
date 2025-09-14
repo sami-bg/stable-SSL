@@ -356,7 +356,7 @@ class New_NTXEntLoss(ContrastiveLoss):
             Default is 0.5.
     """
     def __init__(self, temperature: float = 0.5):
-        super().__init__()
+        super().__init__(temperature=temperature)
 
     def forward(self, z_i: torch.Tensor, z_j: torch.Tensor) -> torch.Tensor:
         """Compute the NT-Xent loss.
@@ -393,7 +393,7 @@ class SymmetricContrastiveLoss(ContrastiveLoss):
             forward(...) and this temperature will be ignored.)
     """
     def __init__(self, temperature: float = 0.07):
-        super().__init__()
+        super().__init__(temperature=temperature)
 
     def forward(self, feats_i: torch.Tensor, feats_j: torch.Tensor) -> torch.Tensor:
         # for CLIP, targets are always the diagonal
