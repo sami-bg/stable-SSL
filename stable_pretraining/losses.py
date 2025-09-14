@@ -345,7 +345,7 @@ class ContrastiveLoss(torch.nn.Module):
         return self._compute(anchors, candidates, targets, mask)
 
 
-class NTXEntLoss(ContrastiveLoss):
+class New_NTXEntLoss(ContrastiveLoss):
     """Normalized temperature-scaled cross entropy loss.
 
     Introduced in the SimCLR paper :cite:`chen2020simple`.
@@ -372,7 +372,10 @@ class NTXEntLoss(ContrastiveLoss):
         candidates = anchors
 
         N = z_i.size(0)
-        targets = torch.cat([torch.arange(N, 2 * N), torch.arange(N)], device=z_i.device)
+        targets = torch.cat([
+            torch.arange(N, 2 * N, device=z_i.device),
+            torch.arange(N, device=z_i.device)]
+        )
         # prevent self-matching by masking diagonal 
         mask = torch.eye(2 * N, dtype=torch.bool, device=z_i.device)
 
