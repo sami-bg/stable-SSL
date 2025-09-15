@@ -193,6 +193,7 @@ class ContrastiveLoss(torch.nn.Module):
         temperature (float, optional): The temperature scaling factor.
             Default is 0.07.
     """
+
     def __init__(self, temperature: float = 0.07):
         super().__init__()
         self.temperature = temperature
@@ -209,15 +210,16 @@ class ContrastiveLoss(torch.nn.Module):
 
         anchors = torch.cat(all_gather(F.normalize(anchors, dim=-1)), 0)
         candidates = torch.cat(all_gather(F.normalize(candidates, dim=-1)), 0)
-        
+
         logits = (anchors @ candidates.T) / logit_scale
-        
+
         if mask is not None:
             logits = logits.masked_fill(mask, -torch.inf)
-            
+
         return F.cross_entropy(logits, targets)
 
-    def forward(self,
+    def forward(
+        self,
         anchors: torch.Tensor,
         candidates: torch.Tensor,
         targets: torch.Tensor,
@@ -254,6 +256,7 @@ class NTXEntLoss(ContrastiveLoss):
         temperature (float, optional): The temperature scaling factor.
             Default is 0.5.
     """
+
     def __init__(self, temperature: float = 0.5):
         super().__init__(temperature=temperature)
 
@@ -271,11 +274,13 @@ class NTXEntLoss(ContrastiveLoss):
         candidates = anchors
 
         N = z_i.size(0)
-        targets = torch.cat([
-            torch.arange(N, 2 * N, device=z_i.device),
-            torch.arange(N, device=z_i.device)]
+        targets = torch.cat(
+            [
+                torch.arange(N, 2 * N, device=z_i.device),
+                torch.arange(N, device=z_i.device),
+            ]
         )
-        # prevent self-matching by masking diagonal 
+        # prevent self-matching by masking diagonal
         mask = torch.eye(2 * N, dtype=torch.bool, device=z_i.device)
 
         return self._compute(anchors, candidates, targets, mask=mask)
@@ -291,6 +296,7 @@ class SymmetricContrastiveLoss(ContrastiveLoss):
             (If you use a learnable logit_scale in your model, pass it to
             forward(...) and this temperature will be ignored.)
     """
+
     def __init__(self, temperature: float = 0.07):
         super().__init__(temperature=temperature)
 
@@ -304,7 +310,17 @@ class SymmetricContrastiveLoss(ContrastiveLoss):
         targets = torch.arange(feats_i.size(0), device=feats_i.device)
 
         # calculate loss in both directions
-        loss_i = self._compute(anchors=feats_i, candidates=feats_j, targets=targets, logit_scale=logit_scale)
-        loss_j = self._compute(anchors=feats_j, candidates=feats_i, targets=targets, logit_scale=logit_scale)
-        
+        loss_i = self._compute(
+            anchors=feats_i,
+            candidates=feats_j,
+            targets=targets,
+            logit_scale=logit_scale,
+        )
+        loss_j = self._compute(
+            anchors=feats_j,
+            candidates=feats_i,
+            targets=targets,
+            logit_scale=logit_scale,
+        )
+
         return 0.5 * (loss_i + loss_j)

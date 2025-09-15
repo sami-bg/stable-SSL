@@ -26,8 +26,8 @@ class TestSymmetricContrastiveLoss:
         assert loss.ndim == 0
         # relax tolerance slightly to avoid rare numerical flakes
         assert loss.item() < 1e-5
-        # check that all_gather was called four times: 
-        # once for images, once for texts, each twice for _compute 
+        # check that all_gather was called four times:
+        # once for images, once for texts, each twice for _compute
         assert mock_all_gather.call_count == 4
 
     @patch(DDP_GATHER_PATH, side_effect=lambda x: [x])
@@ -77,12 +77,8 @@ class TestSymmetricContrastiveLoss:
         loss_fn = SymmetricContrastiveLoss(temperature=0.01)
 
         # compare three cases: no logit_scale, float logit_scale, tensor logit_scale
-        loss_temp = loss_fn(
-            feats_i=feats_i, feats_j=feats_j, logit_scale=None
-        )
-        loss_float = loss_fn(
-            feats_i=feats_i, feats_j=feats_j, logit_scale=20.0
-        )
+        loss_temp = loss_fn(feats_i=feats_i, feats_j=feats_j, logit_scale=None)
+        loss_float = loss_fn(feats_i=feats_i, feats_j=feats_j, logit_scale=20.0)
         loss_tensor = loss_fn(
             feats_i=feats_i,
             feats_j=feats_j,
