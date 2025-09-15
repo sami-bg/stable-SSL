@@ -13,7 +13,7 @@ import submitit
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from loguru import logger as logging
 from omegaconf import DictConfig, OmegaConf, open_dict
-
+import os
 from . import WANDB_AVAILABLE
 
 if WANDB_AVAILABLE:
@@ -32,7 +32,7 @@ class Manager(submitit.helpers.Checkpointable):
         module (Union[dict, DictConfig, pl.LightningModule]): Lightning module configuration or instance.
         data (Union[dict, DictConfig, pl.LightningDataModule]): Data module configuration or instance.
         seed (int, optional): Random seed for reproducibility. Defaults to None.
-        ckpt_path (str, optional): Path to checkpoint for resuming training. Defaults to None.
+        ckpt_path (str, optional): Path to checkpoint for resuming training. Defaults to "last.
     """
 
     def __init__(
@@ -41,7 +41,7 @@ class Manager(submitit.helpers.Checkpointable):
         module: Union[dict, DictConfig, pl.LightningModule],
         data: Union[dict, DictConfig, pl.LightningDataModule],
         seed: int = None,
-        ckpt_path: str = "last",
+        ckpt_path: str = None,
     ):
         # This is the state that will be saved by `checkpoint`
         # we do deepcopy in case the user changes things after
@@ -91,7 +91,10 @@ class Manager(submitit.helpers.Checkpointable):
             )
 
         self.seed = seed
-        self.ckpt_path = ckpt_path
+        if ckpt_path is not None:
+            self.ckpt_path = Path(ckpt_path).with_suffix(".ckpt").resolve()
+        else:
+            self.ckpt_path = None
         # self.slurm_requeue_signal = slurm_requeue_signal
 
     @rank_zero_only
@@ -319,18 +322,57 @@ class Manager(submitit.helpers.Checkpointable):
         logging.info(f"\t\t- SIGCONT: `{signal.getsignal(signal.SIGCONT)}`")
         logging.info(f"\t\t- SIGTERM: `{signal.getsignal(signal.SIGTERM)}`")
 
-        # when using submitit launcher, Hydra uses its own checkpoint method
-        # https://github.com/facebookresearch/hydra/blob/main/plugins/hydra_submitit_launcher/hydra_plugins/hydra_submitit_launcher/submitit_launcher.py#L78
-        # we replace it with ours
-        # https://github.com/facebookresearch/hydra/issues/2042
-        # https://github.com/facebookincubator/submitit/blob/main/submitit/core/job_environment.py#L212
-        fn = signal.getsignal(signal.SIGUSR2)
-
-        if hasattr(fn, "__self__"):
-            self._hydra_self = fn.__self__._delayed.function.checkpoint.__self__
-            fn.__self__._delayed.function.checkpoint = self.checkpoint
+        logging.info("\t● 📞📞📞 CALLBACKS 📞📞📞")
+        logging.info(f"\t\t - we found {len(self._trainer.callbacks)} callbacks")
+        if "SLURM_JOB_ID" in os.environ and self.ckpt_path is None:
+            logging.warning(
+                "Using SLURM but no ckpt_path, if requeued it will start from scratch"
+            )
+            logging.warning("Consider passing a value to the Manager's `ckpt_path` ")
         else:
-            self._hydra_self = self
+            checkpointing = False
+            for callback in self._trainer.callbacks:
+                if isinstance(callback, pl.pytorch.callbacks.ModelCheckpoint):
+                    saving_names = [
+                        (
+                            Path(callback.dirpath).resolve() / callback.filename
+                        ).with_suffix("ckpt")
+                    ]
+                    if callback.save_last:
+                        saving_names.append(
+                            (Path(callback.dirpath).resolve() / "last").with_suffix(
+                                "ckpt"
+                            )
+                        )
+                    logging.info(
+                        f"\t\t - we found a Checkpoint callback with name(s) {saving_names}"
+                    )
+                    if self.ckpt_path in saving_names:
+                        checkpointing = True
+                        break
+
+            if not checkpointing:
+                logging.warning(
+                    "\t\t - we are in a SLURM job but no checkpoint callback"
+                )
+                logging.warning(
+                    f"\t\t   found with `{self.ckpt_path}` saving name (user's `ckpt_path`)"
+                )
+                logging.warning("\t\t - we are adding a ModelCheckpoint callback with")
+                logging.warning(f"\t\t - dirpath={self.ckpt_path.parent}")
+                logging.warning(
+                    f"\t\t - filename={self.ckpt_path.with_suffix('').name}"
+                )
+                saver = pl.pytorch.callbacks.ModelCheckpoint(
+                    dirpath=str(self.ckpt_path.parent),
+                    filename=self.ckpt_path.with_suffix("").name,
+                    save_last=False,
+                    save_on_train_epoch_end=True,
+                    verbose=True,
+                    enable_version_counter=False,
+                )
+                self._trainer.callbacks.append(saver)
+                logging.warning("\t\t - Done!")
 
         # logging.info(f"\t● Searching for checkpoint to warm restart...")
         # ckpt_path = None
@@ -394,20 +436,13 @@ class Manager(submitit.helpers.Checkpointable):
         #             ckpt_path = None
         # if ckpt_path is None:
         #     logging.error(f"\t\t● No checkpoint found! ❌")
-        logging.info("\t● 📞📞📞 CALLBACKS 📞📞📞")
-        for c in self._trainer.checkpoint_callbacks:
-            logging.info(c)
-        for c in self._trainer.early_stopping_callbacks:
-            logging.info(c)
-        if Path("requeue_checkpoint.ckpt").is_file():
-            if self.ckpt_path is not None:
-                logging.warning(
-                    "We are overring user given {self.ckpt_path}"
-                    " to `requeue_checkpoint.ckpt`"
-                )
-            ckpt_path = "requeue_checkpoint.ckpt"
+        if self.ckpt_path is None:
+            ckpt_path = None
+        elif not self.ckpt_path.is_file():
+            logging.warning(f"{self.ckpt_path} does not exist, using None for now!")
+            ckpt_path = None
         else:
-            ckpt_path = self.ckpt_path
+            ckpt_path = str(self.ckpt_path)
         logging.info(f"📣📣📣 CALLING trainer.fit with {ckpt_path=} 📣📣📣")
         self._trainer.fit(
             self.instantiated_module,
@@ -415,9 +450,6 @@ class Manager(submitit.helpers.Checkpointable):
             ckpt_path=ckpt_path,
         )
         self._dump_wandb_data()
-        if Path("requeue_checkpoint.ckpt").is_file():
-            logging.info("Cleaning up requeue checkpoint")
-            Path("requeue_checkpoint.ckpt").unlink()
 
     def validate(self):
         logging.info("📣📣📣 CALLING trainer.validate 📣📣📣")
@@ -485,19 +517,25 @@ class Manager(submitit.helpers.Checkpointable):
             return None
         return runs[-2]
 
-    def save_checkpoint(self, path: str = None, upload_wandb: bool = False):
+    def save_checkpoint(
+        self, path: str = None, upload_wandb: bool = False, verbose=True
+    ):
         # TODO: figure out how to flush logging in subprocess
-        print("Entering checkpoint method", flush=True)
+        if verbose:
+            print("Entering checkpoint method", flush=True)
         if path is None:
             path = (Path() / "checkpoint.ckpt").resolve()
-            print(f"\t● saving checkpoint to local path {path} ⏳", flush=True)
+            if verbose:
+                print(f"\t● saving checkpoint to local path {path} ⏳", flush=True)
         else:
             path = Path(path)
             if not path.parent.is_dir():
                 path.parent.mkdir(parents=True)
-            print(f"\t● saving checkpoint to user's path {path} ⏳", flush=True)
+            if verbose:
+                print(f"\t● saving checkpoint to user's path {path} ⏳", flush=True)
         self._trainer.save_checkpoint(str(path))
-        print("\t● checkpoint saved ✅", flush=True)
+        if verbose:
+            print("\t● checkpoint saved ✅", flush=True)
         if upload_wandb:
             self._upload_checkpoint_for_requeue(path)
 
@@ -528,41 +566,3 @@ class Manager(submitit.helpers.Checkpointable):
             print("\t● `ckpt_path` added to Wandb config ✅", flush=True)
         # for offline case
         self._dump_wandb_data()
-
-    # @rank_zero_only
-    # def requeue(self, *args, **kwargs):
-
-    #     print(f"\t● requeing! 🔥", flush=True)
-    #     print(args, kwargs)
-    #     self.submitit_signal(*args, **kwargs)
-
-    @rank_zero_only
-    def checkpoint(self, *args, **kwargs):
-        print(
-            "⚠️⚠️⚠️ only SLURM should use this function,"
-            "users should use `save_checkpoint` ⚠️⚠️⚠️",
-            flush=True,
-        )
-        assert len(kwargs) == 0
-        assert type(args[0]) is list
-        print("Original Hydra's overrides: ", args[0], flush=True)
-        # TODO add a check to make sure we don't double override anything
-        print("Adding our overrides: ", self.override, flush=True)
-        args[0].extend(self.override)
-        inst = self._hydra_self.__class__(**self._hydra_self.params)
-        inst.config = self._hydra_self.config
-        inst.hydra_context = self._hydra_self.hydra_context
-        inst.task_function = self._hydra_self.task_function
-        # print(self._hydra_checkpoint, flush=True)
-        # return self._hydra_checkpoint(*args, **kwargs)
-        # child = self.__class__(
-        #     self.trainer, self.module, self.data, self.seed, self.ckpt_path
-        # )
-        print("Saving checkpoint to `requeue_checkpoint.ckpt`")
-        self.save_checkpoint("requeue_checkpoint.ckpt", upload_wandb=False)
-        print("Requeing with: ", int, args, kwargs, flush=True)
-        return submitit.helpers.DelayedSubmission(inst, *args, **kwargs)
-
-    # def checkpoint_and_requeue(self, *args, **kwargs):
-    #     self.save_checkpoint()
-    #     self.requeue(*args, **kwargs)

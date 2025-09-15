@@ -160,15 +160,8 @@ class OnlineProbe(TrainableCallback):
             logging.warning(f"Callback {self.name} missing x or y")
             return
 
-        self.module.train()
-
-        with torch.enable_grad():
+        with pl_module.trainer.precision_plugin.forward_context():
             x = x.detach()
-
-            probe_dtype = next(self.module.parameters()).dtype
-            if x.dtype != probe_dtype:
-                x = x.to(probe_dtype)
-
             preds = self.module(x)
             if pl_module.trainer.training:
                 loss = self.loss_fn(preds, y)
@@ -231,17 +224,7 @@ class OnlineProbe(TrainableCallback):
             )
             return
 
-        # Ensure probe is in eval mode
-        self.module.eval()
-
-        # Forward pass without gradients
-        with torch.inference_mode():
-            # Ensure input has same dtype as probe module
-            # This handles mixed precision training where features might be float16
-            probe_dtype = next(self.module.parameters()).dtype
-            if x.dtype != probe_dtype:
-                x = x.to(probe_dtype)
-
+        with trainer.precision_plugin.forward_context():
             preds = self.module(x)
 
         # Store predictions in batch

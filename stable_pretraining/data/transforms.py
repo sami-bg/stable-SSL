@@ -127,6 +127,35 @@ class RandomGrayscale(Transform, v2.RandomGrayscale):
         return x
 
 
+class Lambda(Transform):
+    """Applies a lambda callable to target key and store it in source."""
+
+    def __init__(self, lambd, source: str = "image", target: str = "image"):
+        super().__init__()
+        self.source = source
+        self.target = target
+        self.lambd = lambd
+
+    def __call__(self, x) -> Any:
+        self.nested_set(x, self.lambd(x), self.target)
+        return x
+
+
+class WrapTorchTransform(Transform, v2.Lambda):
+    """Applies a lambda callable to target key and store it in source."""
+
+    def __init__(self, transform, source: str = "image", target: str = "image"):
+        super().__init__(transform)
+        self.source = source
+        self.target = target
+
+    def __call__(self, x) -> Any:
+        self.nested_set(
+            x, super().__call__(self.nested_get(x, self.source)), self.target
+        )
+        return x
+
+
 class RandomSolarize(Transform, v2.RandomSolarize):
     """Randomly solarize image by inverting pixel values above threshold."""
 

@@ -10,6 +10,7 @@ from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 from .utils import EarlyStopping
 from .writer import OnlineWriter
 from .clip_zero_shot import CLIPZeroShot
+from .embedding_cache import EmbeddingCache
 
 __all__ = [
     OnlineProbe,
@@ -28,4 +29,5 @@ __all__ = [
     ImageRetrieval,
     TeacherStudentCallback,
     CLIPZeroShot,
+    EmbeddingCache,
 ]
