@@ -11,6 +11,7 @@ from .utils import EarlyStopping
 from .writer import OnlineWriter
 from .clip_zero_shot import CLIPZeroShot
 from .embedding_cache import EmbeddingCache
+from .earlystop import EpochMilestones
 
 __all__ = [
     OnlineProbe,
@@ -30,4 +31,5 @@ __all__ = [
     TeacherStudentCallback,
     CLIPZeroShot,
     EmbeddingCache,
+    EpochMilestones,
 ]
