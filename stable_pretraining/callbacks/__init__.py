@@ -9,6 +9,7 @@ from .teacher_student import TeacherStudentCallback
 from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 from .utils import EarlyStopping
 from .writer import OnlineWriter
+from .clip_zero_shot import CLIPZeroShot
 from .embedding_cache import EmbeddingCache
 from .earlystop import EpochMilestones
 
@@ -28,6 +29,7 @@ __all__ = [
     LiDAR,
     ImageRetrieval,
     TeacherStudentCallback,
+    CLIPZeroShot,
     EmbeddingCache,
     EpochMilestones,
 ]
