@@ -167,9 +167,8 @@ trainer = pl.Trainer(
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=True,
-    devices=1,
     accelerator="gpu",
-    sync_batchnorm=False,
+    sync_batchnorm=world_size > 1,
 )
 
 manager = spt.Manager(trainer=trainer, module=module, data=data)
