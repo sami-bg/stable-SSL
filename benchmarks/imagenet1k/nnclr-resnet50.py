@@ -49,34 +49,32 @@ val_transform = transforms.Compose(
     transforms.ToImage(**spt.data.static.ImageNet),
 )
 
-# CORRECTED: Added "imagenet-1k" to get_data_dir
 train_dataset = spt.data.HFDataset(
     "imagenet-1k",
     split="train",
-    cache_dir=str(get_data_dir("imagenet-1k")),
+    cache_dir=str(get_data_dir()),
     transform=nnclr_transform,
 )
 val_dataset = spt.data.HFDataset(
     "imagenet-1k",
     split="validation",
-    cache_dir=str(get_data_dir("imagenet-1k")),
+    cache_dir=str(get_data_dir()),
     transform=val_transform,
 )
 
-batch_size = 512
-world_size = 1
-total_batch_size = batch_size * world_size
+total_batch_size, world_size = 4096, 4
+local_batch_size = total_batch_size // world_size
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
-    batch_size=batch_size,
-    num_workers=8, # Increased for larger dataset
+    batch_size=local_batch_size,
+    num_workers=16,
     drop_last=True,
     persistent_workers=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
-    batch_size=batch_size,
+    batch_size=local_batch_size,
     num_workers=8,
     persistent_workers=True,
 )
@@ -89,7 +87,6 @@ backbone = spt.backbone.from_torchvision(
 )
 backbone.fc = torch.nn.Identity()
 
-# CORRECTED: Added a third layer to the projector to match the paper
 projector = nn.Sequential(
     nn.Linear(2048, 2048),
     nn.BatchNorm1d(2048),
@@ -134,7 +131,6 @@ module = spt.Module(
     },
 )
 
-# CORRECTED: Changed probe input to 2048 and output classes to 1000
 linear_probe = spt.callbacks.OnlineProbe(
     name="linear_probe",
     input="embedding",
@@ -147,7 +143,6 @@ linear_probe = spt.callbacks.OnlineProbe(
     },
 )
 
-# CORRECTED: Changed KNN input to 2048 and output classes to 1000
 knn_probe = spt.callbacks.OnlineKNN(
     name="knn_probe",
     input="embedding",
@@ -171,7 +166,6 @@ wandb_logger = WandbLogger(
     log_model=False,
 )
 
-# --- Trainer ---
 trainer = pl.Trainer(
     max_epochs=400,
     num_sanity_val_steps=0,
