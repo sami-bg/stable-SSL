@@ -1,6 +1,7 @@
 import lightning as pl
 import torch
 import torchmetrics
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from torch import nn
 
@@ -10,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
-from benchmarks.utils import get_data_dir
+from utils import get_data_dir
 
 # SimCLR augmentations, as described in the paper
 simclr_transform = transforms.MultiViewTransform(
@@ -164,7 +165,10 @@ wandb_logger = WandbLogger(
 trainer = pl.Trainer(
     max_epochs=num_epochs,
     num_sanity_val_steps=0,
-    callbacks=[linear_probe, knn_probe],
+    callbacks=[
+        linear_probe,
+        knn_probe,
+    ],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=True,

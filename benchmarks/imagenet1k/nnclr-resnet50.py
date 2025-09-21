@@ -114,22 +114,21 @@ module = spt.Module(
     optim={
         "optimizer": {
             "type": "LARS",
-            "lr": 1.0,
+            "lr": 0.3,
             "weight_decay": 1e-6,
             "clip_lr": True,
-            "eta": 0.001, # LARS trust coefficient
+            "eta": 0.001,
             "exclude_bias_n_norm": True,
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "peak_step": 10 / num_epochs, # 10 epochs warmup
+            "peak_step": 10 / num_epochs,
         },
         "interval": "epoch",
     },
-
     hparams={
-        "support_set_size": 16384,
-        "projection_dim": 256,
+        "support_set_size": 98304,  # was 16384
+        "projection_dim": 256,      # keep
     },
 )
 
