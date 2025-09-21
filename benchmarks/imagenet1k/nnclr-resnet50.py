@@ -62,7 +62,7 @@ val_dataset = spt.data.HFDataset(
     transform=val_transform,
 )
 
-total_batch_size, world_size = 4096, 4
+total_batch_size, world_size, num_epochs = 4096, 4, 400
 local_batch_size = total_batch_size // world_size
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
@@ -114,17 +114,19 @@ module = spt.Module(
     optim={
         "optimizer": {
             "type": "LARS",
-            "lr": 0.3,
-            "weight_decay": 1e-4,
+            "lr": 1.0,
+            "weight_decay": 1e-6,
             "clip_lr": True,
-            "eta": 0.02,
+            "eta": 0.001, # LARS trust coefficient
             "exclude_bias_n_norm": True,
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
+            "peak_step": 10 / num_epochs, # 10 epochs warmup
         },
         "interval": "epoch",
     },
+
     hparams={
         "support_set_size": 16384,
         "projection_dim": 256,
@@ -162,18 +164,21 @@ support_queue = OnlineQueue(
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet-1k-nnclr",
-    name="nnclr-resnet50-1gpu",
+    name=f"nnclr-resnet50-{world_size}gpus",
     log_model=False,
 )
 
+# --- Trainer ---
 trainer = pl.Trainer(
-    max_epochs=400,
+    max_epochs=num_epochs,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, knn_probe, support_queue],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=True,
     accelerator="gpu",
+    devices=world_size,
+    strategy="ddp_find_unused_parameters_true",
     sync_batchnorm=world_size > 1,
 )
 

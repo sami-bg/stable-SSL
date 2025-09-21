@@ -63,7 +63,7 @@ val_dataset = spt.data.HFDataset(
 )
 
 # Batch size from the paper (adjust if necessary)
-total_batch_size, world_size = 4096, 4
+total_batch_size, world_size, num_epochs = 4096, 4, 800
 local_batch_size = total_batch_size // world_size
 
 train_dataloader = torch.utils.data.DataLoader(
@@ -117,14 +117,15 @@ module = spt.Module(
     optim={
         "optimizer": {
             "type": "LARS",
-            "lr": 0.3 * (total_batch_size / local_batch_size),
+            "lr": 0.3 * (total_batch_size / 256), # 256 is base batch size they use in SimCLR
             "weight_decay": 1e-6,
             "clip_lr": True,
-            "eta": 0.001,
+            "eta": 1e-3,
             "exclude_bias_n_norm": True,
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
+            "peak_step": 10 / num_epochs, # 10 epochs warmup
         },
         "interval": "epoch",
     },
@@ -161,7 +162,7 @@ wandb_logger = WandbLogger(
 )
 
 trainer = pl.Trainer(
-    max_epochs=800, # From the paper
+    max_epochs=num_epochs,
     num_sanity_val_steps=0,
     callbacks=[linear_probe, knn_probe],
     precision="16-mixed",
