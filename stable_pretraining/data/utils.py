@@ -28,7 +28,11 @@ def fold_views(tensor, idx):
     """
     _, counts = torch.unique_consecutive(idx, return_counts=True)
     if not counts.min().eq(counts.max()):
-        raise RuntimeError("counts are not the same for all samples!")
+        raise RuntimeError(
+            "counts are not the same for all samples!\n"
+            "This typically occurs when batch size and number of views\n"
+            "are not divisible"
+        )
     n_views = counts[0].item()
     fold_shape = (tensor.size(0) // n_views, n_views)
     t = tensor.view(*fold_shape, *tensor.shape[1:])

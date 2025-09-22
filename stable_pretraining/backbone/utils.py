@@ -1,6 +1,6 @@
 import copy
 import math
-from typing import Optional, Union
+from typing import Optional, Union, Iterable
 
 import torch
 import torchvision
@@ -39,6 +39,71 @@ class EvalOnly(nn.Module):
         if self.backbone.training:
             raise RuntimeError("EvalOnly module is in training mode")
         return self.backbone.forward(*args, **kwargs)
+
+
+class FeaturesConcat(nn.Module):
+    """Aggregates and concatenates features from a dictionary input, then classifies.
+
+    Args:
+        names (List[str]): Keys to extract from the input dictionary.
+            if not given then we aggregate everything from dict/list
+    """
+
+    def __init__(self, names=None):
+        super().__init__()
+        if type(names) is str:
+            names = [names]
+        self.names = names
+
+    def forward(self, inputs: Union[dict, Iterable]):
+        if type(inputs) is dict:
+            assert self.names is not None
+            tensors = [inputs[n] for n in self.names]
+        else:
+            tensors = inputs
+        reps = []
+        for t in tensors:
+            if t.ndim == 4:
+                # assume conv2d type of output
+                # Aggregate over spatial dimensions (H, W)
+                t = t.mean(dim=(2, 3))
+            elif t.ndim == 3:
+                # assume ViT type of output
+                # Aggregate over token dimension
+                t = t.mean(dim=1)
+            elif t.ndim == 2:
+                # No aggregation needed
+                pass
+            else:
+                raise ValueError(f"Unsupported tensor shape: {t.shape}")
+            reps.append(t)
+        concat = torch.cat(reps, dim=1)
+        return concat
+
+    @staticmethod
+    def get_concatenated_shape(shapes):
+        """Given a list of shapes (tuples), returns the expected concatenated shape.
+
+        Assumes all shapes have the same batch size (shapes[0][0]).
+
+        Args:
+            shapes (List[Tuple[int]]): List of shapes after aggregation.
+
+        Returns:
+            Tuple[int]: The concatenated shape.
+        """
+        if not shapes:
+            raise ValueError("Shape list is empty.")
+        batch_size = shapes[0][0]
+        feature_dims = 0
+        for s in shapes:
+            if len(s) == 4 or len(s) == 2:
+                feature_dims += s[1]
+            elif len(s) == 3:
+                feature_dims += s[2]
+            else:
+                raise NotImplementedError
+        return (batch_size, feature_dims)
 
 
 class ReturnEmbedding(nn.Module):
