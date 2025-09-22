@@ -357,7 +357,11 @@ The library is not yet available on PyPI. You can install it from the source cod
         <summary>Install the Tex compiler (optional, if not available on your system)</summary>
 
         - install texlive locally following https://tug.org/texlive/quickinstall.html#running where you can use `-texdir your_path` to install to a local path (so you don't need sudo privileges)
-        - follow the instructions at the end of the installation to edit the PATH variables, you can edit that variable for a conda environment with `conda env config vars set PATH=$PATH`
+        - follow the instructions at the end of the installation to edit the PATH variables. If in the above step you used `-texdir ~/texdir` then the path to add should be like `TEXDIR_PATH=/private/home/$USER/texdir/bin/x86_64-linux`. You can use your favorite method such as
+          - `export PATH="$TEXDIR_PATH:$PATH"` for local session
+          - adding `export PATH="$TEXDIR_PATH:$PATH"` to your `.bashrc`
+          - run `conda env config vars set PATH="$TEXDIR_PATH:$PATH"` once for it to be set within your conda env
+          - IMPORTANT: if the above is not done you will see an error akin to `! LaTeX Error: File type1ec.sty not found.`
         - make sure inside the conde environment that you point to the right binaries e.g. `whereis latex` and `whereis mktexfmt`
         - If at some point there is an error that the file `latex.fmt` is not found. You can generate it with
           - `pdftex -ini   -jobname=latex -progname=latex -translate-file=cp227.tcx *latex.ini`
