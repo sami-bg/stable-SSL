@@ -15,6 +15,7 @@ from loguru import logger as logging
 from omegaconf import DictConfig, OmegaConf, open_dict
 import os
 from . import WANDB_AVAILABLE
+from .utils.checkpointing_utils import configure_checkpointing
 
 if WANDB_AVAILABLE:
     import wandb
@@ -267,22 +268,7 @@ class Manager(submitit.helpers.Checkpointable):
         return self._instantiated_data
 
     def __call__(self):
-        # self._setup_logging()
         logging.info(f"📁📁📁 CURRENT WORKING DIR: {Path().resolve()} 📁📁📁")
-
-        # if "SLURM_JOB_ID" in os.environ:
-        #     # single-node and multi-node distributed training on SLURM cluster
-        #     # requeue job on SLURM preemption
-        #     self.submitit_signal = signal.getsignal(
-        #         signal.__dict__[self.slurm_requeue_signal]
-        #     )
-        #     logging.info(f"\t● saved signal {self.submitit_signal} ✅")
-        #     logging.info(
-        #         f"\t● setting up checkpoint and requeue on {self.slurm_requeue_signal} ✅"
-        #     )
-        #     signal.signal(
-        #         signal.__dict__[self.slurm_requeue_signal], self.checkpoint_and_requeue
-        #     )
         logging.info(f"🌱🌱🌱 SEEDING EVERYTHING with {self.seed=} 🌱🌱🌱")
         pl.seed_everything(self.seed, workers=True)
         if isinstance(self.trainer, pl.Trainer):
@@ -313,6 +299,7 @@ class Manager(submitit.helpers.Checkpointable):
             if not isinstance(self._trainer, pl.Trainer):
                 raise ValueError("`trainer` should be a Trainer")
             logging.info("\t● trainer instantiated ✅")
+        
         self.init_and_sync_wandb()
         logging.info("\t● logger updated accordingly ✅")
 
@@ -330,119 +317,16 @@ class Manager(submitit.helpers.Checkpointable):
             )
             logging.warning("Consider passing a value to the Manager's `ckpt_path` ")
         else:
-            checkpointing = False
-            for callback in self._trainer.callbacks:
-                if isinstance(callback, pl.pytorch.callbacks.ModelCheckpoint):
-                    saving_names = [
-                        (
-                            Path(callback.dirpath).resolve() / callback.filename
-                        ).with_suffix("ckpt")
-                    ]
-                    if callback.save_last:
-                        saving_names.append(
-                            (Path(callback.dirpath).resolve() / "last").with_suffix(
-                                "ckpt"
-                            )
-                        )
-                    logging.info(
-                        f"\t\t - we found a Checkpoint callback with name(s) {saving_names}"
-                    )
-                    if self.ckpt_path in saving_names:
-                        checkpointing = True
-                        break
+            configure_checkpointing(self._trainer, self.ckpt_path)
 
-            if not checkpointing:
-                logging.warning(
-                    "\t\t - we are in a SLURM job but no checkpoint callback"
-                )
-                logging.warning(
-                    f"\t\t   found with `{self.ckpt_path}` saving name (user's `ckpt_path`)"
-                )
-                logging.warning("\t\t - we are adding a ModelCheckpoint callback with")
-                logging.warning(f"\t\t - dirpath={self.ckpt_path.parent}")
-                logging.warning(
-                    f"\t\t - filename={self.ckpt_path.with_suffix('').name}"
-                )
-                saver = pl.pytorch.callbacks.ModelCheckpoint(
-                    dirpath=str(self.ckpt_path.parent),
-                    filename=self.ckpt_path.with_suffix("").name,
-                    save_last=False,
-                    save_on_train_epoch_end=True,
-                    verbose=True,
-                    enable_version_counter=False,
-                )
-                self._trainer.callbacks.append(saver)
-                logging.warning("\t\t - Done!")
-
-        # logging.info(f"\t● Searching for checkpoint to warm restart...")
-        # ckpt_path = None
-        # if wandb.run and not wandb.run.offline:
-        #     logging.info(
-        #         f"\t\t● Wandb is online... searching for `requeue_checkpoint` in Artifacts..."
-        #     )
-        #     r = wandb.Api().run(wandb.run.path)
-        #     artifacts = r.logged_artifacts()
-        #     logging.info(f"\t\t● wandb run artifacts:")
-        #     for artifact in artifacts:
-        #         logging.info(
-        #             f"\t\t\t● {artifact.name}, {artifact.type}, {artifact.created_at}"
-        #         )
-        #         if artifact.name.split(":")[0] == "requeue_checkpoint":
-        #             logging.info(f"\t\t● Checkpoint found! 🔥")
-        #             ckpt_path = artifact
-        #     # we wait the end to download to make sure we get the
-        #     # latest version
-        #     if ckpt_path:
-        #         datadir = Path(ckpt_path.download()) / "checkpoint.ckpt"
-        #         logging.info(f"\t● Checkpoint downloaded ({datadir})!  🔥")
-        #         ckpt_path = datadir
-        #     else:
-        #         logging.info(
-        #             f"\t\t● No Checkpoint artifact found in Wandb artifacts... searching in config ❌"
-        #         )
-        #         if "ckpt_path" in wandb.run.config:
-        #             logging.info(
-        #                 f"\t\t● `ckpt_path` found in Wandb config: {ckpt_path} 🔥"
-        #             )
-        #             ckpt_path = wandb.run.config["ckpt_path"]
-        #             if ckpt_path is not None and Path(ckpt_path).is_file():
-        #                 logging.info(
-        #                     f"\t\t● `ckpt_path` found in Wandb config: {ckpt_path} 🔥"
-        #                 )
-        #             else:
-        #                 logging.info(
-        #                     f"\t\t● `{ckpt_path=}` is not a valid file... not using it ❌"
-        #                 )
-        #                 ckpt_path = None
-        #         else:
-        #             logging.info(
-        #                 f"\t\t● `ckpt_path` not found in online Wandb config ...!"
-        #             )
-        # else:
-        #     logging.info(
-        #         f"\t\t● Wandb is offline... searching in local logger's config..."
-        #     )
-        #     cfg = self.trainer.logger.get("config", {})
-        #     if cfg and cfg.get("ckpt_path", None):
-        #         ckpt_path = cfg["ckpt_path"]
-        #         if ckpt_path is not None and Path(ckpt_path).is_file():
-        #             logging.info(
-        #                 f"\t\t● `ckpt_path` found in local config: {ckpt_path} 🔥"
-        #             )
-        #         else:
-        #             logging.info(
-        #                 f"\t\t● `{ckpt_path=}` is not a valid file... not using it ❌"
-        #             )
-        #             ckpt_path = None
-        # if ckpt_path is None:
-        #     logging.error(f"\t\t● No checkpoint found! ❌")
-        if self.ckpt_path is None:
-            ckpt_path = None
-        elif not self.ckpt_path.is_file():
-            logging.warning(f"{self.ckpt_path} does not exist, using None for now!")
+        if self.ckpt_path is not None and self.ckpt_path.is_file():
+            ckpt_path = str(self.ckpt_path)
+        elif self.ckpt_path is not None and not self.ckpt_path.is_file():
+            logging.warning(f"{self.ckpt_path} specified, but does not exist, using None for now!")
             ckpt_path = None
         else:
-            ckpt_path = str(self.ckpt_path)
+            ckpt_path = None
+
         logging.info(f"📣📣📣 CALLING trainer.fit with {ckpt_path=} 📣📣📣")
         self._trainer.fit(
             self.instantiated_module,
