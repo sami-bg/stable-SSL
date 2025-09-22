@@ -299,7 +299,7 @@ class Manager(submitit.helpers.Checkpointable):
             if not isinstance(self._trainer, pl.Trainer):
                 raise ValueError("`trainer` should be a Trainer")
             logging.info("\t● trainer instantiated ✅")
-        
+
         self.init_and_sync_wandb()
         logging.info("\t● logger updated accordingly ✅")
 
@@ -322,7 +322,9 @@ class Manager(submitit.helpers.Checkpointable):
         if self.ckpt_path is not None and self.ckpt_path.is_file():
             ckpt_path = str(self.ckpt_path)
         elif self.ckpt_path is not None and not self.ckpt_path.is_file():
-            logging.warning(f"{self.ckpt_path} specified, but does not exist, using None for now!")
+            logging.warning(
+                f"{self.ckpt_path} specified, but does not exist, using None for now!"
+            )
             ckpt_path = None
         else:
             ckpt_path = None
