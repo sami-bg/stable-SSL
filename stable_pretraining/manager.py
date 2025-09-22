@@ -469,12 +469,13 @@ class Manager(submitit.helpers.Checkpointable):
         logging.info("\t● 📞📞📞 CHECKPOINTING SETUP 📞📞📞")
         trainer = self._trainer
         ckpt_path = self.ckpt_path
-        
+
         # This flag checks if the user *explicitly* added any ModelCheckpoint
         # instance in their configuration. It runs before Lightning's potential
         # default callback is added.
         is_mc_explicitly_configured = any(
-            isinstance(cb, pl.pytorch.callbacks.ModelCheckpoint) for cb in trainer.callbacks
+            isinstance(cb, pl.pytorch.callbacks.ModelCheckpoint)
+            for cb in trainer.callbacks
         )
 
         # This flag checks if any of the *explicitly added* callbacks are configured
@@ -511,7 +512,7 @@ class Manager(submitit.helpers.Checkpointable):
             logging.warning(
                 f"\t\t Checkpoint mismatch: `manager.ckpt_path` ({ckpt_path}) was provided, but no matching `ModelCheckpoint` callback was found."
             )
-            logging.info(
+            logging.warning(
                 "\t\t Automatically creating a `ModelCheckpoint` to save to the specified path to prevent data loss."
             )
 
@@ -524,7 +525,7 @@ class Manager(submitit.helpers.Checkpointable):
                 enable_version_counter=False,
             )
             trainer.callbacks.append(saver)
-            logging.info(
+            logging.warning(
                 "\t\t - Automatic `ModelCheckpoint` callback has been added to the trainer."
             )
 

@@ -6,19 +6,27 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from stable_pretraining.manager import Manager
 from stable_pretraining.tests.utils import BoringTrainer, BoringModule, BoringDataModule
 
+
 @pytest.fixture
 def manager_factory(tmp_path: Path) -> Manager:
-    """
-    Pytest fixture that returns a factory function for creating Manager instances.
+    """Pytest fixture that returns a factory function for creating Manager instances.
 
     This allows each test to configure a Manager for its specific scenario by providing
     the necessary callbacks and checkpoint path, while abstracting away the boilerplate
     of creating the trainer, module, and datamodule.
     """
 
-    def _create_manager(callbacks: list[pl.Callback], ckpt_path: Path | None, trainer_enable_checkpointing: bool):
+    def _create_manager(
+        callbacks: list[pl.Callback],
+        ckpt_path: Path | None,
+        trainer_enable_checkpointing: bool,
+    ):
         """Factory function to build a Manager with a specific test configuration."""
-        trainer = BoringTrainer(callbacks=callbacks, default_root_dir=str(tmp_path), enable_checkpointing=trainer_enable_checkpointing)
+        trainer = BoringTrainer(
+            callbacks=callbacks,
+            default_root_dir=str(tmp_path),
+            enable_checkpointing=trainer_enable_checkpointing,
+        )
 
         manager = Manager(
             trainer=trainer,
@@ -38,7 +46,9 @@ def manager_factory(tmp_path: Path) -> Manager:
 class TestConfigureCheckpointing:
     """Tests the `configure_checkpointing` utility function across various user scenarios."""
 
-    def test_case_1_intentional_ckpt_path_and_callback(self, manager_factory, tmp_path: Path):
+    def test_case_1_intentional_ckpt_path_and_callback(
+        self, manager_factory, tmp_path: Path
+    ):
         """Tests Case 1: The user provides a `ckpt_path` and a matching `ModelCheckpoint` callback.
 
         This scenario represents a correctly configured setup where the user's intent to save/resume
@@ -50,16 +60,22 @@ class TestConfigureCheckpointing:
         ckpt_path = tmp_path / "checkpoints" / "last.ckpt"
         ckpt_path.parent.mkdir()
         callbacks = [ModelCheckpoint(dirpath=str(ckpt_path.parent))]
-        manager = manager_factory(callbacks=callbacks, ckpt_path=ckpt_path, trainer_enable_checkpointing=True)
+        manager = manager_factory(
+            callbacks=callbacks, ckpt_path=ckpt_path, trainer_enable_checkpointing=True
+        )
 
         initial_callback_count = len(manager._trainer.callbacks)
 
         manager._configure_checkpointing()
 
         assert len(manager._trainer.callbacks) == initial_callback_count
-        assert 1 == sum(isinstance(cb, ModelCheckpoint) for cb in manager._trainer.callbacks)
+        assert 1 == sum(
+            isinstance(cb, ModelCheckpoint) for cb in manager._trainer.callbacks
+        )
 
-    def test_case_2_intentional_ckpt_path_but_no_callback(self, manager_factory, tmp_path: Path):
+    def test_case_2_intentional_ckpt_path_but_no_callback(
+        self, manager_factory, tmp_path: Path
+    ):
         """Tests Case 2: The user provides a `ckpt_path` but forgets the `ModelCheckpoint` callback.
 
         This is the critical "safety net" scenario. The user has signaled their intent to save a
@@ -69,7 +85,9 @@ class TestConfigureCheckpointing:
                      `ModelCheckpoint` callback that saves to the specified path.
         """
         ckpt_path = tmp_path / "checkpoints" / "safety_net.ckpt"
-        manager = manager_factory(callbacks=[], ckpt_path=ckpt_path, trainer_enable_checkpointing=True)
+        manager = manager_factory(
+            callbacks=[], ckpt_path=ckpt_path, trainer_enable_checkpointing=True
+        )
 
         initial_callback_count = len(manager._trainer.callbacks)
 
@@ -81,7 +99,9 @@ class TestConfigureCheckpointing:
         assert Path(new_callback.dirpath).resolve() == ckpt_path.parent.resolve()
         assert new_callback.filename == ckpt_path.with_suffix("").name
 
-    def test_case_3_no_checkpointing_but_callback(self, manager_factory, tmp_path: Path):
+    def test_case_3_no_checkpointing_but_callback(
+        self, manager_factory, tmp_path: Path
+    ):
         """Tests Case 3: The user provides a `ModelCheckpoint` callback but no `ckpt_path`.
 
         In this scenario, the user is managing their own checkpointing (e.g., saving to a
@@ -91,7 +111,9 @@ class TestConfigureCheckpointing:
         """
         user_dir = tmp_path / "user_checkpoints"
         callbacks = [ModelCheckpoint(dirpath=str(user_dir))]
-        manager = manager_factory(callbacks=callbacks, ckpt_path=None, trainer_enable_checkpointing=True)
+        manager = manager_factory(
+            callbacks=callbacks, ckpt_path=None, trainer_enable_checkpointing=True
+        )
 
         initial_callback_count = len(manager._trainer.callbacks)
 
@@ -99,7 +121,9 @@ class TestConfigureCheckpointing:
         manager._configure_checkpointing()
 
         assert len(manager._trainer.callbacks) == initial_callback_count
-        assert Path(manager._trainer.callbacks[-1].dirpath).resolve() == user_dir.resolve()
+        assert (
+            Path(manager._trainer.callbacks[-1].dirpath).resolve() == user_dir.resolve()
+        )
 
     def test_case_4_no_checkpointing_no_callback(self, manager_factory, tmp_path: Path):
         """Tests Case 4: The user provides no `ckpt_path` and no `ModelCheckpoint` callback.
@@ -111,11 +135,15 @@ class TestConfigureCheckpointing:
         Expectation: The function should do nothing and the trainer should have no
                      `ModelCheckpoint` callbacks.
         """
-        manager = manager_factory(callbacks=[], ckpt_path=None, trainer_enable_checkpointing=False)
+        manager = manager_factory(
+            callbacks=[], ckpt_path=None, trainer_enable_checkpointing=False
+        )
 
         initial_callback_count = len(manager._trainer.callbacks)
 
         manager._configure_checkpointing()
 
         assert len(manager._trainer.callbacks) == initial_callback_count
-        assert not any(isinstance(cb, ModelCheckpoint) for cb in manager._trainer.callbacks)
+        assert not any(
+            isinstance(cb, ModelCheckpoint) for cb in manager._trainer.callbacks
+        )
