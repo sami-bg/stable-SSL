@@ -35,7 +35,9 @@ simclr_transform = transforms.MultiViewTransform(
             ),
             transforms.RandomGrayscale(p=0.2),
             transforms.PILGaussianBlur(p=0.1),
-            transforms.RandomSolarize(threshold=0.5, p=0.0), # Note: Solarize was not in original SimCLR
+            transforms.RandomSolarize(
+                threshold=0.5, p=0.0
+            ),  # Note: Solarize was not in original SimCLR
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ToImage(**spt.data.static.ImageNet),
         ),
@@ -71,14 +73,14 @@ train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=local_batch_size,
-    num_workers=16,
+    num_workers=64,
     drop_last=True,
     persistent_workers=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=local_batch_size,
-    num_workers=8,
+    num_workers=32,
     persistent_workers=True,
 )
 
@@ -118,7 +120,8 @@ module = spt.Module(
     optim={
         "optimizer": {
             "type": "LARS",
-            "lr": 0.3 * (total_batch_size / 256), # 256 is base batch size they use in SimCLR
+            "lr": 0.3
+            * (total_batch_size / 256),  # 256 is base batch size they use in SimCLR
             "weight_decay": 1e-6,
             "clip_lr": True,
             "eta": 1e-3,
@@ -126,7 +129,8 @@ module = spt.Module(
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "peak_step": 10 / num_epochs, # 10 epochs warmup
+            "peak_step": 10 / num_epochs,  # 10 epochs warmup
+            "total_steps": num_epochs * (len(train_dataloader) // world_size),
         },
         "interval": "epoch",
     },
@@ -156,7 +160,7 @@ knn_probe = spt.callbacks.OnlineKNN(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
+    entity="samibg",
     project="imagenet1k-simclr",
     name="simclr-resnet50-4gpu",
     log_model=False,

@@ -68,14 +68,14 @@ train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=local_batch_size,
-    num_workers=16,
+    num_workers=64,
     drop_last=True,
     persistent_workers=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=local_batch_size,
-    num_workers=8,
+    num_workers=32,
     persistent_workers=True,
 )
 
@@ -114,7 +114,7 @@ module = spt.Module(
     optim={
         "optimizer": {
             "type": "LARS",
-            "lr": 0.3,
+            "lr": 0.3 * (total_batch_size / 256),
             "weight_decay": 1e-6,
             "clip_lr": True,
             "eta": 0.001,
@@ -123,6 +123,7 @@ module = spt.Module(
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
             "peak_step": 10 / num_epochs,
+            "total_steps": num_epochs * (len(train_dataloader) // world_size),
         },
         "interval": "epoch",
     },
@@ -161,7 +162,7 @@ support_queue = OnlineQueue(
 )
 
 wandb_logger = WandbLogger(
-    entity="stable-ssl",
+    entity="samibg",
     project="imagenet-1k-nnclr",
     name=f"nnclr-resnet50-{world_size}gpus",
     log_model=False,
@@ -177,7 +178,6 @@ trainer = pl.Trainer(
     enable_checkpointing=True,
     accelerator="gpu",
     devices=world_size,
-    strategy="ddp_find_unused_parameters_true",
     sync_batchnorm=world_size > 1,
 )
 
