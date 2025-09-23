@@ -300,7 +300,6 @@ class Manager(submitit.helpers.Checkpointable):
                 raise ValueError("`trainer` should be a Trainer")
             logging.info("\t● trainer instantiated ✅")
 
-
         # Auto-detect TeacherStudentWrapper and add callback if needed
         # This runs AFTER trainer is set up, regardless of how it was created
         from .callbacks.teacher_student import TeacherStudentCallback
