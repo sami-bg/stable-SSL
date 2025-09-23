@@ -41,6 +41,33 @@ def manager_factory(tmp_path: Path) -> Manager:
 
     return _create_manager
 
+@pytest.mark.unit
+class TestMatchesTemplate:
+    """Directly tests the `_matches_template` helper function."""
+
+    @pytest.mark.parametrize(
+        "ckpt_name, callback, expected",
+        [
+            # --- Last Checkpoint Scenarios ---
+            ("last.ckpt", ModelCheckpoint(save_last=True), True),
+            ("last.ckpt", ModelCheckpoint(save_last=False), False),
+            ("last-v1.ckpt", ModelCheckpoint(save_last=True), True),
+
+            # --- Template Matching Scenarios ---
+            ("epoch=1-step=100.ckpt", ModelCheckpoint(filename="{epoch}-{step}"), True),
+            ("model-epoch=1-val_loss=0.5.ckpt", ModelCheckpoint(filename="model-{epoch}-{val_loss:.2f}"), True),
+            ("model.ckpt", ModelCheckpoint(filename="{epoch}"), False), # Fails: "epoch=" key is missing
+            ("epoch=1.ckpt", ModelCheckpoint(filename="{epoch}-{step}"), False), # Fails: "step=" key is missing
+            ("model-epoch=1-lr=0.01.ckpt", ModelCheckpoint(filename="model-{epoch}"), False), # Fails: lr in left, not in right
+            ("model-epoch=1-lr=0.01.ckpt", ModelCheckpoint(filename="model-{epoch}-{lr}"), True), # Succeeds: same metrics
+            ("model-epoch=1.ckpt", ModelCheckpoint(filename="model-{epoch}-{lr}"), False), # Fails: lr in right, not in left
+            ("model.ckpt", ModelCheckpoint(filename="model"), True), # Matches: template has no keys
+        ]
+    )
+    def test_template_matching_logic(self, ckpt_name, callback, expected):
+        """Tests various template matching scenarios."""
+        assert Manager._matches_template(ckpt_name, callback) == expected
+
 
 @pytest.mark.unit
 class TestConfigureCheckpointing:
@@ -59,7 +86,7 @@ class TestConfigureCheckpointing:
         """
         ckpt_path = tmp_path / "checkpoints" / "last.ckpt"
         ckpt_path.parent.mkdir()
-        callbacks = [ModelCheckpoint(dirpath=str(ckpt_path.parent))]
+        callbacks = [ModelCheckpoint(dirpath=str(ckpt_path.parent), save_last=True)]
         manager = manager_factory(
             callbacks=callbacks, ckpt_path=ckpt_path, trainer_enable_checkpointing=True
         )
