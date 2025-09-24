@@ -338,7 +338,7 @@ class Manager(submitit.helpers.Checkpointable):
             )
             logging.warning("Consider passing a value to the Manager's `ckpt_path` ")
         else:
-            self._configure_checkpointing(self._trainer, self.ckpt_path)
+            self._configure_checkpointing()
 
         if self.ckpt_path is not None and self.ckpt_path.is_file():
             ckpt_path = str(self.ckpt_path)
