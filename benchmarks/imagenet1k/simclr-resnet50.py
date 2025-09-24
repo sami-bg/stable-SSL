@@ -18,26 +18,23 @@ simclr_transform = transforms.MultiViewTransform(
     [
         transforms.Compose(
             transforms.RGB(),
-            transforms.RandomResizedCrop((224, 224), scale=(0.08, 1.0)),
+            transforms.RandomResizedCrop((224, 224), scale=(0.08, 1.0), ratio=(3/4, 4/3)),
             transforms.ColorJitter(
                 brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2, p=0.8
             ),
             transforms.RandomGrayscale(p=0.2),
-            transforms.PILGaussianBlur(p=1.0),
+            transforms.PILGaussianBlur(sigma=(0.1, 2.0), p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ToImage(**spt.data.static.ImageNet),
-        ),
+        ),  
         transforms.Compose(
             transforms.RGB(),
-            transforms.RandomResizedCrop((224, 224), scale=(0.08, 1.0)),
+            transforms.RandomResizedCrop((224, 224), scale=(0.08, 1.0), ratio=(3/4, 4/3)),
             transforms.ColorJitter(
                 brightness=0.8, contrast=0.8, saturation=0.8, hue=0.2, p=0.8
             ),
             transforms.RandomGrayscale(p=0.2),
-            transforms.PILGaussianBlur(p=0.1),
-            transforms.RandomSolarize(
-                threshold=0.5, p=0.0
-            ),  # Note: Solarize was not in original SimCLR
+            transforms.PILGaussianBlur(sigma=(0.1, 2.0), p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.ToImage(**spt.data.static.ImageNet),
         ),
