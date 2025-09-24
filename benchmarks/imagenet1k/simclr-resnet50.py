@@ -63,7 +63,7 @@ val_dataset = spt.data.HFDataset(
 )
 
 # Batch size from the paper (adjust if necessary)
-total_batch_size, world_size, num_epochs = 4096, 4, 800
+total_batch_size, world_size, num_epochs = 4096, 8, 800
 local_batch_size = total_batch_size // world_size
 
 train_dataloader = torch.utils.data.DataLoader(
