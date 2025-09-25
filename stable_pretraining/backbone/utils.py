@@ -211,6 +211,9 @@ class TeacherStudentWrapper(nn.Module):
         self.student = student
         self.base_ema_coefficient = torch.Tensor([base_ema_coefficient])[0]
         self.final_ema_coefficient = torch.Tensor([final_ema_coefficient])[0]
+        self.register_buffer(
+            "ema_coefficient", torch.zeros_like(self.base_ema_coefficient)
+        )
 
         if self.base_ema_coefficient == 0.0 and self.final_ema_coefficient == 0.0:
             # No need to create a teacher network if the EMA coefficient is 0.0.
@@ -221,7 +224,6 @@ class TeacherStudentWrapper(nn.Module):
             self.teacher.requires_grad_(False)  # Teacher should not require gradients.
 
             if warm_init:  # Initialization step to match the student’s parameters.
-                self.ema_coefficient = torch.zeros(())
                 self.update_teacher()
 
         self.ema_coefficient = self.base_ema_coefficient.clone()
