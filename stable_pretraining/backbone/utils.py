@@ -1,6 +1,6 @@
 import copy
 import math
-from typing import Optional, Union
+from typing import Optional, Union, Iterable
 
 import torch
 import torchvision
@@ -39,6 +39,72 @@ class EvalOnly(nn.Module):
         if self.backbone.training:
             raise RuntimeError("EvalOnly module is in training mode")
         return self.backbone.forward(*args, **kwargs)
+
+
+class FeaturesConcat(nn.Module):
+    """Aggregates and concatenates features from a dictionary input, then classifies.
+
+    Args:
+        names (List[str]): Keys to extract from the input dictionary.
+            if not given then we aggregate everything from dict/list
+    """
+
+    def __init__(self, names=None, agg: callable = torch.mean):
+        super().__init__()
+        if type(names) is str:
+            names = [names]
+        self.names = names
+        if agg is None:
+
+            def agg(x, dim):
+                return x
+
+        self.agg = agg
+
+    def forward(self, inputs: Union[dict, Iterable]):
+        if type(inputs) is dict:
+            assert self.names is not None
+            tensors = [inputs[n] for n in self.names]
+        else:
+            tensors = inputs
+        reps = []
+        for t in tensors:
+            if t.ndim == 4:
+                # assume conv2d type of output
+                # Aggregate over spatial dimensions (H, W)
+                t = self.agg(t, dim=(2, 3))
+            elif t.ndim == 3:
+                # assume ViT type of output
+                # Aggregate over token dimension
+                t = self.agg(t, dim=1)
+            elif t.ndim == 2:
+                # No aggregation needed
+                pass
+            else:
+                raise ValueError(f"Unsupported tensor shape: {t.shape}")
+            reps.append(t)
+        concat = torch.cat(reps, dim=1)
+        return concat
+
+    @staticmethod
+    def get_output_shape(shapes, agg=torch.mean):
+        """Given a list of shapes (tuples), returns the expected concatenated shape.
+
+        Assumes all shapes have the same batch size (shapes[0][0]).
+
+        Args:
+            shapes (List[Tuple[int]]): List of shapes after aggregation.
+            agg (callable): How to aggregate, can be None.
+
+        Returns:
+            Tuple[int]: The concatenated shape.
+        """
+        if not shapes:
+            raise ValueError("Shape list is empty.")
+        x = [torch.empty(shape, device="meta") for shape in shapes]
+        obj = FeaturesConcat(None, agg)
+        out = obj(x)
+        return out.shape
 
 
 class ReturnEmbedding(nn.Module):
@@ -144,22 +210,32 @@ class TeacherStudentWrapper(nn.Module):
 
         super().__init__()
         self.student = student
-        self.base_ema_coefficient = torch.Tensor([base_ema_coefficient])[0]
-        self.final_ema_coefficient = torch.Tensor([final_ema_coefficient])[0]
+        # Register EMA coefficients as buffers so they persist through checkpointing
+        self.register_buffer("base_ema_coefficient", torch.tensor(base_ema_coefficient))
+        self.register_buffer(
+            "final_ema_coefficient", torch.tensor(final_ema_coefficient)
+        )
 
         if self.base_ema_coefficient == 0.0 and self.final_ema_coefficient == 0.0:
             # No need to create a teacher network if the EMA coefficient is 0.0.
             self.teacher = student
+            # Even when teacher == student, register the buffer for consistency
+            self.register_buffer("ema_coefficient", self.base_ema_coefficient.clone())
         else:
             # Create a teacher network with the same architecture as the student.
             self.teacher = copy.deepcopy(student)
             self.teacher.requires_grad_(False)  # Teacher should not require gradients.
 
-            if warm_init:  # Initialization step to match the student’s parameters.
-                self.ema_coefficient = torch.zeros(())
+            if warm_init:  # Initialization step to match the student's parameters.
+                # Temporarily set ema_coefficient to 0 for warm init
+                self.register_buffer("ema_coefficient", torch.zeros(()))
                 self.update_teacher()
-
-        self.ema_coefficient = self.base_ema_coefficient.clone()
+                # Now set to base value after warm init
+                self.ema_coefficient.copy_(self.base_ema_coefficient)
+            else:
+                self.register_buffer(
+                    "ema_coefficient", self.base_ema_coefficient.clone()
+                )
 
     @torch.no_grad
     def update_teacher(self):
@@ -201,9 +277,11 @@ class TeacherStudentWrapper(nn.Module):
             epoch (int): Current epoch in the training loop.
             total_epochs (int): Total number of epochs in the training loop.
         """
-        self.ema_coefficient = self.final_ema_coefficient - 0.5 * (
+        new_value = self.final_ema_coefficient - 0.5 * (
             self.final_ema_coefficient - self.base_ema_coefficient
         ) * (1 + math.cos(epoch / total_epochs * math.pi))
+        # Update the buffer in-place to maintain persistence
+        self.ema_coefficient.copy_(new_value)
 
     def forward_student(self, *args, **kwargs):
         """Forward pass through the student network. Gradients will flow normally."""
