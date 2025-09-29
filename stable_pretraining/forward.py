@@ -430,3 +430,163 @@ def nnclr_forward(self, batch, stage):
             out["label"] = batch["label"]
 
     return out
+
+
+def dino_forward(self, batch, stage):
+    """Forward function for DINO (self-DIstillation with NO labels).
+
+    DINO learns representations through self-distillation where a student network
+    is trained to match the output of a teacher network (EMA of student) on
+    different augmented views. Global views are processed by both networks while
+    local views are only processed by the student.
+
+    Args:
+        self: Module instance (automatically bound) with required attributes:
+            - backbone: TeacherStudentWrapper for feature extraction
+            - projector: TeacherStudentWrapper for projection head
+            - dino_loss: DINOLoss instance (required, pass spt.losses.DINOLoss())
+            - warmup_temperature_teacher (float): Starting teacher temperature
+            - temperature_teacher (float): Final teacher temperature
+            - warmup_epochs_temperature_teacher (int): Epochs to warm up temperature
+        batch: Either a list of view dicts (from MultiViewTransform) or
+            a single dict (for validation/single-view).
+            For multi-crop: First 2 views should be global crops, rest are local crops
+        stage: Training stage ('train', 'val', or 'test')
+
+    Returns:
+        Dictionary containing:
+            - 'embedding': Feature representations from teacher backbone
+            - 'loss': DINO distillation loss (during training only)
+            - 'label': Labels if present (for probes/callbacks)
+
+    Note:
+        Introduced in the DINO paper :cite:`caron2021emerging`.
+        Requires TeacherStudentWrapper for both backbone and projector,
+        and assumes first 2 views in batch are global views.
+    """
+    out = {}
+
+    # Check if batch is dict of named views
+    if isinstance(batch, dict) and "image" not in batch:
+        # Dict of named views - separate by "global" or "local" in key
+        global_views = []
+        local_views = []
+
+        for key, view in batch.items():
+            if "global" in key:
+                global_views.append(view)
+            elif "local" in key:
+                local_views.append(view)
+
+        n_global = len(global_views)
+        n_local = len(local_views)
+        all_views = global_views + local_views
+
+    elif isinstance(batch, list):
+        # List of views - assume first 2 are global
+        all_views = batch
+        n_global = min(2, len(all_views))
+        n_local = len(all_views) - n_global
+        global_views = all_views[:n_global]
+        local_views = all_views[n_global:] if n_local > 0 else []
+
+    else:
+        # Single view validation
+        images = batch["image"]
+        if "label" in batch:
+            out["label"] = batch["label"]
+
+        with torch.no_grad():
+            teacher_features = self.backbone.forward_teacher(images)
+        out["embedding"] = teacher_features.detach()
+        return out
+
+    # Multi-view processing
+    batch_size = all_views[0]["image"].shape[0]
+
+    # Concatenate labels for callbacks - only from global views for probes
+    if "label" in all_views[0]:
+        # For training, only use labels from global views since we only return global embeddings
+        if self.training:
+            out["label"] = torch.cat([view["label"] for view in global_views], dim=0)
+        else:
+            # For validation, use all labels since we return all embeddings
+            out["label"] = torch.cat([view["label"] for view in all_views], dim=0)
+
+    if not self.training:
+        # During validation, just process all views through teacher
+        all_images = torch.cat([view["image"] for view in all_views], dim=0)
+        with torch.no_grad():
+            teacher_features = self.backbone.forward_teacher(all_images)
+        out["embedding"] = teacher_features.detach()
+        return out
+
+    # Training: separate processing for global and local views
+    global_images = torch.cat([view["image"] for view in global_views], dim=0)
+
+    # Teacher processes only global views
+    with torch.no_grad():
+        teacher_features = self.backbone.forward_teacher(global_images)
+        teacher_embeddings = self.projector.forward_teacher(teacher_features)
+        teacher_embeddings = teacher_embeddings.view(n_global, batch_size, -1)
+
+    # Student processes all views
+    student_embeddings_list = []
+
+    # Process global views through student
+    student_features = self.backbone.forward_student(global_images)
+    student_global_embeddings = self.projector.forward_student(student_features)
+    student_global_embeddings = student_global_embeddings.view(n_global, batch_size, -1)
+    student_embeddings_list.append(student_global_embeddings)
+
+    # Process local views through student (if any)
+    if n_local > 0:
+        local_images = torch.cat([view["image"] for view in local_views], dim=0)
+        student_features = self.backbone.forward_student(local_images)
+        student_local_embeddings = self.projector.forward_student(student_features)
+        student_local_embeddings = student_local_embeddings.view(
+            n_local, batch_size, -1
+        )
+        student_embeddings_list.append(student_local_embeddings)
+
+    # Concatenate student embeddings along the view dimension
+    student_embeddings = torch.cat(
+        student_embeddings_list, dim=0
+    )  # [n_views, batch_size, dim]
+
+    if not hasattr(self, "dino_loss"):
+        raise ValueError(
+            "dino_forward requires 'dino_loss' to be provided (e.g., spt.losses.DINOLoss()). "
+            "Pass it when constructing the Module: Module(..., dino_loss=spt.losses.DINOLoss(), ...)"
+        )
+
+    # Temperature scheduling for teacher
+    if (
+        hasattr(self, "warmup_epochs_temperature_teacher")
+        and hasattr(self, "warmup_temperature_teacher")
+        and hasattr(self, "temperature_teacher")
+    ):
+        if self.current_epoch < self.warmup_epochs_temperature_teacher:
+            # Linear warmup from warmup_temperature_teacher to temperature_teacher
+            progress = self.current_epoch / self.warmup_epochs_temperature_teacher
+            temperature_teacher = self.warmup_temperature_teacher + progress * (
+                self.temperature_teacher - self.warmup_temperature_teacher
+            )
+        else:
+            temperature_teacher = self.temperature_teacher
+    else:
+        # Default temperature if attributes not set
+        temperature_teacher = getattr(self, "temperature_teacher", 0.07)
+
+    # Compute DINO loss
+    loss = self.dino_loss(
+        student_embeddings,
+        teacher_embeddings,
+        temperature_teacher=temperature_teacher,
+        update_center=self.training,
+    )
+
+    out["embedding"] = teacher_features.detach()
+    out["loss"] = loss
+
+    return out
