@@ -33,7 +33,8 @@ class Manager(submitit.helpers.Checkpointable):
         module (Union[dict, DictConfig, pl.LightningModule]): Lightning module configuration or instance.
         data (Union[dict, DictConfig, pl.LightningDataModule]): Data module configuration or instance.
         seed (int, optional): Random seed for reproducibility. Defaults to None.
-        ckpt_path (str, optional): Path to checkpoint for resuming training. Defaults to "last.
+        ckpt_path (str, optional): Path to checkpoint for resuming training. Defaults to "last".
+        compile (bool, optional): Should we compile the given module. Defaults to False.
     """
 
     def __init__(
@@ -43,15 +44,13 @@ class Manager(submitit.helpers.Checkpointable):
         data: Union[dict, DictConfig, pl.LightningDataModule],
         seed: int = None,
         ckpt_path: str = None,
+        compile: bool = False,
     ):
-        # This is the state that will be saved by `checkpoint`
-        # we do deepcopy in case the user changes things after
-        # padding the dicts (since it will be a copy by reference)
         if seed is None:
             logging.warning(
                 "User didn't specify seed, runs won't be exactly reproducible!"
             )
-
+        self.compile = compile
         if type(trainer) is dict:
             trainer = OmegaConf.create(trainer)
         if type(trainer) is DictConfig:
@@ -350,6 +349,9 @@ class Manager(submitit.helpers.Checkpointable):
         else:
             ckpt_path = None
 
+        if self.compile:
+            logging.warning("Compiling module!")
+            self.instantiated_module.compile()
         logging.info(f"📣📣📣 CALLING trainer.fit with {ckpt_path=} 📣📣📣")
         self._trainer.fit(
             self.instantiated_module,
