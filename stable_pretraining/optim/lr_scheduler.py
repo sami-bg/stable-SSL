@@ -10,6 +10,9 @@ from torch.optim.lr_scheduler import (
     SequentialLR,
     _LRScheduler,
 )
+import inspect
+from functools import partial
+
 
 # Default parameter factories for common schedulers (both torch and custom)
 # These callables receive the calling module (for trainer context) and optimizer
@@ -116,11 +119,21 @@ def create_scheduler(optimizer, scheduler_config, module=None):
         Instantiated scheduler
     """
     # partial -> call directly
-    if isinstance(scheduler_config, type(lambda: None)) and hasattr(
-        scheduler_config, "func"
-    ):
+    if isinstance(scheduler_config, partial):
         # It's a functools.partial (duck-typing), call with optimizer
         return scheduler_config(optimizer)
+    elif callable(scheduler_config):
+        # Get the signature of the original function
+        signature = inspect.signature(scheduler_config)
+        # Count the total parameters in the function
+        num_args = len(signature.parameters)
+
+        if num_args == 1:
+            return scheduler_config(optimizer)
+        elif num_args == 2:
+            return scheduler_config(optimizer, module)
+        else:
+            raise NotImplementedError("Not more than 2 args in your lambda scheduler")
 
     # dict -> pop type + params
     if isinstance(scheduler_config, dict):
