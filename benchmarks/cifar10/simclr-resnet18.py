@@ -5,6 +5,7 @@ import torch
 import torchmetrics
 import torchvision
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.callbacks import LearningRateMonitor
 from torch import nn
 
 import stable_pretraining as spt
@@ -26,7 +27,6 @@ simclr_transform = transforms.MultiViewTransform(
                 brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1, p=0.8
             ),
             transforms.RandomGrayscale(p=0.2),
-            transforms.RandomSolarize(threshold=0.5, p=0.0),
             transforms.ToImage(**spt.data.static.CIFAR10),
         ),
         transforms.Compose(
@@ -37,7 +37,6 @@ simclr_transform = transforms.MultiViewTransform(
                 brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1, p=0.8
             ),
             transforms.RandomGrayscale(p=0.2),
-            transforms.RandomSolarize(threshold=0.5, p=0.2),
             transforms.ToImage(**spt.data.static.CIFAR10),
         ),
     ]
@@ -68,10 +67,10 @@ val_dataset = spt.data.FromTorchDataset(
 
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=256,
     num_workers=8,
     drop_last=True,
+    shuffle=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
@@ -143,10 +142,13 @@ wandb_logger = WandbLogger(
     log_model=False,
 )
 
+# Create learning rate monitor
+lr_monitor = LearningRateMonitor(logging_interval="step")
+
 trainer = pl.Trainer(
     max_epochs=1000,
     num_sanity_val_steps=0,
-    callbacks=[knn_probe, linear_probe],
+    callbacks=[knn_probe, linear_probe, lr_monitor],
     precision="16-mixed",
     logger=wandb_logger,
     enable_checkpointing=False,

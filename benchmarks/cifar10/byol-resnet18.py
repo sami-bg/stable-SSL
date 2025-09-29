@@ -36,7 +36,6 @@ byol_transform = transforms.MultiViewTransform(
                 brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1, p=0.8
             ),
             transforms.RandomGrayscale(p=0.2),
-            transforms.RandomSolarize(threshold=0.5, p=0.2),
             transforms.ToImage(**spt.data.static.CIFAR10),
         ),
     ]
@@ -55,19 +54,19 @@ cifar_train = torchvision.datasets.CIFAR10(
 cifar_val = torchvision.datasets.CIFAR10(root=str(data_dir), train=False, download=True)
 
 train_dataset = spt.data.FromTorchDataset(
-    cifar_train, names=["image", "label"], transform=byol_transform, add_sample_idx=True
+    cifar_train, names=["image", "label"], transform=byol_transform
 )
 val_dataset = spt.data.FromTorchDataset(
-    cifar_val, names=["image", "label"], transform=val_transform, add_sample_idx=True
+    cifar_val, names=["image", "label"], transform=val_transform
 )
 
 batch_size = 256
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=batch_size,
     num_workers=8,
     drop_last=True,
+    shuffle=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,

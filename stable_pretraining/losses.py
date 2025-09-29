@@ -2,6 +2,7 @@
 
 from typing import Optional
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger as logging
 
@@ -324,3 +325,119 @@ class SymmetricContrastiveLoss(ContrastiveLoss):
         )
 
         return 0.5 * (loss_i + loss_j)
+
+
+class DINOLoss(torch.nn.Module):
+    """DINO loss for self-distillation with cross-entropy :cite:`caron2021emerging`.
+
+    This loss computes the cross-entropy between teacher and student predictions
+    using a sharpening temperature for the student and a separate temperature for
+    the teacher. The teacher predictions are centered to prevent mode collapse.
+
+    Args:
+        out_dim (int): Dimensionality of the DINO head output (number of prototypes). Default is 65536.
+        temperature_student (float, optional): Temperature for student softmax. Default is 0.1.
+        center_momentum (float, optional): Momentum for center update. Default is 0.9.
+    """
+
+    def __init__(
+        self,
+        out_dim: int = 65536,
+        temperature_student: float = 0.1,
+        center_momentum: float = 0.9,
+    ):
+        super().__init__()
+        self.out_dim = out_dim
+        self.temperature_student = temperature_student
+        self.center_momentum = center_momentum
+        self.register_buffer("center", None)
+        self.prototypes_layer = None  # Will be created on first forward pass
+
+    def forward(
+        self,
+        student_embeddings: torch.Tensor,
+        teacher_embeddings: torch.Tensor,
+        temperature_teacher: float = 0.04,
+        update_center: bool = True,
+    ) -> torch.Tensor:
+        """Compute DINO loss.
+
+        Args:
+            student_embeddings: Student network output embeddings [N_views, batch_size, embed_dim].
+            teacher_embeddings: Teacher network output embeddings [N_views, batch_size, embed_dim].
+            temperature_teacher: Temperature for teacher softmax.
+            update_center: Whether to update the center (should be True during training).
+
+        Returns:
+            torch.Tensor: Scalar DINO loss value.
+        """
+        # Initialize prototypes layer if needed
+        if self.prototypes_layer is None:
+            embed_dim = student_embeddings.shape[-1]
+            self.prototypes_layer = nn.Linear(embed_dim, self.out_dim, bias=False).to(
+                student_embeddings.device
+            )
+
+        # L2 normalize embeddings
+        student_embeddings = F.normalize(student_embeddings, dim=-1, p=2)
+        teacher_embeddings = F.normalize(teacher_embeddings, dim=-1, p=2)
+
+        # Apply prototypes layer to get logits
+        student_logits = self.prototypes_layer(student_embeddings)
+        teacher_logits = self.prototypes_layer(teacher_embeddings)
+        # Compute teacher probabilities with centering
+        if self.center is not None:
+            teacher_probs = F.softmax(
+                (teacher_logits - self.center) / temperature_teacher,
+                dim=-1,
+            )
+        else:
+            teacher_probs = F.softmax(teacher_logits / temperature_teacher, dim=-1)
+
+        # Compute student log probabilities
+        student_log_probs = F.log_softmax(
+            student_logits / self.temperature_student, dim=-1
+        )
+
+        # Compute cross-entropy loss following the original DINO implementation
+        # Flatten batch and feature dimensions together: [n_views, batch_size * dim]
+        teacher_probs_flat = teacher_probs.flatten(start_dim=1)
+        student_log_probs_flat = student_log_probs.flatten(start_dim=1)
+
+        # Compute cross-entropy matrix: [n_teacher_views, n_student_views]
+        # Each element represents the total cross-entropy across all batch items and features
+        loss_matrix = -teacher_probs_flat @ student_log_probs_flat.T
+
+        # Zero out the diagonal (same view comparisons)
+        loss_matrix.fill_diagonal_(0)
+
+        # Normalize the loss
+        # Total number of valid terms: all pairs minus diagonal
+        n_terms = loss_matrix.numel() - loss_matrix.diagonal().numel()
+        batch_size = student_logits.shape[1]
+
+        # Average over valid terms and batch size
+        loss = loss_matrix.sum() / (n_terms * batch_size)
+
+        # Update center with EMA
+        if update_center and self.training:
+            with torch.no_grad():
+                # Compute batch center from teacher logits
+                batch_center = torch.mean(teacher_logits, dim=(0, 1))
+
+                if self.center is None:
+                    self.center = batch_center
+                else:
+                    # For distributed training, gather from all GPUs
+                    if (
+                        torch.distributed.is_available()
+                        and torch.distributed.is_initialized()
+                    ):
+                        batch_center = torch.cat(all_gather(batch_center), dim=0).mean(
+                            dim=0
+                        )
+                    self.center = self.center * self.center_momentum + batch_center * (
+                        1 - self.center_momentum
+                    )
+
+        return loss
