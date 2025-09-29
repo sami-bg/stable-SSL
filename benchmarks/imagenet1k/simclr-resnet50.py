@@ -68,7 +68,6 @@ local_batch_size = total_batch_size // world_size
 
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
-    sampler=spt.data.sampler.RepeatedRandomSampler(train_dataset, n_views=2),
     batch_size=local_batch_size,
     num_workers=64,
     drop_last=True,
@@ -82,17 +81,6 @@ val_dataloader = torch.utils.data.DataLoader(
 )
 
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
-
-
-def forward(self, batch, stage):
-    out = {}
-    out["embedding"] = self.backbone(batch["image"])
-    if self.training:
-        proj = self.projector(out["embedding"])
-        views = spt.data.fold_views(proj, batch["sample_idx"])
-        out["loss"] = self.simclr_loss(views[0], views[1])
-    return out
-
 
 # Using ResNet-50 as in the paper
 backbone = spt.backbone.from_torchvision(
@@ -111,7 +99,7 @@ projector = nn.Sequential(
 module = spt.Module(
     backbone=backbone,
     projector=projector,
-    forward=forward,
+    forward=spt.forward.simclr_forward,
     # Temperature can be tuned, 0.1 is a common value
     simclr_loss=spt.losses.NTXEntLoss(temperature=0.1),
     optim={
