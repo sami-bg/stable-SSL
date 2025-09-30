@@ -12,6 +12,7 @@ from torch.optim.lr_scheduler import (
 )
 import inspect
 from functools import partial
+from loguru import logger as logging
 
 
 # Default parameter factories for common schedulers (both torch and custom)
@@ -77,27 +78,6 @@ DEFAULT_SCHEDULER_FACTORIES = {
 }
 
 
-def _resolve_scheduler_callable(name_or_class):
-    """Resolve a scheduler by name from torch or this module.
-
-    Accepts a string name, class, or callable. Returns a callable to construct the scheduler.
-    """
-    if not isinstance(name_or_class, str):
-        return name_or_class
-
-    # Try torch.optim.lr_scheduler first
-    if hasattr(torch.optim.lr_scheduler, name_or_class):
-        return getattr(torch.optim.lr_scheduler, name_or_class)
-
-    # Then try this module (custom functions/classes)
-    if name_or_class in globals():
-        return globals()[name_or_class]
-
-    raise ValueError(
-        f"Scheduler '{name_or_class}' not found in torch.optim.lr_scheduler or stable_pretraining.optim.lr_scheduler."
-    )
-
-
 def _build_default_params(name: str, module, optimizer):
     factory = DEFAULT_SCHEDULER_FACTORIES.get(name)
     if factory is None:
@@ -118,9 +98,11 @@ def create_scheduler(optimizer, scheduler_config, module=None):
     Returns:
         Instantiated scheduler
     """
+    logging.info("Instantiating scheduler!!!!")
     # partial -> call directly
     if isinstance(scheduler_config, partial):
         # It's a functools.partial (duck-typing), call with optimizer
+        logging.info("\tUser provided a partial function, calling with optimizer!!")
         return scheduler_config(optimizer)
     elif callable(scheduler_config):
         # Get the signature of the original function
@@ -129,37 +111,50 @@ def create_scheduler(optimizer, scheduler_config, module=None):
         num_args = len(signature.parameters)
 
         if num_args == 1:
+            logging.info(
+                "\tUser provided a callable with one arg, calling with optimizer!!"
+            )
             return scheduler_config(optimizer)
         elif num_args == 2:
+            logging.info(
+                "\tUser provided a callable with two args, calling with optimizer, module!!"
+            )
             return scheduler_config(optimizer, module)
         else:
             raise NotImplementedError("Not more than 2 args in your lambda scheduler")
-
-    # dict -> pop type + params
-    if isinstance(scheduler_config, dict):
+    elif isinstance(scheduler_config, dict):
+        logging.info("\tUser provided a dict")
         cfg = dict(scheduler_config)
         scheduler_type = cfg.pop("type", "CosineAnnealingLR")
+        if type(scheduler_type) is not str:
+            raise ValueError(
+                "When using a dict specification for scheduler"
+                "the value of `type` must be a string! got"
+                f"{scheduler_type}"
+            )
         params = cfg
-    else:
+    elif isinstance(scheduler_config, str):
+        logging.info("\tUser provided a str (name)")
         scheduler_type = scheduler_config
         params = {}
-
-    scheduler_ctor = _resolve_scheduler_callable(scheduler_type)
-
+    if hasattr(torch.optim.lr_scheduler, scheduler_type):
+        fn = getattr(torch.optim.lr_scheduler, scheduler_type)
+    elif scheduler_type in globals():
+        fn = globals()[scheduler_type]
+    else:
+        raise ValueError(
+            f"Scheduler '{scheduler_type}' not found in torch.optim.lr_scheduler or stable_pretraining.optim.lr_scheduler."
+        )
     # If no params provided, use smart defaults if known
     if not params:
-        name = (
-            scheduler_ctor.__name__
-            if hasattr(scheduler_ctor, "__name__")
-            else str(scheduler_ctor)
-        )
+        name = fn.__name__ if hasattr(fn, "__name__") else str(fn)
         try:
             params = _build_default_params(name, module, optimizer)
         except Exception:
             params = {}
 
     # Instantiate. Works for both torch classes and our function factories.
-    return scheduler_ctor(optimizer, **params)
+    return fn(optimizer, **params)
 
 
 class CosineDecayer:

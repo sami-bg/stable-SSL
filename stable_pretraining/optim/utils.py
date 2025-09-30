@@ -8,7 +8,8 @@ import torch
 from hydra.utils import instantiate
 
 from .. import optim as ssl_optim
-from ..optim import lr_scheduler as ssl_lr
+from ..optim import lr_scheduler
+from loguru import logger as logging
 
 
 def create_optimizer(
@@ -49,6 +50,7 @@ def create_optimizer(
         >>> # Direct class
         >>> opt = create_optimizer(model.parameters(), torch.optim.RMSprop)
     """
+    logging.info("Instantiating optimizer!!!!")
     # Handle Hydra config objects
     if hasattr(optimizer_config, "_target_"):
         return instantiate(optimizer_config, params=params, _convert_="object")
@@ -145,4 +147,4 @@ def create_scheduler(
         return instantiate(scheduler_config, optimizer=optimizer, _convert_="object")
 
     # Delegate to central factory in stable_pretraining.optim.lr_scheduler
-    return ssl_lr.create_scheduler(optimizer, scheduler_config, module=module)
+    return lr_scheduler.create_scheduler(optimizer, scheduler_config, module=module)
