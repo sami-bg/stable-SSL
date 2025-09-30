@@ -6,8 +6,7 @@ import torchmetrics
 from lightning.pytorch import Callback, LightningModule, Trainer
 from loguru import logger as logging
 
-from ..optim.utils import create_optimizer, create_scheduler
-from ..optim import LARS
+from ..optim import create_optimizer, create_scheduler, LARS
 
 
 class TrainableCallback(Callback):

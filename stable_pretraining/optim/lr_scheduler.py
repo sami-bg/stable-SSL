@@ -13,6 +13,8 @@ from torch.optim.lr_scheduler import (
 import inspect
 from functools import partial
 from loguru import logger as logging
+from hydra.utils import instantiate
+from typing import Any, Union
 
 
 # Default parameter factories for common schedulers (both torch and custom)
@@ -87,20 +89,50 @@ def _build_default_params(name: str, module, optimizer):
     return {k: v for k, v in params.items() if v is not None}
 
 
-def create_scheduler(optimizer, scheduler_config, module=None):
-    """Create a learning rate scheduler instance from a flexible config.
+def create_scheduler(
+    optimizer: torch.optim.Optimizer,
+    scheduler_config: Union[str, dict, partial, type],
+    module: Any = None,
+) -> torch.optim.lr_scheduler.LRScheduler:
+    """Create a learning rate scheduler with flexible configuration.
+
+    This function provides a unified way to create schedulers from various configuration formats,
+    used by both Module and OnlineProbe for consistency.
 
     Args:
-        optimizer: torch optimizer
-        scheduler_config: str | dict | partial | Class | callable
-        module: optional calling module for defaults (expects module.trainer)
+        optimizer: The optimizer to attach the scheduler to
+        scheduler_config: Can be:
+            - str: Name of scheduler (e.g., "CosineAnnealingLR")
+            - dict: {"type": "CosineAnnealingLR", "T_max": 1000, ...}
+            - partial: Pre-configured scheduler (e.g., partial(CosineAnnealingLR, T_max=1000))
+            - class: Direct scheduler class (will use smart defaults)
+        module: Optional module instance for accessing trainer properties (for smart defaults)
 
     Returns:
-        Instantiated scheduler
+        Configured scheduler instance
+
+    Examples:
+        >>> # Simple string (uses smart defaults)
+        >>> scheduler = create_scheduler(opt, "CosineAnnealingLR")
+
+        >>> # With custom parameters
+        >>> scheduler = create_scheduler(
+        ...     opt, {"type": "StepLR", "step_size": 30, "gamma": 0.1}
+        ... )
+
+        >>> # Using partial for full control
+        >>> from functools import partial
+        >>> scheduler = create_scheduler(
+        ...     opt, partial(torch.optim.lr_scheduler.ExponentialLR, gamma=0.95)
+        ... )
     """
     logging.info("Instantiating scheduler!!!!")
     # partial -> call directly
-    if isinstance(scheduler_config, partial):
+    # Handle Hydra config objects
+    if hasattr(scheduler_config, "_target_"):
+        logging.info("\tUser provided a Hydra object, instantiating with optimizer!!")
+        return instantiate(scheduler_config, optimizer=optimizer, _convert_="object")
+    elif isinstance(scheduler_config, partial):
         # It's a functools.partial (duck-typing), call with optimizer
         logging.info("\tUser provided a partial function, calling with optimizer!!")
         return scheduler_config(optimizer)
