@@ -34,16 +34,17 @@ class WeightDecayUpdater(Callback):
 
     def on_fit_start(self, trainer: Trainer, pl_module: LightningModule):
         # Prefer max_steps if set
-        self.total_steps = trainer.num_training_batches
+        self.total_steps = trainer.estimated_stepping_batches
         logger.info(f"[WeightDecayUpdater] Using total_steps={self.total_steps}")
 
     def on_before_optimizer_step(
         self, trainer: Trainer, pl_module: LightningModule, optimizer, opt_idx=0
     ):
         step = trainer.global_step
-        if self.total_steps is None or self.total_steps <= 0:
-            logger.warning(
-                "[WeightDecayUpdater] total_steps is not set. Skipping weight decay update."
+        accumulate_grad_batches = self.trainer.accumulate_grad_batches
+        if (step + 1) % accumulate_grad_batches != 0:
+            logger.debug(
+                "[WeightDecayUpdater] Step but accumulating grad, skipping step"
             )
             return
         new_weight_decay = self._compute_weight_decay(step)
