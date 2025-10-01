@@ -208,7 +208,10 @@ class TrainableCallback(Callback):
     def optimizer_step(self, batch_idx: int, trainer: Trainer) -> None:
         """Perform optimizer step with gradient accumulation support."""
         if (batch_idx + 1) % self.accumulate_grad_batches == 0:
-            if hasattr(trainer.precision_plugin, "scaler"):
+            if (
+                hasattr(trainer.precision_plugin, "scaler")
+                and trainer.precision_plugin.scaler is not None
+            ):
                 trainer.precision_plugin.scaler.step(self.optimizer)
             else:
                 self.optimizer.step()
