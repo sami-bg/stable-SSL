@@ -29,6 +29,7 @@ class RepeatedRandomSampler(torch.utils.data.DistributedSampler):
         n_views (int): number of times to repeat each index consecutively, default=1
         replacement (bool): samples are drawn on-demand with replacement if ``True``, default=``False``
         seed (int): random seed for shuffling
+        pass_view_idx (bool): whether to pass the view index to the dataset getitem
 
     Note: For an alternative approach that loads each image once, consider using
     MultiViewTransform with a standard sampler.
@@ -40,6 +41,7 @@ class RepeatedRandomSampler(torch.utils.data.DistributedSampler):
         n_views: int = 1,
         replacement: bool = False,
         seed: int = 0,
+        pass_view_idx: bool = False,
     ):
         if type(data_source_or_len) is int:
             self._data_source_len = data_source_or_len
@@ -48,6 +50,7 @@ class RepeatedRandomSampler(torch.utils.data.DistributedSampler):
         self.replacement = replacement
         self.n_views = n_views
         self.seed = seed
+        self.pass_view_idx = pass_view_idx
         self.epoch = 0
 
         if dist.is_available() and dist.is_initialized():
@@ -100,7 +103,13 @@ class RepeatedRandomSampler(torch.utils.data.DistributedSampler):
             rank_slice = overall_slice[
                 self.rank * self.num_samples : (self.rank + 1) * self.num_samples
             ]
-            yield from rank_slice.repeat_interleave(self.n_views).tolist()
+            indices = rank_slice.repeat_interleave(self.n_views).tolist()
+            if not self.pass_view_idx:
+                yield from indices
+            else:
+                indices = [(idx, v % self.n_views) for v, idx in enumerate(indices)]
+                print("IN IT!!!!")
+                yield from indices
 
 
 class SupervisedBatchSampler(torch.utils.data.Sampler[List[int]]):
