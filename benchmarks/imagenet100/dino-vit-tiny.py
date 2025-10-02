@@ -170,6 +170,8 @@ projector = nn.Sequential(
     nn.BatchNorm1d(2048),
     nn.GELU(),
     nn.Linear(2048, 256),
+    spt.utils.nn_modules.L2Norm(),
+    nn.Linear(256, 65536, bias=False),  # Prototypes layer
 )
 
 wrapped_projector = spt.TeacherStudentWrapper(
@@ -183,8 +185,7 @@ module = spt.Module(
     backbone=wrapped_backbone,
     projector=wrapped_projector,
     forward=dino_forward,
-    dino_loss=spt.losses.DINOLoss(
-        out_dim=65536,
+    dino_loss=spt.losses.DINOv1Loss(
         temperature_student=0.1,
         center_momentum=0.9,
     ),

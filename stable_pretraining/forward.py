@@ -444,7 +444,7 @@ def dino_forward(self, batch, stage):
         self: Module instance (automatically bound) with required attributes:
             - backbone: TeacherStudentWrapper for feature extraction
             - projector: TeacherStudentWrapper for projection head
-            - dino_loss: DINOLoss instance (required, pass spt.losses.DINOLoss())
+            - dino_loss: DINOv1Loss instance (required, pass spt.losses.DINOv1Loss())
             - warmup_temperature_teacher (float): Starting teacher temperature
             - temperature_teacher (float): Final teacher temperature
             - warmup_epochs_temperature_teacher (int): Epochs to warm up temperature
@@ -556,9 +556,20 @@ def dino_forward(self, batch, stage):
 
     if not hasattr(self, "dino_loss"):
         raise ValueError(
-            "dino_forward requires 'dino_loss' to be provided (e.g., spt.losses.DINOLoss()). "
-            "Pass it when constructing the Module: Module(..., dino_loss=spt.losses.DINOLoss(), ...)"
+            "dino_forward requires 'dino_loss' to be provided (e.g., spt.losses.DINOv1Loss()). "
+            "Pass it when constructing the Module: Module(..., dino_loss=spt.losses.DINOv1Loss(), ...)"
         )
+
+    if not hasattr(self, "projector"):
+        raise ValueError(
+            "dino_forward requires 'projector' to be provided. "
+            "This should be a TeacherStudentWrapper containing the projector (MLP + normalize + prototypes). "
+            "Pass it when constructing the Module: Module(..., projector=wrapped_projector, ...)"
+        )
+
+    # Apply projector to get logits (separate teacher and student projectors)
+    teacher_logits = self.projector.forward_teacher(teacher_embeddings)
+    student_logits = self.projector.forward_student(student_embeddings)
 
     # Temperature scheduling for teacher
     if (
@@ -578,13 +589,16 @@ def dino_forward(self, batch, stage):
         # Default temperature if attributes not set
         temperature_teacher = getattr(self, "temperature_teacher", 0.07)
 
-    # Compute DINO loss
-    loss = self.dino_loss(
-        student_embeddings,
-        teacher_embeddings,
-        temperature_teacher=temperature_teacher,
-        update_center=self.training,
+    # Process teacher logits with classical centering (DINOv1 approach)
+    teacher_probs = self.dino_loss.softmax_center_teacher(
+        teacher_logits, teacher_temp=temperature_teacher
     )
+
+    # Compute DINO loss
+    loss = self.dino_loss(student_logits, teacher_probs)
+
+    # Queue async center update (will be applied next iteration)
+    self.dino_loss.update_center(teacher_logits)
 
     out["embedding"] = teacher_features.detach()
     out["loss"] = loss
