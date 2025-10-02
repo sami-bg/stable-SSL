@@ -26,7 +26,9 @@ def fold_views(tensor, idx):
     Returns:
         Tuple of tensors, one for each view
     """
-    _, counts = torch.unique_consecutive(idx, return_counts=True)
+    sidx = torch.argsort(idx, stable=True)
+
+    _, counts = torch.unique_consecutive(idx[sidx], return_counts=True)
     if not counts.min().eq(counts.max()):
         raise RuntimeError(
             "counts are not the same for all samples!\n"
@@ -35,7 +37,7 @@ def fold_views(tensor, idx):
         )
     n_views = counts[0].item()
     fold_shape = (tensor.size(0) // n_views, n_views)
-    t = tensor.view(*fold_shape, *tensor.shape[1:])
+    t = tensor[sidx].view(*fold_shape, *tensor.shape[1:])
     return t.unbind(dim=1)
 
 
