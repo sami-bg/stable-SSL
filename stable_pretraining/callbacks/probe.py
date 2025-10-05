@@ -170,8 +170,10 @@ class OnlineProbe(TrainableCallback):
                 loss = self.loss_fn(preds, y)
 
                 loss = loss / self.accumulate_grad_batches
-
-                outputs["loss"] += loss
+                if "loss" not in outputs:
+                    outputs["loss"] = loss
+                else:
+                    outputs["loss"] += loss
                 logs = {
                     f"train/{self.name}_loss": loss.item()
                     * self.accumulate_grad_batches
