@@ -69,24 +69,20 @@ class TrainableCallback(Callback):
     def setup_module(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Initialize and store the module.
 
-        This method handles module initialization and storage in _callbacks_modules.
+        This method handles module initialization and storage in callbacks_modules.
         Subclasses can override this if they need custom module setup logic.
         """
         # Initialize module
         module = self._initialize_module(pl_module)
 
-        # Ensure all parameters require gradients
-        for param in module.parameters():
-            param.requires_grad = True
-
         # Move to correct device
         module = module.to(pl_module.device)
 
-        # Store module in pl_module._callbacks_modules
-        logging.info(f"{self.name}: Storing module in _callbacks_modules")
-        if not hasattr(pl_module, "_callbacks_modules"):
-            pl_module._callbacks_modules = {}
-        pl_module._callbacks_modules[self.name] = module
+        # Store module in pl_module.callbacks_modules
+        logging.info(f"{self.name}: Storing module in callbacks_modules")
+        if not hasattr(pl_module, "callbacks_modules"):
+            pl_module.callbacks_modules = torch.nn.ModuleDict()
+        pl_module.callbacks_modules[self.name] = module
 
     def setup_optimizer(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Initialize optimizer with inheritance from main module if needed."""
@@ -212,6 +208,7 @@ class TrainableCallback(Callback):
                 hasattr(trainer.precision_plugin, "scaler")
                 and trainer.precision_plugin.scaler is not None
             ):
+                print("YYY")
                 trainer.precision_plugin.scaler.step(self.optimizer)
             else:
                 self.optimizer.step()
@@ -220,10 +217,10 @@ class TrainableCallback(Callback):
 
     @property
     def module(self):
-        """Access module from pl_module._callbacks_modules.
+        """Access module from pl_module.callbacks_modules.
 
         This property is only accessible after setup() has been called.
-        The module is stored centrally in pl_module._callbacks_modules
+        The module is stored centrally in pl_module.callbacks_modules
         to avoid duplication in checkpoints.
         """
         if self._pl_module is None:
@@ -231,7 +228,7 @@ class TrainableCallback(Callback):
                 f"{self.name}: module not accessible before setup(). "
                 "The module is initialized during the setup phase."
             )
-        return self._pl_module._callbacks_modules[self.name]
+        return self._pl_module.callbacks_modules[self.name]
 
     @property
     def state_key(self) -> str:
@@ -241,7 +238,7 @@ class TrainableCallback(Callback):
     def state_dict(self) -> dict:
         """Save callback state - only optimizer and scheduler states.
 
-        The module itself is saved via pl_module._callbacks_modules,
+        The module itself is saved via pl_module.callbacks_modules,
         so we don't duplicate it here.
         """
         return {
@@ -252,7 +249,7 @@ class TrainableCallback(Callback):
     def load_state_dict(self, state_dict: dict) -> None:
         """Load callback state - only optimizer and scheduler states.
 
-        The module itself is loaded via pl_module._callbacks_modules,
+        The module itself is loaded via pl_module.callbacks_modules,
         so we don't handle it here.
         """
         if "optimizer" in state_dict and self.optimizer:

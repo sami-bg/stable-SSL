@@ -57,8 +57,8 @@ class OnlineProbe(TrainableCallback):
             metric stops improving.
 
     Note:
-        - The probe module is stored in pl_module._callbacks_modules[name]
-        - Metrics are stored in pl_module._callbacks_metrics[name]
+        - The probe module is stored in pl_module.callbacks_modules[name]
+        - Metrics are stored in pl_module.callbacks_metrics[name]
         - Predictions are stored in batch dict with key '{name}_preds'
         - Loss is logged as 'train/{name}_loss'
         - Metrics are logged with prefix 'train/{name}_' and 'eval/{name}_'
@@ -122,23 +122,17 @@ class OnlineProbe(TrainableCallback):
         """Initialize optimizer, scheduler, and metrics."""
         # Call parent setup for module/optimizer/scheduler
         super().setup(trainer, pl_module, stage)
-
         if stage != "fit":
             return
 
         # Setup metrics
         logging.info(f"{self.name}: Setting up metrics")
-        if not hasattr(pl_module, "_callbacks_metrics"):
-            logging.info(
-                "attaching a `_callbacks_metrics` to your LightningModule for callbacks"
-            )
-            pl_module._callbacks_metrics = {}
-        pl_module._callbacks_metrics[self.name] = format_metrics_as_dict(
+        pl_module.callbacks_metrics[self.name] = format_metrics_as_dict(
             self.metrics_config
         )
 
-        self._train_metrics = pl_module._callbacks_metrics[self.name]["_train"]
-        self._val_metrics = pl_module._callbacks_metrics[self.name]["_val"]
+        self._train_metrics = pl_module.callbacks_metrics[self.name]["_train"]
+        self._val_metrics = pl_module.callbacks_metrics[self.name]["_val"]
         pl_module.register_forward_hook(self.forward_hook_fn)
 
     def forward_hook_fn(self, pl_module, args, outputs) -> None:
@@ -185,7 +179,7 @@ class OnlineProbe(TrainableCallback):
         if prediction_key not in batch:
             outputs[prediction_key] = preds.detach()
 
-        for metric_name, metric in pl_module._callbacks_metrics[self.name][
+        for metric_name, metric in pl_module.callbacks_metrics[self.name][
             "_train"
         ].items():
             metric(preds.detach(), y)
@@ -239,7 +233,7 @@ class OnlineProbe(TrainableCallback):
 
         # Update metrics and log
         logs = {}
-        for metric_name, metric in pl_module._callbacks_metrics[self.name][
+        for metric_name, metric in pl_module.callbacks_metrics[self.name][
             "_val"
         ].items():
             metric(preds, y)

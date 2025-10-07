@@ -68,9 +68,8 @@ class Module(pl.LightningModule):
 
         # Manual optimization to support multiple optimizers and custom stepping
         self.automatic_optimization = False
-
-        self._callbacks_modules = torch.nn.ModuleDict()
-        self._callbacks_metrics = torch.nn.ModuleDict()
+        self.callbacks_modules = torch.nn.ModuleDict()
+        self.callbacks_metrics = torch.nn.ModuleDict()
 
         if len(args) > 0:
             raise ValueError(
@@ -130,23 +129,32 @@ class Module(pl.LightningModule):
     def forward(self, *args, **kwargs):
         raise NotImplementedError("The forward() method must be implemented.")
 
-    def named_parameters(self, prefix: str = "", recurse: bool = True):
+    def named_parameters(
+        self, with_callbacks=True, prefix: str = "", recurse: bool = True
+    ):
         """Override to globally exclude callback-related parameters.
 
-        Excludes parameters that belong to `self._callbacks_modules` or `self._callbacks_metrics`.
+        Excludes parameters that belong to `self._callbacks_modules` or `self.callbacks_metrics`.
         This prevents accidental optimization of callback/metric internals, even if external code
         calls `self.parameters()` or `self.named_parameters()` directly.
         """
+        if with_callbacks:
+            logging.warning(
+                "You are calling self.parameters which also gives callbacks "
+                "parameters, to remove then, pass `with_callbacks=False`"
+            )
         for name, param in super().named_parameters(prefix=prefix, recurse=recurse):
-            if name.startswith("_callbacks_modules.") or name.startswith(
-                "_callbacks_metrics."
+            if (
+                name.startswith("_callbacks_modules.")
+                or name.startswith("callbacks_metrics.")
+                and not with_callbacks
             ):
                 continue
             yield name, param
 
-    def parameters(self, recurse: bool = True):
+    def parameters(self, with_callbacks=True, recurse: bool = True):
         """Override to route through the filtered `named_parameters` implementation."""
-        for _, param in self.named_parameters(recurse=recurse):
+        for _, param in self.named_parameters(with_callbacks, recurse=recurse):
             yield param
 
     def training_step(self, batch, batch_idx):
@@ -161,11 +169,11 @@ class Module(pl.LightningModule):
         state = self(batch, stage="fit")
 
         # Early exit if optimization disabled
-        if getattr(self, "optim", None) is None or self.optim is False:
-            return state
 
         if "loss" not in state:
-            raise ValueError("Training step requires 'loss' in the output state.")
+            logging.warning(
+                "Training step has no 'loss' in the output state, returning"
+            )
 
         # Resolve optimizers and schedulers (can be single or list)
         optimizers = self.optimizers()
@@ -213,6 +221,9 @@ class Module(pl.LightningModule):
         # Stepping and gradient clipping at accumulation boundary
         if (batch_idx + 1) % accum == 0:
             for idx, opt in enumerate(optimizers):
+                # in case module has no optimizer, special case
+                if isinstance(opt, pl.pytorch.core.optimizer._MockOptimizer):
+                    continue
                 # Honor per-optimizer frequency if available
                 step_freq = 1
                 if self._optimizer_names and self._optimizer_frequencies:
@@ -252,8 +263,21 @@ class Module(pl.LightningModule):
                         logging.warning(
                             f"Scheduler step failed for optimizer index {idx}: {e}"
                         )
-
         return state
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # this is required for the case where
+        # - the main module doesn't have an optimizer (e.g. frozen backbone probing)
+        # - but the callbacks have optimizers
+        # - we are using a precision plugin (e.g. bf16)
+        # in that case the callbacks still use the main module scaler and so we need
+        # to manually update it
+        if isinstance(self.optimizers(), pl.pytorch.core.optimizer._MockOptimizer):
+            if (
+                hasattr(self.trainer.precision_plugin, "scaler")
+                and self.trainer.precision_plugin.scaler is not None
+            ):
+                self.trainer.precision_plugin.scaler.update()
 
     def validation_step(self, batch, batch_idx):
         state = self.forward(batch, stage="validate")
@@ -328,7 +352,7 @@ class Module(pl.LightningModule):
         # Map module -> group index with inheritance
         module_to_group = {}
         for qual_name, module in self.named_modules():
-            if "_callbacks_modules" in qual_name or "_callbacks_metrics" in qual_name:
+            if "_callbacks_modules" in qual_name or "callbacks_metrics" in qual_name:
                 continue
 
             # inherit parent's group if any
@@ -467,7 +491,7 @@ class Module(pl.LightningModule):
             logging.info("Configuring single optimizer.")
 
             # Direct parameter extraction - use globally filtered parameters
-            params = list(self.parameters())
+            params = list(self.parameters(with_callbacks=False))
 
             opt = create_optimizer(params, optimizer_cfg or "AdamW")
 
