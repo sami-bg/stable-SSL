@@ -97,7 +97,9 @@ class Manager(submitit.helpers.Checkpointable):
     @rank_zero_only
     def init_and_sync_wandb(self):
         """Handles some utilities for WandB."""
-        if "wandb" not in self.trainer.logger._target_.lower():
+        if not isinstance(
+            self._trainer.logger, lightning.pytorch.loggers.wandb.WandbLogger
+        ):
             return
         logging.info("📈📈📈 Using Wandb 📈📈📈")
         exp = self._trainer.logger.experiment
@@ -113,12 +115,19 @@ class Manager(submitit.helpers.Checkpointable):
         elif WANDB_AVAILABLE and wandb.run and len(wandb.config.keys()):
             logging.info("\t\ta Wandb™ config is provided, not uploading Hydra's:")
         else:
-            logging.info("\tWandb's config is empty, using Hydra's 📤")
-            config = dict(
-                trainer=OmegaConf.to_container(self.trainer, resolve=True),
-                module=OmegaConf.to_container(self.module, resolve=True),
-                data=OmegaConf.to_container(self.data, resolve=True),
-            )
+            logging.info("\tWandb's config is empty, trying to use Hydra's 📤")
+            config = {}
+            if isinstance(self.trainer, dict):
+                config["trainer"] = OmegaConf.to_container(self.trainer, resolve=True)
+            if isinstance(self.module, dict):
+                config["module"] = OmegaConf.to_container(self.module, resolve=True)
+            if isinstance(self.data, dict):
+                config["data"] = OmegaConf.to_container(self.data, resolve=True)
+            if not config:
+                logging.info(
+                    "\tEverything already instantiated, nothing is added to config!"
+                )
+                return
             config = pd.json_normalize(config, sep=".")
             config = config.to_dict(orient="records")[0]
             while True:
