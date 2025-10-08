@@ -172,13 +172,6 @@ class Module(pl.LightningModule):
         """
         state = self(batch, stage="fit")
 
-        # Early exit if optimization disabled
-
-        if "loss" not in state:
-            logging.warning(
-                "Training step has no 'loss' in the output state, returning"
-            )
-
         # Resolve optimizers and schedulers (can be single or list)
         optimizers = self.optimizers()
         if not isinstance(optimizers, (list, tuple)):
@@ -190,98 +183,107 @@ class Module(pl.LightningModule):
         elif not isinstance(schedulers, (list, tuple)):
             schedulers = [schedulers]
 
-        # Get the joint loss
-        loss = state["loss"]
+        # we first handle any callback loss
+        total_loss = 0
+        callback_optimizers = []
+        for key in state:
+            if not key.startswith("loss_"):
+                continue
+            total_loss += state[key]
+            name = key.lstrip("loss_")
+            idx = self._optimizer_index_by_name[name]
+            callback_optimizers.append(idx)
 
-        # Log training loss each step (and aggregate per epoch)
-        log_value = loss.detach() if torch.is_tensor(loss) else float(loss)
-        self.log(
-            "train/loss",
-            log_value,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True,
-        )
+        if "loss" in state:
+            # Log training loss each step (and aggregate per epoch)
+            log_value = state["loss"].item()
+            self.log(
+                "train/loss", log_value, on_step=True, prog_bar=True, sync_dist=True
+            )
 
-        # Gradient accumulation factor
-        # Check for transferred parameter first (from Lightning patch), then original
-        accum = max(
-            int(
-                getattr(
-                    self.trainer,
-                    "accumulate_grad_batches_",
-                    getattr(self.trainer, "accumulate_grad_batches", 1),
-                )
-            ),
-            1,
-        )
-        scale = 1.0 / float(accum)
+            # Gradient accumulation factor
+            # Check for transferred parameter first (from Lightning patch), then original
+            accum = max(
+                int(
+                    getattr(
+                        self.trainer,
+                        "accumulate_grad_batches_",
+                        getattr(self.trainer, "accumulate_grad_batches", 1),
+                    )
+                ),
+                1,
+            )
+            state["loss"] /= accum
+            for i in range(len(optimizers)):
+                if i in callback_optimizers:
+                    continue
+                self._optimizer_frequencies[self._optimizer_names[i]] = accum
+        else:
+            state["loss"] = 0
+
+        state["loss"] += total_loss
 
         # Compute gradients once for the joint loss
-        self.manual_backward(loss * scale)
+        self.manual_backward(state["loss"])
 
+        zero_grad_opts = []
         # Stepping and gradient clipping at accumulation boundary
-        if (batch_idx + 1) % accum == 0:
-            for idx, opt in enumerate(optimizers):
-                # in case module has no optimizer, special case
-                if isinstance(opt, pl.pytorch.core.optimizer._MockOptimizer):
-                    continue
-                # Honor per-optimizer frequency if available
-                step_freq = 1
-                if self._optimizer_names and self._optimizer_frequencies:
-                    name = self._optimizer_names[idx]
-                    step_freq = int(self._optimizer_frequencies.get(name, 1))
-                if step_freq < 1:
-                    step_freq = 1
+        for idx, opt in enumerate(optimizers):
+            # in case module has no optimizer, special case
+            if isinstance(opt, pl.pytorch.core.optimizer._MockOptimizer):
+                continue
+            # Honor per-optimizer frequency if available
+            step_freq = self._optimizer_frequencies[self._optimizer_names[idx]]
 
-                if (batch_idx + 1) % step_freq != 0:
-                    continue
+            if (batch_idx + 1) % step_freq != 0:
+                continue
 
-                # Clip gradients for this optimizer then step
-                # Check for transferred parameters first (from Lightning patch), then original
-                clip_val = getattr(
-                    self.trainer, "gradient_clip_val_", self.trainer.gradient_clip_val
+            # Clip gradients for this optimizer then step
+            clip_val = getattr(
+                self.trainer, "gradient_clip_val_", self.trainer.gradient_clip_val
+            )
+            clip_algo = getattr(
+                self.trainer,
+                "gradient_clip_algorithm_",
+                self.trainer.gradient_clip_algorithm,
+            )
+
+            if clip_val is not None and clip_val > 0:
+                self.clip_gradients(
+                    opt,
+                    gradient_clip_val=clip_val,
+                    gradient_clip_algorithm=clip_algo,
                 )
-                clip_algo = getattr(
-                    self.trainer,
-                    "gradient_clip_algorithm_",
-                    self.trainer.gradient_clip_algorithm,
-                )
-
-                if clip_val is not None and clip_val > 0:
-                    self.clip_gradients(
-                        opt,
-                        gradient_clip_val=clip_val,
-                        gradient_clip_algorithm=clip_algo,
+            opt.step()
+            zero_grad_opts.append(opt)
+            # Step matching scheduler if it exists
+            if idx < len(schedulers) and schedulers[idx] is not None:
+                try:
+                    schedulers[idx].step()
+                except Exception as e:
+                    logging.warning(
+                        f"Scheduler step failed for optimizer index {idx}: {e}"
                     )
-                opt.step()
-                opt.zero_grad(set_to_none=True)
 
-                # Step matching scheduler if it exists
-                if idx < len(schedulers) and schedulers[idx] is not None:
-                    try:
-                        schedulers[idx].step()
-                    except Exception as e:
-                        logging.warning(
-                            f"Scheduler step failed for optimizer index {idx}: {e}"
-                        )
+        # zero grad what's needed
+        for opt in zero_grad_opts:
+            opt.zero_grad(set_to_none=True)
         return state
 
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        # this is required for the case where
-        # - the main module doesn't have an optimizer (e.g. frozen backbone probing)
-        # - but the callbacks have optimizers
-        # - we are using a precision plugin (e.g. bf16)
-        # in that case the callbacks still use the main module scaler and so we need
-        # to manually update it
-        if isinstance(self.optimizers(), pl.pytorch.core.optimizer._MockOptimizer):
-            if (
-                hasattr(self.trainer.precision_plugin, "scaler")
-                and self.trainer.precision_plugin.scaler is not None
-            ):
-                self.trainer.precision_plugin.scaler.update()
+    # def on_train_batch_end(self, outputs, batch, batch_idx):
+    #     # this is required for the case where
+    #     # - the main module doesn't have an optimizer (e.g. frozen backbone probing)
+    #     # - but the callbacks have optimizers
+    #     # - we are using a precision plugin (e.g. bf16)
+    #     # in that case the callbacks still use the main module scaler and so we need
+    #     # to manually update it
+    #     super().on_train_batch_end(self, outputs, batch, batch_idx)
+    #     if isinstance(self.optimizers(), pl.pytorch.core.optimizer._MockOptimizer):
+    #         if (
+    #             hasattr(self.trainer.precision_plugin, "scaler")
+    #             and self.trainer.precision_plugin.scaler is not None
+    #         ):
+    #             self.trainer.precision_plugin.scaler.update()
 
     def validation_step(self, batch, batch_idx):
         state = self.forward(batch, stage="validate")
@@ -474,6 +476,10 @@ class Module(pl.LightningModule):
         """
         logging.info("Configuring optimizers and learning rate schedulers...")
 
+        self._optimizer_index_by_name = {}
+        self._optimizer_names = []
+        self._optimizer_frequencies = {}
+
         # Early exit for disabled optimization
         if hasattr(self, "optim") and not self.optim:
             logging.info("Optimization disabled - skipping optimizer configuration.")
@@ -512,11 +518,9 @@ class Module(pl.LightningModule):
             )
 
             # Track names/frequencies for training_step
-            self._optimizer_names = ["default"]
-            self._optimizer_index_by_name = {"default": 0}
-            self._optimizer_frequencies = {
-                "default": int(self.optim.get("frequency", 1))
-            }
+            self._optimizer_names.append("default")
+            self._optimizer_index_by_name["default"] = 0
+            self._optimizer_frequencies["default"] = int(self.optim.get("frequency", 1))
 
             # Build scheduler config dict for Lightning
             scheduler_dict = self._build_scheduler_config(sched, self.optim)
@@ -547,10 +551,6 @@ class Module(pl.LightningModule):
         # Build optimizers and schedulers
         optimizers = []
         schedulers = []
-
-        self._optimizer_names = []
-        self._optimizer_index_by_name = {}
-        self._optimizer_frequencies = {}
 
         for name, config in optim_items:
             params = params_by_name.get(name, [])

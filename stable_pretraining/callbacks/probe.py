@@ -6,7 +6,7 @@ import torchmetrics
 from hydra.utils import instantiate
 from lightning.pytorch import LightningModule, Trainer
 from loguru import logger as logging
-
+import types
 from ..utils import get_data_from_batch_or_outputs
 
 from .utils import EarlyStopping, TrainableCallback, format_metrics_as_dict
@@ -133,71 +133,51 @@ class OnlineProbe(TrainableCallback):
 
         self._train_metrics = pl_module.callbacks_metrics[self.name]["_train"]
         self._val_metrics = pl_module.callbacks_metrics[self.name]["_val"]
-        pl_module.register_forward_hook(self.forward_hook_fn)
+        self.wrap_forward(pl_module=pl_module)
 
-    def forward_hook_fn(self, pl_module, args, outputs) -> None:
-        """Perform probe training step."""
-        # Extract batch from args tuple (it's the first argument to forward)
-        if isinstance(args, tuple) and len(args) > 0:
-            batch = args[0]
-        else:
-            batch = args if not isinstance(args, tuple) else {}
+    def wrap_forward(self, pl_module):
+        fn = pl_module.forward
 
-        x = get_data_from_batch_or_outputs(
-            self.input, batch, outputs, caller_name=self.name
-        )
-        y = get_data_from_batch_or_outputs(
-            self.target, batch, outputs, caller_name=self.name
-        )
+        def new_forward(self, batch, stage, callback=self, fn=fn):
+            outputs = fn(batch, stage)
+            x = get_data_from_batch_or_outputs(
+                callback.input, batch, outputs, caller_name=callback.name
+            )
+            y = get_data_from_batch_or_outputs(
+                callback.target, batch, outputs, caller_name=callback.name
+            )
 
-        if x is None or y is None:
-            logging.warning(f"Callback {self.name} missing x or y")
-            return
+            if x is None or y is None:
+                raise ValueError(
+                    f"Callback {callback.name} missing {callback.input} or {callback.target}"
+                )
 
-        with pl_module.trainer.precision_plugin.forward_context():
             if type(x) is list:
                 x = [i.detach() for i in x]
             else:
                 x = x.detach()
-            preds = self.module(x)
-            if pl_module.trainer.training:
-                loss = self.loss_fn(preds, y)
+            preds = callback.module(x)
+            logs = {}
+            if self.trainer.training:
+                loss = callback.loss_fn(preds, y)
+                outputs["loss_" + callback.name] = loss
+                logs[f"train/{callback.name}_loss"] = loss.item()
 
-                loss = loss / self.accumulate_grad_batches
-                if "loss" not in outputs:
-                    outputs["loss"] = loss
-                else:
-                    outputs["loss"] += loss
-                logs = {
-                    f"train/{self.name}_loss": loss.item()
-                    * self.accumulate_grad_batches
-                }
-            else:
-                logs = {}
+            prediction_key = f"{callback.name}_preds"
+            if prediction_key not in batch:
+                outputs[prediction_key] = preds
 
-        prediction_key = f"{self.name}_preds"
-        if prediction_key not in batch:
-            outputs[prediction_key] = preds.detach()
+            for metric_name, metric in self.callbacks_metrics[callback.name][
+                "_train"
+            ].items():
+                metric(preds.detach(), y)
+                logs[f"train/{callback.name}_{metric_name}"] = metric
 
-        for metric_name, metric in pl_module.callbacks_metrics[self.name][
-            "_train"
-        ].items():
-            metric(preds.detach(), y)
-            logs[f"train/{self.name}_{metric_name}"] = metric
+            self.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
+            return outputs
 
-        pl_module.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
-        return outputs
-
-    def on_train_batch_end(
-        self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs: Dict,
-        batch: Dict,
-        batch_idx: int,
-    ) -> None:
-        # Optimizer step using parent class method
-        self.optimizer_step(batch_idx, trainer)
+        # Bind the new method to the instance
+        pl_module.forward = types.MethodType(new_forward, pl_module)
 
     def on_validation_batch_end(
         self,
@@ -218,10 +198,9 @@ class OnlineProbe(TrainableCallback):
         )
 
         if x is None or y is None:
-            logging.warning(
-                "OnlineProbe callback doesn't have access to its `x` or `y` tensor!"
+            raise ValueError(
+                f"Callback {self.name} missing {self.input} or {self.target}"
             )
-            return
 
         with trainer.precision_plugin.forward_context():
             preds = self.module(x)
