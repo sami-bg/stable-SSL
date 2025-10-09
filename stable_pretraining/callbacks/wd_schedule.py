@@ -20,7 +20,7 @@ class WeightDecayUpdater(Callback):
 
     def __init__(
         self,
-        schedule_type: str = "linear",
+        schedule_type: str = "cosine",
         start_value: float = 0.01,
         end_value: float = 0.0,
         param_group_indices: list = None,
@@ -44,12 +44,10 @@ class WeightDecayUpdater(Callback):
     def on_before_optimizer_step(
         self, trainer: Trainer, pl_module: LightningModule, optimizer
     ):
-        if (
-            self.opt_idx is not None
-            and optimizer != pl_module.optimizers()[self.opt_index]
-        ):
+        optis = pl_module.optimizers()
+        if self.opt_idx is not None and optimizer != optis[self.opt_idx].optimizer:
             return
-        step = trainer.global_step
+        step = trainer.global_step // len(optis)
         accumulate_grad_batches = trainer.accumulate_grad_batches
         if (step + 1) % accumulate_grad_batches != 0:
             logger.debug(
