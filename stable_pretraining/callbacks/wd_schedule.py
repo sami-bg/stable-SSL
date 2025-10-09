@@ -42,9 +42,12 @@ class WeightDecayUpdater(Callback):
         logger.info(f"[WeightDecayUpdater] Using total_steps={self.total_steps}")
 
     def on_before_optimizer_step(
-        self, trainer: Trainer, pl_module: LightningModule, optimizer, opt_idx=0
+        self, trainer: Trainer, pl_module: LightningModule, optimizer
     ):
-        if self.opt_idx is not None and self.opt_idx != opt_idx:
+        if (
+            self.opt_idx is not None
+            and optimizer != pl_module.optimizers()[self.opt_index]
+        ):
             return
         step = trainer.global_step
         accumulate_grad_batches = trainer.accumulate_grad_batches
@@ -94,12 +97,14 @@ class WeightDecayUpdater(Callback):
             "end_value": self.end_value,
             "param_group_indices": self.param_group_indices,
             "total_steps": self.total_steps,
+            "opt_idx": self.opt_idx,
         }
 
     def load_state_dict(self, state_dict):
         self.schedule_type = state_dict.get("schedule_type", self.schedule_type)
         self.start_value = state_dict.get("start_value", self.start_value)
         self.end_value = state_dict.get("end_value", self.end_value)
+        self.opt_idx = state_dict.get("opt_idx", self.opt_idx)
         self.param_group_indices = state_dict.get(
             "param_group_indices", self.param_group_indices
         )
