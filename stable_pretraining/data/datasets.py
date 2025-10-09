@@ -12,6 +12,7 @@ import lightning as pl
 import torch
 from loguru import logger as logging
 from datasets import config as hf_config
+from ..utils import with_hf_retry_ratelimit
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -155,7 +156,7 @@ class HFDataset(Dataset):
             logging.info(f"Loading dataset with load_from_disk {hf_path}")
             load_dataset_fn = datasets.load_from_disk
 
-        dataset = load_dataset_fn(*args, **kwargs)
+        dataset = with_hf_retry_ratelimit(load_dataset_fn, *args, **kwargs)
         dataset = dataset.add_column("sample_idx", list(range(dataset.num_rows)))
 
         if rename_columns is not None:
