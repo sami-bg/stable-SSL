@@ -1,6 +1,7 @@
 import time
 from huggingface_hub.utils import HfHubHTTPError
 import requests
+from loguru import logger as logging
 
 
 def with_hf_retry_ratelimit(func, *args, delay=10, max_attempts=100, **kwargs):
@@ -57,7 +58,7 @@ def with_hf_retry_ratelimit(func, *args, delay=10, max_attempts=100, **kwargs):
                 attempts += 1
                 if attempts >= max_attempts:
                     raise
-                print(
+                logging.warning(
                     f"429 received. Waiting {retry_after}s before retrying (attempt {attempts}/{max_attempts})..."
                 )
                 time.sleep(retry_after)
