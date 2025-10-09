@@ -24,6 +24,7 @@ class WeightDecayUpdater(Callback):
         start_value: float = 0.01,
         end_value: float = 0.0,
         param_group_indices: list = None,
+        opt_idx: int = None,
     ):
         super().__init__()
         self.schedule_type = schedule_type
@@ -31,6 +32,7 @@ class WeightDecayUpdater(Callback):
         self.end_value = end_value
         self.param_group_indices = param_group_indices
         self.total_steps = None  # Will be set in on_fit_start
+        self.opt_idx = opt_idx
 
     def on_fit_start(self, trainer: Trainer, pl_module: LightningModule):
         # Prefer max_steps if set
@@ -42,6 +44,8 @@ class WeightDecayUpdater(Callback):
     def on_before_optimizer_step(
         self, trainer: Trainer, pl_module: LightningModule, optimizer, opt_idx=0
     ):
+        if self.opt_idx is not None and self.opt_idx != opt_idx:
+            return
         step = trainer.global_step
         accumulate_grad_batches = trainer.accumulate_grad_batches
         if (step + 1) % accumulate_grad_batches != 0:
