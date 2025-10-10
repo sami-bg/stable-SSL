@@ -1154,6 +1154,14 @@ def _generate_timm_embeddings_factory():
         "resnetrs270",
         "resnetrs350",
         "resnetrs420",
+        "resnext26ts",
+        "resnext50_32x4d",
+        "resnext50d_32x4d",
+        "resnext101_32x4d",
+        "resnext101_32x8d",
+        "resnext101_32x16d",
+        "resnext101_32x32d",
+        "resnext101_64x4d",
     ]
     names = [(n, "layer") for n in names]
     results = list(
@@ -1207,14 +1215,6 @@ def _generate_timm_embeddings_factory():
         "resnetv2_152d",
         "resnetv2_152x2_bit",
         "resnetv2_152x4_bit",
-        "resnext26ts",
-        "resnext50_32x4d",
-        "resnext50d_32x4d",
-        "resnext101_32x4d",
-        "resnext101_32x8d",
-        "resnext101_32x16d",
-        "resnext101_32x32d",
-        "resnext101_64x4d",
     ]
     names = [(n, "blocks") for n in names]
     results = list(
