@@ -421,7 +421,9 @@ def _retreive_timm_modules(args):
     import timm
     from stable_pretraining.backbone.utils import get_children_modules
 
-    return get_children_modules(timm.create_model(name), parent_name=parent_name)
+    return get_children_modules(
+        timm.create_model(name), parent_name=parent_name, partial_match=True
+    )
 
 
 def _generate_timm_embeddings_factory():
@@ -625,7 +627,6 @@ def _generate_timm_embeddings_factory():
     )
     for name, result in zip(names, results):
         timm_embedding[name[0]] = result
-    print(timm_embedding)
 
     # non pretrained swin
     names = [
@@ -1009,6 +1010,223 @@ def _generate_timm_embeddings_factory():
     for name, result in zip(names, results):
         timm_embedding[name[0]] = result
 
+    # resnet
+    names = [
+        "resnet10t.c3_in1k",
+        "resnet14t.c3_in1k",
+        "resnet18.a1_in1k",
+        "resnet18.a2_in1k",
+        "resnet18.a3_in1k",
+        "resnet18.fb_ssl_yfcc100m_ft_in1k",
+        "resnet18.fb_swsl_ig1b_ft_in1k",
+        "resnet18.gluon_in1k",
+        "resnet18.tv_in1k",
+        "resnet18d.ra2_in1k",
+        "resnet26.bt_in1k",
+        "resnet26d.bt_in1k",
+        "resnet26t.ra2_in1k",
+        "resnet32ts.ra2_in1k",
+        "resnet33ts.ra2_in1k",
+        "resnet34.a1_in1k",
+        "resnet34.a2_in1k",
+        "resnet34.a3_in1k",
+        "resnet34.bt_in1k",
+        "resnet34.gluon_in1k",
+        "resnet34.tv_in1k",
+        "resnet34d.ra2_in1k",
+        "resnet50.a1_in1k",
+        "resnet50.a1h_in1k",
+        "resnet50.a2_in1k",
+        "resnet50.a3_in1k",
+        "resnet50.am_in1k",
+        "resnet50.b1k_in1k",
+        "resnet50.b2k_in1k",
+        "resnet50.bt_in1k",
+        "resnet50.c1_in1k",
+        "resnet50.c2_in1k",
+        "resnet50.d_in1k",
+        "resnet50.fb_ssl_yfcc100m_ft_in1k",
+        "resnet50.fb_swsl_ig1b_ft_in1k",
+        "resnet50.gluon_in1k",
+        "resnet50.ra_in1k",
+        "resnet50.ram_in1k",
+        "resnet50.tv2_in1k",
+        "resnet50.tv_in1k",
+        "resnet50_gn.a1h_in1k",
+        "resnet50c.gluon_in1k",
+        "resnet50d.a1_in1k",
+        "resnet50d.a2_in1k",
+        "resnet50d.a3_in1k",
+        "resnet50d.gluon_in1k",
+        "resnet50d.ra2_in1k",
+        "resnet50s.gluon_in1k",
+        "resnet51q.ra2_in1k",
+        "resnet61q.ra2_in1k",
+        "resnet101.a1_in1k",
+        "resnet101.a1h_in1k",
+        "resnet101.a2_in1k",
+        "resnet101.a3_in1k",
+        "resnet101.gluon_in1k",
+        "resnet101.tv2_in1k",
+        "resnet101.tv_in1k",
+        "resnet101c.gluon_in1k",
+        "resnet101d.gluon_in1k",
+        "resnet101d.ra2_in1k",
+        "resnet101s.gluon_in1k",
+        "resnet152.a1_in1k",
+        "resnet152.a1h_in1k",
+        "resnet152.a2_in1k",
+        "resnet152.a3_in1k",
+        "resnet152.gluon_in1k",
+        "resnet152.tv2_in1k",
+        "resnet152.tv_in1k",
+        "resnet152c.gluon_in1k",
+        "resnet152d.gluon_in1k",
+        "resnet152d.ra2_in1k",
+        "resnet152s.gluon_in1k",
+        "resnet200d.ra2_in1k",
+        "resnetaa50.a1h_in1k",
+        "resnetaa50d.d_in12k",
+        "resnetaa50d.sw_in12k",
+        "resnetaa50d.sw_in12k_ft_in1k",
+        "resnetaa101d.sw_in12k",
+        "resnetaa101d.sw_in12k_ft_in1k",
+        "resnetblur50.bt_in1k",
+        "resnetrs50.tf_in1k",
+        "resnetrs101.tf_in1k",
+        "resnetrs152.tf_in1k",
+        "resnetrs200.tf_in1k",
+        "resnetrs270.tf_in1k",
+        "resnetrs350.tf_in1k",
+        "resnetrs420.tf_in1k",
+        "resnet10t",
+        "resnet14t",
+        "resnet18",
+        "resnet18d",
+        "resnet26",
+        "resnet26d",
+        "resnet26t",
+        "resnet32ts",
+        "resnet33ts",
+        "resnet34",
+        "resnet34d",
+        "resnet50",
+        "resnet50_clip",
+        "resnet50_clip_gap",
+        "resnet50_gn",
+        "resnet50_mlp",
+        "resnet50c",
+        "resnet50d",
+        "resnet50s",
+        "resnet50t",
+        "resnet50x4_clip",
+        "resnet50x4_clip_gap",
+        "resnet50x16_clip",
+        "resnet50x16_clip_gap",
+        "resnet50x64_clip",
+        "resnet50x64_clip_gap",
+        "resnet51q",
+        "resnet61q",
+        "resnet101",
+        "resnet101_clip",
+        "resnet101_clip_gap",
+        "resnet101c",
+        "resnet101d",
+        "resnet101s",
+        "resnet152",
+        "resnet152c",
+        "resnet152d",
+        "resnet152s",
+        "resnet200",
+        "resnet200d",
+        "resnetaa34d",
+        "resnetaa50",
+        "resnetaa50d",
+        "resnetaa101d",
+        "resnetblur18",
+        "resnetblur50",
+        "resnetblur50d",
+        "resnetblur101d",
+        "resnetrs50",
+        "resnetrs101",
+        "resnetrs152",
+        "resnetrs200",
+        "resnetrs270",
+        "resnetrs350",
+        "resnetrs420",
+    ]
+    names = [(n, "layer") for n in names]
+    results = list(
+        tqdm(
+            Pool(30).imap(_retreive_timm_modules, names),
+            total=len(names),
+            desc="resnets",
+        )
+    )
+    for name, result in zip(names, results):
+        timm_embedding[name[0]] = result
+
+    # Resnet v2
+    names = [
+        "resnetv2_50.a1h_in1k",
+        "resnetv2_50d_evos.ah_in1k",
+        "resnetv2_50d_gn.ah_in1k",
+        "resnetv2_50x1_bit.goog_distilled_in1k",
+        "resnetv2_50x1_bit.goog_in21k",
+        "resnetv2_50x1_bit.goog_in21k_ft_in1k",
+        "resnetv2_50x3_bit.goog_in21k",
+        "resnetv2_50x3_bit.goog_in21k_ft_in1k",
+        "resnetv2_101.a1h_in1k",
+        "resnetv2_101x1_bit.goog_in21k",
+        "resnetv2_101x1_bit.goog_in21k_ft_in1k",
+        "resnetv2_101x3_bit.goog_in21k",
+        "resnetv2_101x3_bit.goog_in21k_ft_in1k",
+        "resnetv2_152x2_bit.goog_in21k",
+        "resnetv2_152x2_bit.goog_in21k_ft_in1k",
+        "resnetv2_152x2_bit.goog_teacher_in21k_ft_in1k",
+        "resnetv2_152x2_bit.goog_teacher_in21k_ft_in1k_384",
+        "resnetv2_152x4_bit.goog_in21k",
+        "resnetv2_152x4_bit.goog_in21k_ft_in1k",
+        "resnetv2_18",
+        "resnetv2_18d",
+        "resnetv2_34",
+        "resnetv2_34d",
+        "resnetv2_50",
+        "resnetv2_50d",
+        "resnetv2_50d_evos",
+        "resnetv2_50d_frn",
+        "resnetv2_50d_gn",
+        "resnetv2_50t",
+        "resnetv2_50x1_bit",
+        "resnetv2_50x3_bit",
+        "resnetv2_101",
+        "resnetv2_101d",
+        "resnetv2_101x1_bit",
+        "resnetv2_101x3_bit",
+        "resnetv2_152",
+        "resnetv2_152d",
+        "resnetv2_152x2_bit",
+        "resnetv2_152x4_bit",
+        "resnext26ts",
+        "resnext50_32x4d",
+        "resnext50d_32x4d",
+        "resnext101_32x4d",
+        "resnext101_32x8d",
+        "resnext101_32x16d",
+        "resnext101_32x32d",
+        "resnext101_64x4d",
+    ]
+    names = [(n, "blocks") for n in names]
+    results = list(
+        tqdm(
+            Pool(30).imap(_retreive_timm_modules, names),
+            total=len(names),
+            desc="resnets",
+        )
+    )
+    for name, result in zip(names, results):
+        timm_embedding[name[0]] = result
+
     path = Path(os.path.abspath(__file__))
     with open(path.parent.parent / "assets/static_timm.json", "w") as f:
         json.dump(timm_embedding, f, indent=2)
@@ -1022,9 +1240,9 @@ if __name__ == "__main__":
     import timm
     import torch
 
-    model = timm.create_model("swin_large_patch4_window7_224.ms_in22k")
+    model = timm.create_model("resnet34")
     # add last 3 blocks as separate output
-    names = spt.static.TIMM_EMBEDDINGS["swin_large_patch4_window7_224.ms_in22k"][-3:]
+    names = spt.static.TIMM_EMBEDDINGS["resnet34"][-3:]
     # names = ['layers.2.blocks.17', 'layers.3.blocks.0', 'layers.3.blocks.1']
     model = spt.backbone.utils.ReturnEmbedding(model, names)
     # if you need shapes e.g. for probing definition

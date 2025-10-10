@@ -702,13 +702,16 @@ def set_embedding_dim(
     return module
 
 
-def get_children_modules(model: nn.Module, parent_name: str, L: int = 1) -> List[str]:
+def get_children_modules(
+    model: nn.Module, parent_name: str, L: int = 1, partial_match: bool = False
+) -> List[str]:
     """Extracts unique module names matching a given parent_name and L submodules.
 
     Args:
         model: The root nn.Module.
         parent_name: The string or path component to match (e.g., 'blocks').
         L: Number of levels after the parent_name to include in the result.
+        partial_match: whether to check with == or in
 
     Returns:
         Sorted list of unique qualified module names at depth L after the parent_name.
@@ -716,7 +719,11 @@ def get_children_modules(model: nn.Module, parent_name: str, L: int = 1) -> List
     result: List[str] = []
     for name, _ in model.named_modules():
         parts = name.split(".")
-        matches = [i for i, p in enumerate(parts) if parent_name == p]
+        matches = [
+            i
+            for i, p in enumerate(parts)
+            if (parent_name in p if partial_match else parent_name == p)
+        ]
         if not matches:
             continue
         for idx in matches:
