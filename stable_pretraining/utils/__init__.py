@@ -16,6 +16,7 @@ from .config import (
     replace_module,
     rgetattr,
     rsetattr,
+    load_hparams_from_ckpt,
 )
 from .data_generation import (
     generate_dae_samples,
@@ -99,4 +100,5 @@ __all__ = [
     # batch_utils
     "get_data_from_batch_or_outputs",
     "with_hf_retry_ratelimit",
+    "load_hparams_from_ckpt",
 ]
