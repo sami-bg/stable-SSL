@@ -151,8 +151,7 @@ class Module(pl.LightningModule):
             if (
                 name.startswith("callbacks_modules.")
                 or name.startswith("callbacks_metrics.")
-                and not with_callbacks
-            ):
+            ) and not with_callbacks:
                 continue
             yield name, param
 

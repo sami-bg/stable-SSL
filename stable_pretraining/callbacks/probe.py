@@ -3,13 +3,12 @@ from typing import Dict, Optional, Union
 
 import torch
 import torchmetrics
-from hydra.utils import instantiate
 from lightning.pytorch import LightningModule, Trainer
 from loguru import logger as logging
 import types
 from ..utils import get_data_from_batch_or_outputs
 
-from .utils import EarlyStopping, TrainableCallback, format_metrics_as_dict
+from .utils import TrainableCallback, format_metrics_as_dict
 
 
 class OnlineProbe(TrainableCallback):
@@ -26,10 +25,10 @@ class OnlineProbe(TrainableCallback):
     - Independent optimizer and scheduler management
     - Support for gradient accumulation
     - Mixed precision training compatibility through automatic dtype conversion
-    - Built-in early stopping support
     - Metric tracking and logging
 
     Args:
+        module: The spt.LightningModule to probe.
         name: Unique identifier for this probe instance. Used for logging and storing
             metrics/modules.
         input: Key in batch dict or outputs dict containing input features to probe.
@@ -53,8 +52,6 @@ class OnlineProbe(TrainableCallback):
             optimizer step. Default is 1 (no accumulation).
         metrics: Metrics to track during training/validation. Can be dict, list, tuple,
             or single metric instance.
-        early_stopping: Early stopping configuration to halt training if validation
-            metric stops improving.
 
     Note:
         - The probe module is stored in pl_module.callbacks_modules[name]
@@ -66,6 +63,7 @@ class OnlineProbe(TrainableCallback):
 
     def __init__(
         self,
+        module: LightningModule,
         name: str,
         input: str,
         target: str,
@@ -77,63 +75,43 @@ class OnlineProbe(TrainableCallback):
         ] = None,
         accumulate_grad_batches: int = 1,
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
-        early_stopping: Optional[EarlyStopping] = None,
     ) -> None:
         # Initialize base class
+        self.input = input
+        self.target = target
+        self.loss_fn = loss_fn
+
+        # Store probe configuration for later initialization
+        self._probe_config = probe
+
+        # Format metrics
         super().__init__(
+            module=module,
             name=name,
             optimizer=optimizer,
             scheduler=scheduler,
             accumulate_grad_batches=accumulate_grad_batches,
         )
-
-        self.input = input
-        self.target = target
-        self.loss_fn = loss_fn
-        self.early_stopping = early_stopping
-
-        # Store probe configuration for later initialization
-        self._probe_config = probe
-
-        # These will be initialized in setup
-        self._train_metrics = None
-        self._val_metrics = None
-
-        # Format metrics
-        self.metrics_config = metrics
-
-        logging.info(f"Initialized OnlineProbe callback: {name}")
+        logging.info(f"Initialized {self.name}")
         logging.info(f"  - Input: {input}")
         logging.info(f"  - Target: {target}")
         logging.info(f"  - Accumulate grad batches: {accumulate_grad_batches}")
+        # Setup metrics
+        logging.info(f"{self.name}: Setting up metrics")
+        assert self.name not in module.callbacks_metrics
+        module.callbacks_metrics[self.name] = format_metrics_as_dict(metrics)
+        logging.info(f"{self.name}: We are wrapping up your `forward`!")
+        self.wrap_forward(pl_module=module)
 
-    def _initialize_module(self, pl_module: LightningModule) -> torch.nn.Module:
+    def configure_model(self, pl_module: LightningModule) -> torch.nn.Module:
         """Initialize the probe module from configuration."""
         if isinstance(self._probe_config, torch.nn.Module):
             probe_module = self._probe_config
         elif callable(self._probe_config):
-            probe_module = self._probe_config()
+            probe_module = self._probe_config(pl_module)
         else:
-            probe_module = instantiate(self._probe_config, _convert_="object")
-
+            raise ValueError("the probe should be a module or a callable")
         return probe_module
-
-    def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
-        """Initialize optimizer, scheduler, and metrics."""
-        # Call parent setup for module/optimizer/scheduler
-        super().setup(trainer, pl_module, stage)
-        if stage != "fit":
-            return
-
-        # Setup metrics
-        logging.info(f"{self.name}: Setting up metrics")
-        pl_module.callbacks_metrics[self.name] = format_metrics_as_dict(
-            self.metrics_config
-        )
-
-        self._train_metrics = pl_module.callbacks_metrics[self.name]["_train"]
-        self._val_metrics = pl_module.callbacks_metrics[self.name]["_val"]
-        self.wrap_forward(pl_module=pl_module)
 
     def wrap_forward(self, pl_module):
         fn = pl_module.forward
@@ -153,24 +131,30 @@ class OnlineProbe(TrainableCallback):
                 )
 
             if type(x) is list:
-                x = [i.detach() for i in x]
+                _x = [i.detach() for i in x]
+            elif type(x) is dict:
+                _x = {k: v.detach() for k, v in x.items()}
             else:
-                x = x.detach()
-            preds = callback.module(x)
+                _x = x.detach()
+
+            preds = callback.module(_x)
+
+            prediction_key = f"{callback.name}_preds"
+            assert prediction_key not in batch
+            outputs[prediction_key] = preds
+
             logs = {}
             if self.trainer.training:
                 loss = callback.loss_fn(preds, y)
-                outputs["loss_" + callback.name] = loss
+                assert f"loss_{callback.name}" not in outputs
+                assert f"train/{callback.name}_loss" not in logs
+                outputs[f"loss_{callback.name}"] = loss
                 logs[f"train/{callback.name}_loss"] = loss.item()
 
-            prediction_key = f"{callback.name}_preds"
-            if prediction_key not in batch:
-                outputs[prediction_key] = preds
-
-            for metric_name, metric in self.callbacks_metrics[callback.name][
-                "_train"
-            ].items():
-                metric(preds.detach(), y)
+            my_metrics = self.callbacks_metrics[callback.name]["_train"]
+            for metric_name, metric in my_metrics.items():
+                metric.update(preds, y)
+                assert f"train/{callback.name}_{metric_name}" not in logs
                 logs[f"train/{callback.name}_{metric_name}"] = metric
 
             self.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
@@ -190,63 +174,18 @@ class OnlineProbe(TrainableCallback):
     ) -> None:
         """Compute probe predictions during validation."""
         # Get input and target data
-        x = get_data_from_batch_or_outputs(
-            self.input, batch, outputs, caller_name=self.name
+        yhat = get_data_from_batch_or_outputs(
+            f"{self.name}_preds", batch, outputs, caller_name=self.name
         )
         y = get_data_from_batch_or_outputs(
             self.target, batch, outputs, caller_name=self.name
         )
 
-        if x is None or y is None:
-            raise ValueError(
-                f"Callback {self.name} missing {self.input} or {self.target}"
-            )
-
-        with trainer.precision_plugin.forward_context():
-            preds = self.module(x)
-
-        # Store predictions in batch
-        prediction_key = f"{self.name}_preds"
-        if prediction_key not in batch:
-            batch[prediction_key] = preds
-
         # Update metrics and log
         logs = {}
-        for metric_name, metric in pl_module.callbacks_metrics[self.name][
-            "_val"
-        ].items():
-            metric(preds, y)
+        my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
+        for metric_name, metric in my_metrics.items():
+            metric(yhat, y)
             logs[f"eval/{self.name}_{metric_name}"] = metric
 
         pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
-
-    def on_validation_epoch_end(
-        self, trainer: Trainer, pl_module: LightningModule
-    ) -> None:
-        """Handle early stopping if configured."""
-        if self.early_stopping is None:
-            return
-        logging.info(f"{self.name} checking for early stopping condition")
-        # Get the metric value for early stopping
-        metric_name = f"eval/{self.name}_{self.early_stopping.monitor}"
-        if metric_name not in trainer.callback_metrics:
-            logging.warning(
-                f"{self.name}: Early stopping metric {metric_name} not found"
-            )
-            return
-
-        current_value = trainer.callback_metrics[metric_name]
-        should_stop = self.early_stopping.should_stop(
-            current_value, trainer.current_epoch
-        )
-
-        if should_stop:
-            logging.info(
-                f"{self.name}: Early stopping triggered at epoch {trainer.current_epoch} by {self.name}"
-            )
-            trainer.should_stop = True
-
-    @property
-    def probe_module(self):
-        """Alias for self.module for backward compatibility."""
-        return self.module
