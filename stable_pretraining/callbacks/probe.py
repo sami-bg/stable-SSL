@@ -167,30 +167,3 @@ class OnlineProbe(TrainableCallback):
 
         # Bind the new method to the instance
         pl_module.forward = types.MethodType(new_forward, pl_module)
-
-    # def on_validation_batch_end(
-    #     self,
-    #     trainer: Trainer,
-    #     pl_module: LightningModule,
-    #     outputs: Dict,
-    #     batch: Dict,
-    #     batch_idx: int,
-    #     dataloader_idx: int = 0,
-    # ) -> None:
-    #     """Compute probe predictions during validation."""
-    #     # Get input and target data
-    #     yhat = get_data_from_batch_or_outputs(
-    #         f"{self.name}_preds", batch, outputs, caller_name=self.name
-    #     )
-    #     y = get_data_from_batch_or_outputs(
-    #         self.target, batch, outputs, caller_name=self.name
-    #     )
-
-    #     # Update metrics and log
-    #     logs = {}
-    #     my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
-    #     for metric_name, metric in my_metrics.items():
-    #         metric(yhat, y)
-    #         logs[f"eval/{self.name}_{metric_name}"] = metric
-
-    #     pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
