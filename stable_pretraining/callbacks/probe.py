@@ -157,10 +157,10 @@ class OnlineProbe(TrainableCallback):
                     assert f"train/{callback.name}_{metric_name}" not in logs
                     logs[f"train/{callback.name}_{metric_name}"] = metric
             elif stage == "validate":
-                my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
+                my_metrics = pl_module.callbacks_metrics[callback.name]["_val"]
                 for metric_name, metric in my_metrics.items():
                     metric(preds, y)
-                    logs[f"eval/{self.name}_{metric_name}"] = metric
+                    logs[f"eval/{callback.name}_{metric_name}"] = metric
 
             self.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
             return outputs
