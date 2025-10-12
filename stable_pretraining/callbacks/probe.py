@@ -146,9 +146,10 @@ class OnlineProbe(TrainableCallback):
             logs = {}
             if stage == "fit":
                 loss = callback.loss_fn(preds, y)
-                assert f"loss_{callback.name}" not in outputs
                 assert f"train/{callback.name}_loss" not in logs
-                outputs[f"loss_{callback.name}"] = loss
+                if "loss" not in outputs:
+                    outputs["loss"] = 0
+                outputs["loss"] += loss
                 logs[f"train/{callback.name}_loss"] = loss.item()
 
                 my_metrics = self.callbacks_metrics[callback.name]["_train"]

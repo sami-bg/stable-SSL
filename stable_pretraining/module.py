@@ -158,6 +158,19 @@ class Module(pl.LightningModule):
         for _, param in self.named_parameters(with_callbacks, recurse=recurse):
             yield param
 
+    def rescale_loss_for_grad_acc(self, loss):
+        accum = max(
+            int(
+                getattr(
+                    self.trainer,
+                    "accumulate_grad_batches_",
+                    getattr(self.trainer, "accumulate_grad_batches", 1),
+                )
+            ),
+            1,
+        )
+        return loss / accum
+
     def training_step(self, batch, batch_idx):
         """Manual optimization training step with support for multiple optimizers.
 
@@ -171,7 +184,10 @@ class Module(pl.LightningModule):
 
         # Resolve optimizers and schedulers (can be single or list)
         optimizers = self.optimizers()
-        if not isinstance(optimizers, (list, tuple)):
+        # there are NO optimizers either from main or callbacks, no need to stay here!
+        if isinstance(optimizers, pl.pytorch.core.optimizer._MockOptimizer):
+            return
+        elif not isinstance(optimizers, (list, tuple)):
             optimizers = [optimizers]
 
         schedulers = self.lr_schedulers()
@@ -180,45 +196,12 @@ class Module(pl.LightningModule):
         elif not isinstance(schedulers, (list, tuple)):
             schedulers = [schedulers]
 
-        # we first handle any callback loss
-        total_loss = 0
-        callback_optimizers = []
-        for key in state:
-            if not key.startswith("loss_"):
-                continue
-            total_loss += state[key]
-            name = key.removeprefix("loss_")
-            idx = self._optimizer_index_by_name[name]
-            callback_optimizers.append(idx)
-
-        if "loss" in state:
-            # Log training loss each step (and aggregate per epoch)
-            log_value = state["loss"]
-            self.log(
-                "train/loss", log_value, on_step=True, prog_bar=True, sync_dist=True
+        if len(optimizers) != len(schedulers):
+            raise ValueError(
+                "We need as many schedulers as optimizers!"
+                "if you don't want to use one, either use a "
+                "ConstantLR, or return None"
             )
-
-            # Gradient accumulation factor
-            # Check for transferred parameter first (from Lightning patch), then original
-            accum = max(
-                int(
-                    getattr(
-                        self.trainer,
-                        "accumulate_grad_batches_",
-                        getattr(self.trainer, "accumulate_grad_batches", 1),
-                    )
-                ),
-                1,
-            )
-            state["loss"] /= accum
-            for i in range(len(optimizers)):
-                if i in callback_optimizers:
-                    continue
-                self._optimizer_frequencies[self._optimizer_names[i]] = accum
-        else:
-            state["loss"] = 0
-
-        state["loss"] += total_loss
 
         # Compute gradients once for the joint loss
         self.manual_backward(state["loss"])
@@ -226,13 +209,10 @@ class Module(pl.LightningModule):
         zero_grad_opts = []
         # Stepping and gradient clipping at accumulation boundary
         for idx, opt in enumerate(optimizers):
+            name = self._optimizer_names[idx]
             # in case module has no optimizer, special case
-            if isinstance(opt, pl.pytorch.core.optimizer._MockOptimizer):
-                continue
             # Honor per-optimizer frequency if available
-            step_freq = self._optimizer_frequencies[self._optimizer_names[idx]]
-
-            if (batch_idx + 1) % step_freq != 0:
+            if (batch_idx + 1) % self._optimizer_frequencies[name] != 0:
                 continue
 
             # Clip gradients for this optimizer then step
@@ -253,14 +233,10 @@ class Module(pl.LightningModule):
                 )
             opt.step()
             zero_grad_opts.append(opt)
-            # Step matching scheduler if it exists
-            if idx < len(schedulers) and schedulers[idx] is not None:
-                try:
-                    schedulers[idx].step()
-                except Exception as e:
-                    logging.warning(
-                        f"Scheduler step failed for optimizer index {idx}: {e}"
-                    )
+            # Step its scheduler if it exists
+            if schedulers[idx] is not None:
+                assert schedulers[idx].optimizer == opt.optimizer
+                schedulers[idx].step()
 
         # zero grad what's needed
         for opt in zero_grad_opts:
@@ -500,7 +476,19 @@ class Module(pl.LightningModule):
             # Track names/frequencies for training_step
             self._optimizer_names.append("default")
             self._optimizer_index_by_name["default"] = 0
-            self._optimizer_frequencies["default"] = int(self.optim.get("frequency", 1))
+            accum = max(
+                int(
+                    getattr(
+                        self.trainer,
+                        "accumulate_grad_batches_",
+                        getattr(self.trainer, "accumulate_grad_batches", 1),
+                    )
+                ),
+                1,
+            )
+            self._optimizer_frequencies["default"] = int(
+                self.optim.get("frequency", accum)
+            )
 
             # Build scheduler config dict for Lightning
             scheduler_dict = self._build_scheduler_config(sched, self.optim)
