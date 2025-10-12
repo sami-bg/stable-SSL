@@ -1,9 +1,9 @@
 from functools import partial
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 import torch
 import torchmetrics
-from lightning.pytorch import LightningModule, Trainer
+from lightning.pytorch import LightningModule
 from loguru import logger as logging
 import types
 from ..utils import get_data_from_batch_or_outputs
@@ -144,18 +144,23 @@ class OnlineProbe(TrainableCallback):
             outputs[prediction_key] = preds
 
             logs = {}
-            if self.trainer.training:
+            if stage == "fit":
                 loss = callback.loss_fn(preds, y)
                 assert f"loss_{callback.name}" not in outputs
                 assert f"train/{callback.name}_loss" not in logs
                 outputs[f"loss_{callback.name}"] = loss
                 logs[f"train/{callback.name}_loss"] = loss.item()
 
-            my_metrics = self.callbacks_metrics[callback.name]["_train"]
-            for metric_name, metric in my_metrics.items():
-                metric.update(preds, y)
-                assert f"train/{callback.name}_{metric_name}" not in logs
-                logs[f"train/{callback.name}_{metric_name}"] = metric
+                my_metrics = self.callbacks_metrics[callback.name]["_train"]
+                for metric_name, metric in my_metrics.items():
+                    metric.update(preds, y)
+                    assert f"train/{callback.name}_{metric_name}" not in logs
+                    logs[f"train/{callback.name}_{metric_name}"] = metric
+            elif stage == "validate":
+                my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
+                for metric_name, metric in my_metrics.items():
+                    metric(preds, y)
+                    logs[f"eval/{self.name}_{metric_name}"] = metric
 
             self.log_dict(logs, on_step=True, on_epoch=True, sync_dist=True)
             return outputs
@@ -163,29 +168,29 @@ class OnlineProbe(TrainableCallback):
         # Bind the new method to the instance
         pl_module.forward = types.MethodType(new_forward, pl_module)
 
-    def on_validation_batch_end(
-        self,
-        trainer: Trainer,
-        pl_module: LightningModule,
-        outputs: Dict,
-        batch: Dict,
-        batch_idx: int,
-        dataloader_idx: int = 0,
-    ) -> None:
-        """Compute probe predictions during validation."""
-        # Get input and target data
-        yhat = get_data_from_batch_or_outputs(
-            f"{self.name}_preds", batch, outputs, caller_name=self.name
-        )
-        y = get_data_from_batch_or_outputs(
-            self.target, batch, outputs, caller_name=self.name
-        )
+    # def on_validation_batch_end(
+    #     self,
+    #     trainer: Trainer,
+    #     pl_module: LightningModule,
+    #     outputs: Dict,
+    #     batch: Dict,
+    #     batch_idx: int,
+    #     dataloader_idx: int = 0,
+    # ) -> None:
+    #     """Compute probe predictions during validation."""
+    #     # Get input and target data
+    #     yhat = get_data_from_batch_or_outputs(
+    #         f"{self.name}_preds", batch, outputs, caller_name=self.name
+    #     )
+    #     y = get_data_from_batch_or_outputs(
+    #         self.target, batch, outputs, caller_name=self.name
+    #     )
 
-        # Update metrics and log
-        logs = {}
-        my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
-        for metric_name, metric in my_metrics.items():
-            metric(yhat, y)
-            logs[f"eval/{self.name}_{metric_name}"] = metric
+    #     # Update metrics and log
+    #     logs = {}
+    #     my_metrics = pl_module.callbacks_metrics[self.name]["_val"]
+    #     for metric_name, metric in my_metrics.items():
+    #         metric(yhat, y)
+    #         logs[f"eval/{self.name}_{metric_name}"] = metric
 
-        pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)
+    #     pl_module.log_dict(logs, on_step=False, on_epoch=True, sync_dist=True)

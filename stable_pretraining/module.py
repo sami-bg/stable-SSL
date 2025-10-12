@@ -148,10 +148,8 @@ class Module(pl.LightningModule):
                 "parameters, to remove then, pass `with_callbacks=False`"
             )
         for name, param in super().named_parameters(prefix=prefix, recurse=recurse):
-            if (
-                name.startswith("callbacks_modules.")
-                or name.startswith("callbacks_metrics.")
-            ) and not with_callbacks:
+            is_callback = name.startswith("callbacks_")
+            if is_callback and not with_callbacks:
                 continue
             yield name, param
 
@@ -195,7 +193,7 @@ class Module(pl.LightningModule):
 
         if "loss" in state:
             # Log training loss each step (and aggregate per epoch)
-            log_value = state["loss"].item()
+            log_value = state["loss"]
             self.log(
                 "train/loss", log_value, on_step=True, prog_bar=True, sync_dist=True
             )
@@ -269,32 +267,14 @@ class Module(pl.LightningModule):
             opt.zero_grad(set_to_none=True)
         return state
 
-    # def on_train_batch_end(self, outputs, batch, batch_idx):
-    #     # this is required for the case where
-    #     # - the main module doesn't have an optimizer (e.g. frozen backbone probing)
-    #     # - but the callbacks have optimizers
-    #     # - we are using a precision plugin (e.g. bf16)
-    #     # in that case the callbacks still use the main module scaler and so we need
-    #     # to manually update it
-    #     super().on_train_batch_end(self, outputs, batch, batch_idx)
-    #     if isinstance(self.optimizers(), pl.pytorch.core.optimizer._MockOptimizer):
-    #         if (
-    #             hasattr(self.trainer.precision_plugin, "scaler")
-    #             and self.trainer.precision_plugin.scaler is not None
-    #         ):
-    #             self.trainer.precision_plugin.scaler.update()
-
     def validation_step(self, batch, batch_idx):
-        state = self.forward(batch, stage="validate")
-        return state
+        return self.forward(batch, stage="validate")
 
     def test_step(self, batch, batch_idx):
-        state = self.forward(batch, stage="test")
-        return state
+        return self.forward(batch, stage="test")
 
     def predict_step(self, batch, batch_idx):
-        state = self.forward(batch, stage="predict")
-        return state
+        return self.forward(batch, stage="predict")
 
     def _get_scheduler_name(self, scheduler_config, scheduler_instance=None):
         """Extract scheduler name from various config formats."""
@@ -490,6 +470,7 @@ class Module(pl.LightningModule):
             )
             self.optim = dict(optimizer=partial(torch.optim.AdamW))
         elif isinstance(self.optim, partial):
+            logging.info("Using user's partial optimizer.")
             self.optim = dict(optimizer=self.optim)
 
         # Single optimizer case
@@ -502,7 +483,7 @@ class Module(pl.LightningModule):
             # Direct parameter extraction - use globally filtered parameters
             params = list(self.parameters(with_callbacks=False))
 
-            opt = create_optimizer(params, optimizer_cfg or "AdamW")
+            opt = create_optimizer(params, optimizer_cfg)
 
             # Create scheduler
             default = dict(
