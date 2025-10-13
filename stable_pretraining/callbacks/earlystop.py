@@ -4,6 +4,10 @@ from loguru import logger as logging
 import numpy as np
 
 
+def to_scalar(x):
+    return x.item() if hasattr(x, "item") else x
+
+
 class EpochMilestones(pl.Callback):
     """PyTorch Lightning callback to stop training if a monitored metric does not meet specified thresholds at given epochs.
 
@@ -67,7 +71,7 @@ class EpochMilestones(pl.Callback):
         values = [metrics.get(name) for name in self.metric_name]
         # Stop training if the metric is not greater than min_value
         if self.direction == "max":
-            final = np.max(values)
+            final = np.max([to_scalar(x) for x in values])
             logging.info(
                 f"EpochMilestones: Maximum value among {self.metric_name} is {final}"
             )
@@ -83,7 +87,7 @@ class EpochMilestones(pl.Callback):
                     f" {self.milestones[epoch]}... Yayy!"
                 )
         else:
-            final = np.min(values)
+            final = np.min([to_scalar(x) for x in values])
             logging.info(
                 f"EpochMilestones: Minimum value among {self.metric_name} is {final}"
             )
