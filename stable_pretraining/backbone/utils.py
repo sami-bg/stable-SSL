@@ -172,7 +172,7 @@ class FeaturesConcat(nn.Module):
 
     @staticmethod
     def get_output_shape(
-        shapes: Union[list[str], Dict[str, Iterable[int]]], agg: callable
+        agg: callable, shapes: Union[list[str], Dict[str, Iterable[int]]]
     ):
         """Given a list of shapes (tuples), returns the expected concatenated shape.
 
