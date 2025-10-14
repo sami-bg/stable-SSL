@@ -8,7 +8,7 @@ from loguru import logger as logging
 import types
 from ..utils import get_data_from_batch_or_outputs
 
-from .utils import TrainableCallback, format_metrics_as_dict
+from .utils import TrainableCallback
 
 
 class OnlineProbe(TrainableCallback):
@@ -97,9 +97,7 @@ class OnlineProbe(TrainableCallback):
         logging.info(f"  - Target: {target}")
         logging.info(f"  - Accumulate grad batches: {accumulate_grad_batches}")
         # Setup metrics
-        logging.info(f"{self.name}: Setting up metrics")
-        assert self.name not in module.callbacks_metrics
-        module.callbacks_metrics[self.name] = format_metrics_as_dict(metrics)
+        self.metrics = metrics
         logging.info(f"{self.name}: We are wrapping up your `forward`!")
         self.wrap_forward(pl_module=module)
 
@@ -137,6 +135,7 @@ class OnlineProbe(TrainableCallback):
             else:
                 _x = x.detach()
 
+            # print(callback.module)
             preds = callback.module(_x)
 
             prediction_key = f"{callback.name}_preds"
@@ -149,7 +148,7 @@ class OnlineProbe(TrainableCallback):
                 assert f"train/{callback.name}_loss" not in logs
                 if "loss" not in outputs:
                     outputs["loss"] = 0
-                outputs["loss"] += loss
+                outputs["loss"] = outputs["loss"] + loss
                 logs[f"train/{callback.name}_loss"] = loss.item()
 
                 my_metrics = self.callbacks_metrics[callback.name]["_train"]

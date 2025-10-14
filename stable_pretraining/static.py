@@ -416,14 +416,22 @@ TORCHVISION_EMBEDDINGS["vit_l_32"] = TORCHVISION_EMBEDDINGS["vit_l_16"]
 TORCHVISION_EMBEDDINGS["wide_resnet50_2"] = TORCHVISION_EMBEDDINGS["resnet50"]
 
 
+def _get_last_submodule_full_name(model):
+    # named_modules() yields (full_name, module) pairs in definition order
+    for name, module in model.named_modules():
+        last_name, _ = name, module
+    return last_name
+
+
 def _retreive_timm_modules(args):
     name, parent_name = args
     import timm
     from stable_pretraining.backbone.utils import get_children_modules
 
-    return get_children_modules(
-        timm.create_model(name), parent_name=parent_name, partial_match=True
-    )
+    model = timm.create_model(name)
+    internals = get_children_modules(model, parent_name=parent_name, partial_match=True)
+    last = _get_last_submodule_full_name(model)
+    return internals + [last]
 
 
 def _generate_timm_embeddings_factory():

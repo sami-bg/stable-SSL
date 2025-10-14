@@ -1,6 +1,6 @@
 import copy
 import math
-from typing import Union, Iterable, List, Optional, Any
+from typing import Union, Iterable, List, Optional, Any, Dict
 
 import torch
 import torchvision
@@ -151,16 +151,11 @@ class FeaturesConcat(nn.Module):
             if not given then we aggregate everything from dict/list
     """
 
-    def __init__(self, names=None, agg: callable = torch.mean):
+    def __init__(self, agg: callable, names: Union[str, Iterable[str]] = None):
         super().__init__()
         if type(names) is str:
             names = [names]
         self.names = names
-        if agg is None:
-
-            def agg(x, dim):
-                return x
-
         self.agg = agg
 
     def forward(self, inputs: Union[dict, Iterable]):
@@ -171,25 +166,14 @@ class FeaturesConcat(nn.Module):
             tensors = inputs
         reps = []
         for t in tensors:
-            if t.ndim == 4:
-                # assume conv2d type of output
-                # Aggregate over spatial dimensions (H, W)
-                t = self.agg(t, dim=(2, 3))
-            elif t.ndim == 3:
-                # assume ViT type of output
-                # Aggregate over token dimension
-                t = self.agg(t, dim=1)
-            elif t.ndim == 2:
-                # No aggregation needed
-                pass
-            else:
-                raise ValueError(f"Unsupported tensor shape: {t.shape}")
-            reps.append(t)
+            reps.append(self.agg(t))
         concat = torch.cat(reps, dim=1)
         return concat
 
     @staticmethod
-    def get_output_shape(shapes, agg=torch.mean):
+    def get_output_shape(
+        shapes: Union[list[str], Dict[str, Iterable[int]]], agg: callable
+    ):
         """Given a list of shapes (tuples), returns the expected concatenated shape.
 
         Assumes all shapes have the same batch size (shapes[0][0]).
@@ -203,8 +187,10 @@ class FeaturesConcat(nn.Module):
         """
         if not shapes:
             raise ValueError("Shape list is empty.")
+        if type(shapes) is dict:
+            shapes = list(shapes.values())
         x = [torch.empty(shape, device="meta") for shape in shapes]
-        obj = FeaturesConcat(None, agg)
+        obj = FeaturesConcat(agg)
         out = obj(x)
         return out.shape
 
