@@ -464,6 +464,82 @@ def from_torchvision(model_name, low_resolution=False, **kwargs):
     return model
 
 
+def from_huggingface(model_name, pretrained, attn_implementation="sdpa", **kwargs):
+    """Loads a Hugging Face Transformers base model, optionally with pretrained weights, and returns the backbone model.
+
+    This function wraps the Hugging Face `transformers` library to load a model specified by `model_name`.
+    It supports loading either pretrained weights or initializing from configuration only. The returned object
+    is the model's backbone (`model.base_model`), which is useful for extracting the core architecture
+    without task-specific heads.
+
+    Args:
+        model_name (str): The Hugging Face model repository identifier or local path. Examples include
+            "bert-base-uncased", "facebook/opt-1.3b", or a local directory containing model files.
+        pretrained (bool): If True, loads pretrained weights via `AutoModel.from_pretrained`. If False,
+            initializes the model from configuration only via `AutoConfig.from_pretrained` and
+            `AutoModel.from_config`.
+        attn_implementation (str, optional): The attention backend to use. Supported values include
+            "sdpa" (default), "eager", "flash_attention_2", etc., as supported by the installed
+            version of `transformers` and your hardware. This is forwarded to the underlying model
+            constructor.
+        **kwargs: Additional keyword arguments forwarded to `AutoModel.from_pretrained` or
+            `AutoConfig.from_pretrained`. Common options include:
+            - `revision` (str): Model version or branch to use.
+            - `cache_dir` (str): Directory to cache downloaded models.
+            - `trust_remote_code` (bool): Allow loading custom code from model repo.
+            - `torch_dtype` (str or torch.dtype): Data type for model weights.
+            - `device_map` (str or dict): Device placement for model parameters.
+            - And others supported by Hugging Face Transformers.
+
+    Returns:
+        transformers.PreTrainedModel: The base (backbone) model instance, typically accessible via
+        `model.base_model`. For some architectures, this may be the model itself.
+
+    Raises:
+        ImportError: If the `transformers` library is not installed.
+        OSError: If the model or configuration cannot be found or downloaded.
+        ValueError: If invalid arguments are provided.
+        Exception: Propagates any other exceptions raised by Hugging Face Transformers.
+
+    Notes:
+        - The returned `base_model` may differ depending on the architecture. For some models,
+          `base_model` is the same as the full model.
+        - The availability of certain attention implementations (e.g., "flash_attention_2") depends
+          on your hardware, installed libraries, and the version of `transformers`.
+        - Ensure that your environment meets the requirements for the selected attention backend.
+
+    Examples:
+        >>> # Load a pretrained BERT model with default attention
+        >>> model = from_huggingface("bert-base-uncased", pretrained=True)
+        >>> # Initialize a model from config only, specifying a revision and device
+        >>> model = from_huggingface(
+        ...     "facebook/opt-1.3b",
+        ...     pretrained=False,
+        ...     revision="main",
+        ...     device_map="auto",
+        ... )
+        >>> # Load a pretrained model using flash attention (if supported)
+        >>> model = from_huggingface(
+        ...     "meta-llama/Llama-2-7b-hf",
+        ...     pretrained=True,
+        ...     attn_implementation="flash_attention_2",
+        ... )
+    """
+    from transformers import AutoModel, AutoConfig
+
+    if pretrained:
+        model = AutoModel.from_pretrained(
+            model_name, attn_implementation=attn_implementation, **kwargs
+        )
+    else:
+        config = AutoConfig.from_pretrained(model_name, **kwargs)
+        model = AutoModel.from_config(
+            config,
+            attn_implementation=attn_implementation,
+        )
+    return model.base_model
+
+
 def from_timm(model_name, low_resolution=False, **kwargs):
     import timm
 
