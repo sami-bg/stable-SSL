@@ -68,7 +68,7 @@ class OnlineProbe(TrainableCallback):
         input: str,
         target: str,
         probe: torch.nn.Module,
-        loss_fn: callable,
+        loss_fn: callable = None,
         optimizer: Optional[Union[str, dict, partial, torch.optim.Optimizer]] = None,
         scheduler: Optional[
             Union[str, dict, partial, torch.optim.lr_scheduler.LRScheduler]
@@ -79,6 +79,8 @@ class OnlineProbe(TrainableCallback):
         # Initialize base class
         self.input = input
         self.target = target
+        if loss_fn is None:
+            logging.warning(f"Not loss given to {name}, will use output of `probe`")
         self.loss_fn = loss_fn
 
         # Store probe configuration for later initialization
@@ -116,27 +118,35 @@ class OnlineProbe(TrainableCallback):
 
         def new_forward(self, batch, stage, callback=self, fn=fn):
             outputs = fn(batch, stage)
-            x = get_data_from_batch_or_outputs(
-                callback.input, batch, outputs, caller_name=callback.name
-            )
-            y = get_data_from_batch_or_outputs(
-                callback.target, batch, outputs, caller_name=callback.name
-            )
-
-            if x is None or y is None:
-                raise ValueError(
-                    f"Callback {callback.name} missing {callback.input} or {callback.target}"
+            if (
+                callback.input is None
+                or callback.target is None
+                or callback.loss_fn is None
+            ):
+                assert callback.target is None
+                assert callback.input is None
+                assert callback.loss_fn is None
+                return callback.module(batch, outputs, self)
+            else:
+                x = get_data_from_batch_or_outputs(
+                    callback.input, batch, outputs, caller_name=callback.name
+                )
+                y = get_data_from_batch_or_outputs(
+                    callback.target, batch, outputs, caller_name=callback.name
                 )
 
-            if type(x) is list:
-                _x = [i.detach() for i in x]
-            elif type(x) is dict:
-                _x = {k: v.detach() for k, v in x.items()}
-            else:
-                _x = x.detach()
+                if x is None or y is None:
+                    raise ValueError(
+                        f"Callback {callback.name} missing {callback.input} or {callback.target}"
+                    )
 
-            # print(callback.module)
-            preds = callback.module(_x)
+                if type(x) is list:
+                    _x = [i.detach() for i in x]
+                elif type(x) is dict:
+                    _x = {k: v.detach() for k, v in x.items()}
+                else:
+                    _x = x.detach()
+                preds = callback.module(_x)
 
             prediction_key = f"{callback.name}_preds"
             assert prediction_key not in batch
