@@ -220,7 +220,7 @@ class CSVLogAutoSummarizer:
             pass
         # Try to convert numeric columns where possible
         for col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="ignore")
+            df[col] = pd.to_numeric(df[col])
         # Diagnostics if all values are NaN (excluding axis/time cols)
         metric_cols = [c for c in df.columns if c not in ("step", "epoch", "time")]
         if metric_cols and df[metric_cols].isna().all().all():
