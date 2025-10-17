@@ -188,7 +188,9 @@ class AutoLinearClassifier(torch.nn.Module):
                         label_smoothing=ls / num_classes
                     )
                     metrics[id] = MulticlassAccuracy(num_classes)
-        self.metrics = torchmetrics.MetricCollection(metrics)
+        self.metrics = torchmetrics.MetricCollection(
+            metrics, prefix="eval/", postfix="_top1"
+        )
 
     def forward(self, x, y=None, pl_module=None):
         # x: (N, T, D) or (N, D)
@@ -209,7 +211,7 @@ class AutoLinearClassifier(torch.nn.Module):
         loss = {}
         for name in self.fc.keys():
             yhat = self.fc[name](pooled)
-            loss[name] = self.losses[name](yhat, y)
+            loss[f"train/{name}"] = self.losses[name](yhat, y)
             if not self.training:
                 self.metrics[name].update(yhat, y)
         if self.training and pl_module:
