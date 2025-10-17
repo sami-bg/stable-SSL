@@ -149,48 +149,46 @@ class AutoLinearClassifier(torch.nn.Module):
         >>> logits2 = probe(x2)  # shape: (32, 10)
     """
 
-    def __init__(self, name, module, embedding_dim, num_classes, pooling=None):
+    def __init__(
+        self,
+        name,
+        embedding_dim,
+        num_classes,
+        pooling=None,
+        normalization=["none", "norm", "bn"],
+        dropout=[0, 0.5],
+        label_smoothing=[0, 1, 5],
+    ):
         super().__init__()
         assert pooling in (
             "cls",
             "mean",
             None,
         ), "pooling must be 'cls' or 'mean' or None"
-        self.name = name
-        self.pooling = pooling
-        self.num_classes = num_classes
-        self.bn_norm = torch.nn.BatchNorm1d(embedding_dim)
-        self.layer_norm = torch.nn.LayerNorm(embedding_dim)
-        self.fc = torch.nn.ModuleDict(
-            {
-                f"{name}_bn": torch.nn.Linear(embedding_dim, num_classes * 3),
-                f"{name}_bn_drop": torch.nn.Sequential(
-                    torch.nn.Dropout(0.5),
-                    torch.nn.Linear(embedding_dim, num_classes * 3),
-                ),
-                f"{name}_norm": torch.nn.Linear(embedding_dim, num_classes * 3),
-                f"{name}_norm_drop": torch.nn.Sequential(
-                    torch.nn.Dropout(0.5),
-                    torch.nn.Linear(embedding_dim, num_classes * 3),
-                ),
-            }
-        )
-        self.loss = torch.nn.ModuleList(
-            [
-                torch.nn.CrossEntropyLoss(label_smoothing=0),
-                torch.nn.CrossEntropyLoss(label_smoothing=1 / num_classes),
-                torch.nn.CrossEntropyLoss(label_smoothing=10 / num_classes),
-            ]
-        )
-        self.metrics = torchmetrics.MetricCollection(
-            {
-                f"val/{sub}_{i}": MulticlassAccuracy(num_classes)
-                for i in range(3)
-                for sub in self.fc.keys()
-            }
-        )
-        # self._module = module
-        # self.log_dict = module.log_dict
+        self.fc = torch.nn.ModuleDict()
+        self.losses = torch.nn.ModuleDict()
+        metrics = {}
+        for norm in normalization:
+            for drop in dropout:
+                for ls in label_smoothing:
+                    if norm == "bn":
+                        layer_norm = torch.nn.BatchNorm1d(embedding_dim)
+                    elif norm == "norm":
+                        layer_norm = torch.nn.LayerNorm(embedding_dim)
+                    else:
+                        assert norm == "none"
+                        layer_norm = torch.nn.Identity()
+                    id = f"{name}_{norm}_{drop}_{ls}".replace(".", "")
+                    self.fc[id] = torch.nn.Sequential(
+                        layer_norm,
+                        torch.nn.Dropout(drop),
+                        torch.nn.Linear(embedding_dim, num_classes),
+                    )
+                    self.losses[id] = torch.nn.CrossEntropyLoss(
+                        label_smoothing=ls / num_classes
+                    )
+                    metrics[id] = MulticlassAccuracy(num_classes)
+        self.metrics = torchmetrics.MetricCollection(metrics)
 
     def forward(self, x, y=None, pl_module=None):
         # x: (N, T, D) or (N, D)
@@ -198,34 +196,29 @@ class AutoLinearClassifier(torch.nn.Module):
             # (N, D): no pooling or normalization
             pooled = x
         elif self.pooling == "cls":
+            assert x.ndim == 3
             pooled = x[:, 0, :]  # (N, D)
         elif self.pooling == "mean":  # 'mean'
-            pooled = x.mean(dim=1)  # (N, D)
+            if x.ndim == 3:
+                pooled = x.mean(dim=1)  # (N, D)
+            else:
+                assert x.ndim == 4
+                pooled = x.mean(dim=(2, 3))  # (N, D)
         else:
             pooled = x.flatten(1)
-        bn_pooled = self.bn_norm(pooled)
-        norm_pooled = self.layer_norm(pooled)
-        inputs = {
-            f"{self.name}_bn": bn_pooled,
-            f"{self.name}_bn_drop": bn_pooled,
-            f"{self.name}_norm": norm_pooled,
-            f"{self.name}_norm_drop": norm_pooled,
-        }
         loss = {}
-        for k, v in self.fc.items():
-            yhats = v(inputs[k]).reshape(x.size(0), 3, self.num_classes).unbind(1)
-            for i, yhat in enumerate(yhats):
-                if not self.training:
-                    self.metrics[f"val/{k}_{i}"].update(yhat, y)
-                    continue
-                loss[f"train/{self.name}_{k}"] = self.loss[i](yhat, y)
-        if not self.training:
+        for name in self.fc.keys():
+            yhat = self.fc[name](pooled)
+            loss[name] = self.losses[name](yhat, y)
+            if not self.training:
+                self.metrics[name].update(yhat, y)
+        if self.training and pl_module:
+            pl_module.log_dict(loss, on_step=True, on_epoch=False, rank_zero_only=True)
+        elif pl_module:
             pl_module.log_dict(
                 self.metrics,
                 on_step=False,
                 on_epoch=True,
                 sync_dist=True,
             )
-        else:
-            pl_module.log_dict(loss, on_step=True, on_epoch=False, rank_zero_only=True)
         return sum(loss.values())

@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Any, Union, Literal
 import pandas as pd
 import yaml
 from loguru import logger
+from tqdm import tqdm
 
 
 class CSVLogAutoSummarizer:
@@ -67,50 +68,20 @@ class CSVLogAutoSummarizer:
             Also includes 'metrics_path' and 'run_root'.
         """
         metrics_files = self._find_metrics_files()
-        if self.group_by_run_root:
-            run_root_to_files: Dict[Path, List[Path]] = {}
-            for f in metrics_files:
-                root = self._find_run_root(f)
-                run_root_to_files.setdefault(root, []).append(f)
-            summaries = []
-            for run_root, files in run_root_to_files.items():
-                try:
-                    if self.group_strategy == "merge":
-                        df = self._merge_metrics_files(files)
-                        metrics_path_repr = " | ".join(str(p) for p in files)
-                    else:
-                        chosen = self._select_metrics_file(files)
-                        if not chosen:
-                            logger.warning(
-                                f"No valid metrics file for run root {run_root}"
-                            )
-                            continue
-                        df = self._read_metrics_csv(chosen)
-                        metrics_path_repr = str(chosen)
-                    if df is None or df.empty:
-                        logger.warning(
-                            f"No valid data in metrics for run root {run_root}"
-                        )
-                        continue
-                    summary = self._summarize_run(df, metrics_path_repr, run_root)
-                    summaries.append(summary)
-                except Exception as e:
-                    logger.warning(f"Failed to process run root {run_root}: {e}")
-            return pd.DataFrame(summaries)
-        # Ungrouped: one row per metrics file
-        summaries = []
+        run_root_to_files: Dict[Path, List[Path]] = {}
         for f in metrics_files:
-            try:
-                df = self._read_metrics_csv(f)
-                if df is None or df.empty:
-                    logger.warning(f"No valid data in metrics file {f}")
-                    continue
-                run_root = self._find_run_root(f)
-                summary = self._summarize_run(df, str(f), run_root)
-                summaries.append(summary)
-            except Exception as e:
-                logger.warning(f"Failed to process metrics file {f}: {e}")
-        return pd.DataFrame(summaries)
+            root = self._find_run_root(f)
+            run_root_to_files.setdefault(root, []).append(f)
+        summaries = []
+        for run_root, files in tqdm(
+            run_root_to_files.items(), desc="Loading", total=len(run_root_to_files)
+        ):
+            df = self._merge_metrics_files(files)
+            df["root"] = run_root
+            summaries.append(df)
+        # global dataframe
+
+        return pd.concat(summaries)
 
     # ----------------------------
     # Discovery and selection
@@ -158,7 +129,7 @@ class CSVLogAutoSummarizer:
             col = "epoch" if self.group_strategy == "latest_epoch" else "step"
             best_file, best_val = None, float("-inf")
             for f in files:
-                df = self._read_metrics_csv(f)
+                df = self._read_data(f)
                 if df is not None and col in df.columns:
                     val = pd.to_numeric(df[col], errors="coerce").max()
                     if pd.notnull(val) and val > best_val:
@@ -181,124 +152,39 @@ class CSVLogAutoSummarizer:
 
         Keep the last occurrence for any duplicated step/epoch pair.
         """
-        dfs = [self._read_metrics_csv(f) for f in files]
+        dfs = [self._read_data(f) for f in files]
         dfs = [df for df in dfs if df is not None and not df.empty]
         if not dfs:
             return None
         df = pd.concat(dfs, ignore_index=True)
-        axis_cols = [c for c in ["step", "epoch"] if c in df.columns]
-        if axis_cols:
-            df = df.sort_values(axis_cols)
-            df = df.drop_duplicates(subset=axis_cols, keep="last")
-        else:
-            df = df.drop_duplicates(keep="last")
         return df
 
     # ----------------------------
     # CSV reading and summarization
     # ----------------------------
-    def _read_metrics_csv(self, path: Path) -> Optional[pd.DataFrame]:
+    def _read_data(self, path: Path) -> Optional[pd.DataFrame]:
         """Robustly read a metrics CSV, handling delimiter, repeated headers, and sparse rows.
 
         Returns None if file cannot be read or is empty.
         """
-        try:
-            df = pd.read_csv(path, sep=None, engine="python", on_bad_lines="skip")
-        except Exception as e:
-            logger.warning(f"Failed to read CSV {path}: {e}")
-            return None
+        df = pd.read_csv(path)
         # Drop unnamed columns, strip column names
         df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
         df.columns = df.columns.str.strip()
-        # Remove repeated header rows (e.g., when resuming or concatenation)
-        # If any of the first few rows equals the column names, drop such rows.
-        try:
-            if any((df.iloc[i] == df.columns).all() for i in range(min(5, len(df)))):
-                df = df[~(df.apply(lambda row: (row == df.columns).all(), axis=1))]
-        except Exception:
-            # Be cautious with mixed dtypes; if it fails, keep as-is
-            pass
         # Try to convert numeric columns where possible
-        for col in df.columns:
-            df[col] = pd.to_numeric(df[col])
+        df = df.apply(pd.to_numeric, errors="ignore")
+        df.ffill(inplace=True)
         # Diagnostics if all values are NaN (excluding axis/time cols)
         metric_cols = [c for c in df.columns if c not in ("step", "epoch", "time")]
         if metric_cols and df[metric_cols].isna().all().all():
             logger.warning(f"All metric values are NaN in {path}")
             logger.debug(f"Dtypes:\n{df.dtypes}\nHead:\n{df.head()}")
+        hparams = self._find_hparams(path.parent / "hparams.yaml")
+        for k, v in list(hparams.items()):
+            hparams[f"config/{k}"] = v
+            del hparams[k]
+        df[list(hparams.keys())] = list(hparams.values())
         return df
-
-    def _auto_infer_monitor_keys(self, df: pd.DataFrame) -> List[str]:
-        """Infer monitor keys heuristically.
-
-        - numeric columns whose names start with 'val_' or contain one of ['acc', 'f1', 'auc', 'loss'].
-        """
-        candidates = [
-            c
-            for c in df.columns
-            if any(k in c for k in ["val_", "acc", "f1", "auc", "loss"])
-            and pd.api.types.is_numeric_dtype(df[c])
-        ]
-        return candidates
-
-    @staticmethod
-    def _last_valid(series: pd.Series) -> Any:
-        """Return the last non-NaN value in a Series, or NaN if none."""
-        s = series.dropna()
-        return s.iloc[-1] if len(s) else float("nan")
-
-    def _summarize_run(
-        self, df: pd.DataFrame, metrics_path: str, run_root: Path
-    ) -> Dict[str, Any]:
-        """Summarize metrics and metadata for a single run (or merged run root).
-
-        Returns:
-            Dict[str, Any]: flattened summary
-        """
-        # Determine axis and sort
-        axis_cols = [c for c in ["step", "epoch"] if c in df.columns]
-        if axis_cols:
-            df = df.sort_values(axis_cols)
-        # Optionally forward-fill for last.* summaries (best.* uses original)
-        df_ffill = df.ffill() if self.forward_fill_last else df
-        # Determine monitor keys/modes
-        monitor_keys = self.monitor_keys or self._auto_infer_monitor_keys(df)
-        monitor_modes = self.monitor_modes
-        summary: Dict[str, Any] = {}
-        # Last values: last non-NaN per numeric metric (excluding axis/time)
-        for col in df.select_dtypes(include="number").columns:
-            if not any(t in col for t in ["step", "epoch", "time"]):
-                summary[f"last.{col}"] = (
-                    df_ffill[col].iloc[-1]
-                    if self.forward_fill_last
-                    else self._last_valid(df[col])
-                )
-        # Best values for monitor keys, ignoring NaNs
-        for key in monitor_keys:
-            if key in df.columns and pd.api.types.is_numeric_dtype(df[key]):
-                mode = monitor_modes.get(key, "min" if "loss" in key else "max")
-                s = df[key].dropna()
-                if len(s):
-                    idx = s.idxmin() if mode == "min" else s.idxmax()
-                    best_row = df.loc[idx]
-                    summary[f"best.{key}"] = best_row[key]
-                    for axis in axis_cols:
-                        summary[f"best.{key}.{axis}"] = best_row.get(axis, None)
-                else:
-                    summary[f"best.{key}"] = float("nan")
-                    for axis in axis_cols:
-                        summary[f"best.{key}.{axis}"] = None
-        summary["metrics_path"] = metrics_path
-        summary["run_root"] = str(run_root)
-        # Metadata: load Hydra config/overrides and hparams; flatten safely (supports dict/list/scalars)
-        hydra_dir = run_root / ".hydra"
-        config_obj = self._load_yaml(hydra_dir / "config.yaml")
-        overrides_obj = self._load_yaml(hydra_dir / "overrides.yaml")
-        hparams_obj = self._find_hparams(run_root)
-        summary.update(self._flatten_obj(config_obj, "config."))
-        summary.update(self._flatten_obj(overrides_obj, "override."))
-        summary.update(self._flatten_obj(hparams_obj, "hparams."))
-        return summary
 
     # ----------------------------
     # Metadata loading and flattening
@@ -325,29 +211,3 @@ class CSVLogAutoSummarizer:
             if hp.exists():
                 return self._load_yaml(hp)
         return {}
-
-    def _flatten_obj(self, obj: Any, prefix: str = "") -> Dict[str, Any]:
-        """Flatten dicts/lists/scalars into a flat dict with dot-separated keys.
-
-        - Dict: recurse into keys (prefix.key).
-        - List: store both a joined string at the prefix (without trailing dot) and enumerate items:
-          e.g., override: "a,b,c", override.0: "a", override.1: "b", ...
-        - Scalars: store as prefix (without trailing dot).
-        """
-        out: Dict[str, Any] = {}
-        key_here = prefix[:-1] if prefix.endswith(".") else prefix
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                out.update(self._flatten_obj(v, f"{prefix}{k}."))
-        elif isinstance(obj, list):
-            # Joined representation for convenience
-            joined = ", ".join(str(x) for x in obj)
-            if key_here:
-                out[key_here] = joined
-            # Enumerate items to keep structure
-            for i, v in enumerate(obj):
-                out.update(self._flatten_obj(v, f"{prefix}{i}."))
-        else:
-            if key_here:
-                out[key_here] = obj
-        return out
