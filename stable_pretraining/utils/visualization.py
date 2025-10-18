@@ -8,6 +8,101 @@ import numpy as np
 import torch
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
+import pandas as pd
+
+
+def format_df_to_latex(
+    df,
+    caption=None,
+    label=None,
+    bold="row",  # 'row', 'col', 'overall', or None
+    na_rep="–",
+    sort_index=False,
+    sort_columns=False,
+    longtable=False,
+    column_format=None,
+    position="htbp",
+    escape=True,
+    show_percent_symbol=False,
+    unit_annotation="caption",  # 'caption', 'columns', or None
+):
+    """Format a MultiIndex DataFrame for LaTeX export with percent formatting (no % symbol), bolding, and booktabs.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame (values in [0,1]).
+        caption (str): LaTeX caption.
+        label (str): LaTeX label.
+        bold (str|None): 'row', 'col', 'overall', or None for bolding max.
+        na_rep (str): Representation for NaN.
+        sort_index (bool): Sort index.
+        sort_columns (bool): Sort columns.
+        longtable (bool): Use longtable environment.
+        column_format (str|None): Custom LaTeX column format.
+        position (str): Table position (e.g., 'htbp').
+        escape (bool): Escape LaTeX special chars in headers.
+        outfile (str|None): If set, write LaTeX to this file.
+        show_percent_symbol (bool): If True, append % to cell values.
+        unit_annotation (str|None): 'caption', 'columns', or None. Where to indicate units.
+
+    Returns:
+        str: LaTeX table as string.
+    """
+    df = df.copy()
+    if sort_index:
+        df = df.sort_index()
+    if sort_columns:
+        df = df.sort_index(axis=1)
+
+    # Formatter: percent with 2 decimals, handle NaN, with or without %
+    def percent_or_plain(x, show_symbol=show_percent_symbol):
+        if pd.isna(x):
+            return na_rep
+        val = f"{x * 100:.2f}"
+        return f"{val}\\%" if show_symbol else val
+
+    # Optionally annotate units in caption or columns
+    cap = caption
+    if not show_percent_symbol:
+        if unit_annotation == "caption":
+            cap = (caption or "") + " (All values are percentages)"
+        elif unit_annotation == "columns":
+            # Add " (%)" to the last column level name
+            if isinstance(df.columns, pd.MultiIndex):
+                new_names = list(df.columns.names)
+                new_names[-1] = (new_names[-1] or "") + " (%)"
+                df.columns = pd.MultiIndex.from_tuples(df.columns, names=new_names)
+            else:
+                df.columns = [str(c) + " (%)" for c in df.columns]
+    styler = df.style.format(
+        lambda x: percent_or_plain(x, show_percent_symbol), na_rep=na_rep, escape=escape
+    )
+    # Bolding logic (using LaTeX property mapping, not literal \textbf{})
+    if bold == "row":
+        styler = styler.highlight_max(axis=1, props="font-weight: bold;")
+    elif bold == "col":
+        styler = styler.highlight_max(axis=0, props="font-weight: bold;")
+    elif bold == "overall":
+        max_val = np.nanmax(df.values)
+
+        def bold_overall(val):
+            return (
+                "font-weight: bold;"
+                if np.isclose(val, max_val, equal_nan=False)
+                else ""
+            )
+
+        styler = styler.applymap(bold_overall)
+    # else: no bolding
+    latex = styler.to_latex(
+        hrules=True,
+        caption=cap,
+        label=label,
+        column_format=column_format,
+        position=position,
+        multicol_align="c",
+        environment=None,
+    )
+    return latex
 
 
 def _make_image(x):

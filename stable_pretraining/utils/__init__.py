@@ -50,6 +50,7 @@ from .nn_modules import (
     OrderedQueue,
     UnsortedQueue,
 )
+from .visualization import format_df_to_latex
 
 __all__ = [
     # autograd
@@ -103,4 +104,5 @@ __all__ = [
     "with_hf_retry_ratelimit",
     "load_hparams_from_ckpt",
     "CSVLogAutoSummarizer",
+    "format_df_to_latex",
 ]
