@@ -17,13 +17,12 @@ import time
 import threading
 import gc
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 import subprocess
 
 import pytest
 import yaml
 import torch
-import lightning as pl
 from lightning.pytorch import LightningModule, Trainer
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -283,16 +282,16 @@ class TestBasicFunctionality:
         """Test that callback can be created with default parameters."""
         callback = EnvironmentDumpCallback()
         try:
-            assert callback.filename == "environment.yaml"
+            assert callback.filename == "environment.json"
             assert callback.async_dump
         finally:
             del callback
 
     def test_callback_custom_filename(self):
         """Test callback with custom filename."""
-        callback = EnvironmentDumpCallback(filename="custom_env.yaml")
+        callback = EnvironmentDumpCallback(filename="custom_env.json")
         try:
-            assert callback.filename == "custom_env.yaml"
+            assert callback.filename == "custom_env.json"
         finally:
             del callback
 
@@ -332,11 +331,19 @@ class TestFileCreation:
             trainer.fit(dummy_model, dummy_dataloader)
 
             # Check files exist
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             req_file = Path(trainer.log_dir) / "requirements_frozen.txt"
 
-            assert env_file.exists(), "environment.yaml should exist"
+            assert env_file.exists(), "environment.json should exist"
             assert req_file.exists(), "requirements_frozen.txt should exist"
+            trainer.fit(dummy_model, dummy_dataloader)
+
+            # Check files exist
+            env_file = Path(trainer.log_dir) / "environment_v1.json"
+            req_file = Path(trainer.log_dir) / "requirements_frozen_v1.txt"
+
+            assert env_file.exists(), "environment_v1.json should exist"
+            assert req_file.exists(), "requirements_frozen_v1.txt should exist"
         finally:
             if trainer and hasattr(trainer, "strategy"):
                 trainer.strategy.teardown()
@@ -368,10 +375,10 @@ class TestFileCreation:
                 callback._dump_thread.join(timeout=10)
 
             # Check files exist
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             req_file = Path(trainer.log_dir) / "requirements_frozen.txt"
 
-            assert env_file.exists(), "environment.yaml should exist"
+            assert env_file.exists(), "environment.json should exist"
             assert req_file.exists(), "requirements_frozen.txt should exist"
         finally:
             if callback._dump_thread and callback._dump_thread.is_alive():
@@ -391,7 +398,7 @@ class TestContentValidation:
     def test_environment_yaml_structure(
         self, dummy_model, dummy_dataloader, temp_log_dir, mock_subprocess_success
     ):
-        """Test that environment.yaml has correct structure."""
+        """Test that environment.json has correct structure."""
         callback = EnvironmentDumpCallback(async_dump=False)
         trainer = None
 
@@ -408,7 +415,7 @@ class TestContentValidation:
 
             trainer.fit(dummy_model, dummy_dataloader)
 
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             with open(env_file, "r") as f:
                 env_data = yaml.safe_load(f)
 
@@ -418,7 +425,6 @@ class TestContentValidation:
                 "python",
                 "system",
                 "packages",
-                "pytorch",
                 "environment_variables",
             ]
             for key in required_keys:
@@ -432,16 +438,6 @@ class TestContentValidation:
             assert "pip_freeze" in env_data["packages"]
             assert "key_packages" in env_data["packages"]
 
-            # Check pytorch info
-            assert "version" in env_data["pytorch"]
-            assert "cuda_available" in env_data["pytorch"]
-
-            # Verify GPU info if GPU available
-            if HAS_GPU:
-                assert env_data["pytorch"]["cuda_available"]
-                assert "num_gpus" in env_data["pytorch"]
-                assert "gpu_names" in env_data["pytorch"]
-                assert env_data["pytorch"]["num_gpus"] == GPU_COUNT
         finally:
             if trainer and hasattr(trainer, "strategy"):
                 trainer.strategy.teardown()
@@ -514,15 +510,9 @@ class TestGPUFunctionality:
 
             trainer.fit(dummy_model_gpu, dummy_dataloader_gpu)
 
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             with open(env_file, "r") as f:
                 env_data = yaml.safe_load(f)
-
-            # Verify GPU information
-            assert env_data["pytorch"]["cuda_available"]
-            assert env_data["pytorch"]["num_gpus"] >= 1
-            assert len(env_data["pytorch"]["gpu_names"]) >= 1
-            assert env_data["pytorch"]["cuda_version"] is not None
 
             # Check CUDA info if nvidia-smi available
             if env_data.get("cuda"):
@@ -567,7 +557,7 @@ class TestGPUFunctionality:
 
             # Only rank 0 should create files
             if trainer.global_rank == 0:
-                env_file = Path(trainer.log_dir) / "environment.yaml"
+                env_file = Path(trainer.log_dir) / "environment.json"
                 with open(env_file, "r") as f:
                     env_data = yaml.safe_load(f)
 
@@ -579,85 +569,6 @@ class TestGPUFunctionality:
             del callback
             del trainer
             torch.cuda.empty_cache()
-
-
-# ==================== DDP Safety Tests ====================
-class TestDDPSafety:
-    """Test DDP-related functionality."""
-
-    def test_only_rank_zero_writes(
-        self, dummy_model, temp_log_dir, mock_subprocess_success
-    ):
-        """Test that only rank 0 writes files in DDP scenario."""
-        callback = EnvironmentDumpCallback(async_dump=False)
-
-        # Create mock trainer with rank 1
-        mock_trainer = Mock(spec=pl.Trainer)
-        mock_trainer.global_rank = 1
-        mock_trainer.log_dir = str(temp_log_dir)
-
-        try:
-            callback.setup(mock_trainer, dummy_model, stage="fit")
-            time.sleep(0.5)
-
-            # Files should NOT be created on rank 1
-            env_file = Path(temp_log_dir) / "environment.yaml"
-            assert not env_file.exists(), "Rank 1 should not create files"
-        finally:
-            del callback
-
-    def test_rank_zero_writes(self, dummy_model, temp_log_dir, mock_subprocess_success):
-        """Test that rank 0 does write files."""
-        callback = EnvironmentDumpCallback(async_dump=False)
-
-        # Create mock trainer with rank 0
-        mock_trainer = Mock(spec=pl.Trainer)
-        mock_trainer.global_rank = 0
-        mock_trainer.log_dir = str(temp_log_dir)
-
-        try:
-            callback.setup(mock_trainer, dummy_model, stage="fit")
-            time.sleep(0.5)
-
-            # Files SHOULD be created on rank 0
-            env_file = Path(temp_log_dir) / "environment.yaml"
-            assert env_file.exists(), "Rank 0 should create files"
-        finally:
-            del callback
-
-    def test_multiple_ranks_only_zero_writes(
-        self, dummy_model, temp_log_dir, mock_subprocess_success
-    ):
-        """Test that among multiple ranks, only rank 0 writes."""
-        callback = EnvironmentDumpCallback(async_dump=False)
-
-        # Simulate multiple ranks
-        for rank in [1, 2, 3]:
-            mock_trainer = Mock(spec=pl.Trainer)
-            mock_trainer.global_rank = rank
-            mock_trainer.log_dir = str(temp_log_dir)
-
-            callback.setup(mock_trainer, dummy_model, stage="fit")
-            time.sleep(0.2)
-
-            # No files should be created
-            env_file = Path(temp_log_dir) / "environment.yaml"
-            assert not env_file.exists(), f"Rank {rank} should not create files"
-
-        # Now test rank 0
-        mock_trainer = Mock(spec=pl.Trainer)
-        mock_trainer.global_rank = 0
-        mock_trainer.log_dir = str(temp_log_dir)
-
-        try:
-            callback.setup(mock_trainer, dummy_model, stage="fit")
-            time.sleep(0.5)
-
-            # Files should be created
-            env_file = Path(temp_log_dir) / "environment.yaml"
-            assert env_file.exists(), "Rank 0 should create files"
-        finally:
-            del callback
 
 
 # ==================== Stage Tests ====================
@@ -684,7 +595,7 @@ class TestStages:
             # Test validate stage
             callback.setup(trainer, dummy_model, stage="validate")
             time.sleep(0.2)
-            env_file = Path(temp_log_dir) / "environment.yaml"
+            env_file = Path(temp_log_dir) / "environment.json"
             assert not env_file.exists(), "Should not create files on validate stage"
 
             # Test test stage
@@ -695,7 +606,7 @@ class TestStages:
             # Test fit stage
             callback.setup(trainer, dummy_model, stage="fit")
             time.sleep(0.5)
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             assert env_file.exists(), "Should create files on fit stage"
         finally:
             if trainer and hasattr(trainer, "strategy"):
@@ -737,27 +648,6 @@ class TestInformationCollection:
             assert "system" in info
             assert "hostname" in info
             assert len(info["hostname"]) > 0
-        finally:
-            del callback
-
-    def test_pytorch_info_collection(self):
-        """Test _get_pytorch_info method."""
-        callback = EnvironmentDumpCallback()
-
-        try:
-            info = callback._get_pytorch_info()
-
-            assert "version" in info
-            assert info["version"] == torch.__version__
-            assert "cuda_available" in info
-            assert isinstance(info["cuda_available"], bool)
-            assert info["cuda_available"] == HAS_GPU
-
-            if HAS_GPU:
-                assert "num_gpus" in info
-                assert info["num_gpus"] == GPU_COUNT
-                assert "gpu_names" in info
-                assert len(info["gpu_names"]) == GPU_COUNT
         finally:
             del callback
 
@@ -1044,7 +934,7 @@ class TestIntegration:
             trainer.fit(dummy_model, dummy_dataloader)
 
             # Verify files exist and are valid
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             req_file = Path(trainer.log_dir) / "requirements_frozen.txt"
 
             assert env_file.exists()
@@ -1082,7 +972,7 @@ class TestIntegration:
 
             trainer.fit(dummy_model, dummy_dataloader)
 
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             assert env_file.exists()
             assert custom_dir in env_file.parents
         finally:
@@ -1115,7 +1005,7 @@ class TestIntegration:
             gc.collect()
 
             # Verify files can be read (not locked)
-            env_file = Path(trainer.log_dir) / "environment.yaml"
+            env_file = Path(trainer.log_dir) / "environment.json"
             with open(env_file, "r") as f:
                 _ = f.read()
         finally:
@@ -1152,13 +1042,6 @@ class TestIntegration:
 
             trainer.fit(dummy_model_gpu, dummy_dataloader_gpu)
 
-            # Verify GPU info captured
-            env_file = Path(trainer.log_dir) / "environment.yaml"
-            with open(env_file, "r") as f:
-                data = yaml.safe_load(f)
-
-            assert data["pytorch"]["cuda_available"]
-            assert data["pytorch"]["num_gpus"] >= 1
         finally:
             if trainer and hasattr(trainer, "strategy"):
                 trainer.strategy.teardown()

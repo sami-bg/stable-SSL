@@ -30,7 +30,7 @@ class EnvironmentDumpCallback(Callback):
     async_dump: If True, runs the dump in a background thread (non-blocking)
     """
 
-    def __init__(self, filename: str = "environment.yaml", async_dump: bool = True):
+    def __init__(self, filename: str = "environment.json", async_dump: bool = True):
         super().__init__()
         self.filename = filename
         self.async_dump = async_dump
