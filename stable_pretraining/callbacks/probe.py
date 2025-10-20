@@ -126,9 +126,7 @@ class OnlineProbe(TrainableCallback):
                 assert callback.target is None
                 assert callback.input is None
                 assert callback.loss_fn is None
-                return callback.module(
-                    detach_tensors(batch), detach_tensors(outputs), self
-                )
+                return callback.module(batch, outputs, self)
             else:
                 x = get_data_from_batch_or_outputs(
                     callback.input, batch, outputs, caller_name=callback.name

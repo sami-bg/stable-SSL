@@ -6,15 +6,17 @@ import platform
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
-import yaml
 from datetime import datetime
 import threading
 import time
 
-import torch
 import lightning as pl
 from lightning.pytorch.callbacks import Callback
 from loguru import logger
+
+import tempfile
+import shutil
+import json
 
 
 class EnvironmentDumpCallback(Callback):
@@ -39,22 +41,16 @@ class EnvironmentDumpCallback(Callback):
             f"EnvironmentDumpCallback initialized (filename={filename}, async={async_dump})"
         )
 
-    def setup(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
-    ) -> None:
-        """Called at the beginning of fit, validate, test, or predict."""
-        logger.debug(f"Setup called: stage={stage}, global_rank={trainer.global_rank}")
-
+    def setup(self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage) -> None:
+        """Called when training starts - runs dump in background."""
         # Only run on rank 0 to avoid DDP conflicts
+        if stage != "fit":
+            logger.info(f"Skipping environment dump on {stage} (only ``fit'' dumps)")
+            return
+
         if trainer.global_rank != 0:
             logger.info(
                 f"Skipping environment dump on rank {trainer.global_rank} (only rank 0 dumps)"
-            )
-            return
-
-        if stage != "fit":
-            logger.debug(
-                f"Skipping environment dump for stage '{stage}' (only runs on 'fit')"
             )
             return
 
@@ -64,13 +60,17 @@ class EnvironmentDumpCallback(Callback):
 
         self._start_time = time.time()
 
+        # 🔥 CRITICAL: Get log_dir in main thread BEFORE starting background thread
+        log_dir = Path(trainer.default_root_dir)
+
         if self.async_dump:
             logger.info(
                 "⚡ Running environment dump in background thread (non-blocking)"
             )
+            logger.info(f"📁 Log directory: {log_dir}")
             self._dump_thread = threading.Thread(
                 target=self._dump_environment,
-                args=(trainer,),
+                args=(log_dir,),  # Pass log_dir, not trainer!
                 daemon=False,
                 name="EnvironmentDump",
             )
@@ -78,7 +78,7 @@ class EnvironmentDumpCallback(Callback):
             logger.success("✓ Background thread started successfully")
         else:
             logger.info("🔄 Running environment dump synchronously (blocking)")
-            self._dump_environment(trainer)
+            self._dump_environment(log_dir)
 
     def teardown(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
@@ -95,6 +95,46 @@ class EnvironmentDumpCallback(Callback):
             else:
                 logger.success("✓ Environment dump thread completed successfully")
 
+    def _get_versioned_path(self, base_path: Path) -> Path:
+        """Get next available versioned path if file exists.
+
+        Args:
+            base_path: Original path (e.g., /logs/environment.json)
+
+        Returns:
+            Path with version number if needed (e.g., /logs/environment_v2.json)
+
+        Examples:
+            environment.json → environment.json (if doesn't exist)
+            environment.json → environment_v1.json (if exists)
+            environment.json → environment_v2.json (if v1 exists)
+        """
+        if not base_path.exists():
+            return base_path
+
+        # File exists, find next version
+        stem = base_path.stem  # "environment"
+        suffix = base_path.suffix  # ".json"
+        parent = base_path.parent
+
+        version = 1
+        while True:
+            versioned_path = parent / f"{stem}_v{version}{suffix}"
+            if not versioned_path.exists():
+                logger.info(
+                    f"📋 File exists, using version {version}: {versioned_path.name}"
+                )
+                return versioned_path
+            version += 1
+
+            # Safety check (avoid infinite loop)
+            if version > 1000:
+                logger.warning(
+                    f"⚠️  Too many versions ({version}), using timestamp instead"
+                )
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                return parent / f"{stem}_{timestamp}{suffix}"
+
     def _make_serializable(self, obj: Any) -> Any:
         """Convert objects to JSON/YAML serializable types."""
         if isinstance(obj, dict):
@@ -106,7 +146,7 @@ class EnvironmentDumpCallback(Callback):
         else:
             return str(obj)
 
-    def _dump_environment(self, trainer: pl.Trainer) -> None:
+    def _dump_environment(self, log_dir: Path) -> None:
         """Collect and dump all environment information."""
         try:
             logger.info("📊 Collecting environment information...")
@@ -132,19 +172,6 @@ class EnvironmentDumpCallback(Callback):
             logger.success(
                 f"  ✓ Packages: {packages_info['total_packages']} packages collected in {packages_time:.2f}s"
             )
-
-            logger.debug("  → Collecting PyTorch info...")
-            pytorch_info = self._get_pytorch_info()
-            logger.success(f"  ✓ PyTorch: {pytorch_info['version']}")
-            if pytorch_info["cuda_available"]:
-                logger.info(
-                    f"     CUDA: {pytorch_info['cuda_version']} (cuDNN: {pytorch_info.get('cudnn_version', 'N/A')})"
-                )
-                logger.info(f"     GPUs: {pytorch_info['num_gpus']} device(s)")
-                for i, gpu_name in enumerate(pytorch_info.get("gpu_names", [])):
-                    logger.info(f"       [{i}] {gpu_name}")
-            else:
-                logger.info("     CUDA: Not available (CPU only)")
 
             logger.debug("  → Collecting CUDA driver info...")
             cuda_info = self._get_cuda_info()
@@ -196,7 +223,6 @@ class EnvironmentDumpCallback(Callback):
                 "python": python_info,
                 "system": system_info,
                 "packages": packages_info,
-                "pytorch": pytorch_info,
                 "cuda": cuda_info,
                 "git": git_info,
                 "slurm": slurm_info,
@@ -207,9 +233,9 @@ class EnvironmentDumpCallback(Callback):
             env_info = self._make_serializable(env_info)
 
             # Determine save location
-            save_dir = Path(trainer.log_dir) if trainer.log_dir else Path.cwd()
-            save_path = save_dir / self.filename
-            req_path = save_dir / "requirements_frozen.txt"
+            save_dir = Path(log_dir)
+            save_path = self._get_versioned_path(save_dir / self.filename)
+            req_path = self._get_versioned_path(save_dir / "requirements_frozen.txt")
 
             logger.info(f"📁 Save directory: {save_dir}")
 
@@ -218,32 +244,35 @@ class EnvironmentDumpCallback(Callback):
                 logger.debug(f"Creating directory: {save_dir}")
                 save_dir.mkdir(parents=True, exist_ok=True)
 
-            # Save YAML file
-            logger.info(f"💾 Writing environment configuration to: {save_path.name}")
-            with open(save_path, "w") as f:
-                yaml.dump(env_info, f, default_flow_style=False, sort_keys=False)
-            file_size = save_path.stat().st_size / 1024  # KB
-            logger.success(f"✓ Environment file saved ({file_size:.1f} KB)")
+            # Use JSON (faster than YAML)
+            json_path = save_path.with_suffix(".json")
 
-            # Save requirements file
-            logger.info(f"💾 Writing frozen requirements to: {req_path.name}")
-            with open(req_path, "w") as f:
-                f.write(packages_info["pip_freeze"])
-            req_size = req_path.stat().st_size / 1024  # KB
-            logger.success(f"✓ Requirements file saved ({req_size:.1f} KB)")
+            # Write to temp first
+            with tempfile.NamedTemporaryFile(
+                mode="w", delete=False, suffix=".json"
+            ) as tmp_f:
+                logger.info("💾 Writing environment to temp file...")
+                json.dump(env_info, tmp_f, indent=2)
+                tmp_path = tmp_f.name
 
-            # Final summary
-            if self._start_time:
-                total_time = time.time() - self._start_time
-                logger.info("=" * 70)
-                logger.success(
-                    f"🎉 Environment dump completed successfully in {total_time:.2f}s"
-                )
-                logger.info("=" * 70)
-                logger.info("📄 Files created:")
-                logger.info(f"   • {save_path}")
-                logger.info(f"   • {req_path}")
-                logger.info("=" * 70)
+            # Atomic move
+            logger.info(f"💾 Moving to: {json_path.name}")
+            shutil.move(tmp_path, json_path)
+            logger.success(
+                f"✓ Environment file saved ({json_path.stat().st_size / 1024:.1f} KB)"
+            )
+
+            # Same for requirements
+            with tempfile.NamedTemporaryFile(
+                mode="w", delete=False, suffix=".txt"
+            ) as tmp_f:
+                tmp_f.write(packages_info["pip_freeze"])
+                tmp_req_path = tmp_f.name
+
+            shutil.move(tmp_req_path, req_path)
+            logger.success(
+                f"✓ Requirements file saved ({req_path.stat().st_size / 1024:.1f} KB)"
+            )
 
         except Exception as e:
             logger.error(f"❌ Error during environment dump: {e}")
@@ -304,38 +333,6 @@ class EnvironmentDumpCallback(Callback):
             "key_packages": key_packages,
             "total_packages": len(key_packages),
         }
-
-    def _get_pytorch_info(self) -> Dict[str, Any]:
-        """Get PyTorch-specific information."""
-        import pytorch_lightning
-
-        info = {
-            "version": str(torch.__version__),
-            "debug": str(torch.version.debug),
-            "cuda_available": torch.cuda.is_available(),
-            "pytorch_lightning_version": str(pytorch_lightning.__version__),
-        }
-
-        if torch.cuda.is_available():
-            info.update(
-                {
-                    "cuda_version": (
-                        str(torch.version.cuda) if torch.version.cuda else None
-                    ),
-                    "cudnn_version": (
-                        int(torch.backends.cudnn.version())
-                        if torch.backends.cudnn.is_available()
-                        else None
-                    ),
-                    "num_gpus": torch.cuda.device_count(),
-                    "gpu_names": [
-                        torch.cuda.get_device_name(i)
-                        for i in range(torch.cuda.device_count())
-                    ],
-                }
-            )
-
-        return info
 
     def _get_cuda_info(self) -> Optional[Dict[str, Any]]:
         """Get CUDA information from nvidia-smi if available."""

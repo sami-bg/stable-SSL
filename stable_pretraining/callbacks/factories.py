@@ -15,7 +15,7 @@ def default():
     callbacks = [
         # RichProgressBar(),
         LoggingCallback(),
-        EnvironmentDumpCallback(),
+        EnvironmentDumpCallback(async_dump=True),
         TrainerInfo(),
         SklearnCheckpoint(),
         WandbCheckpoint(),
