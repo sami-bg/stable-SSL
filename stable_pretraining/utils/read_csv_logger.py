@@ -38,13 +38,13 @@ class CSVLogAutoSummarizer:
         monitor_keys: Optional[List[str]] = None,
         include_globs: Optional[List[str]] = None,
         exclude_globs: Optional[List[str]] = None,
-        forward_fill_last: bool = False,
+        max_workers: Optional[int] = 10,
     ):
         self.base_dir = Path(base_dir)
         self.monitor_keys = monitor_keys
         self.include_globs = include_globs or []
         self.exclude_globs = exclude_globs or []
-        self.forward_fill_last = forward_fill_last
+        self.max_workers = max_workers
 
     def collect(self) -> pd.DataFrame:
         """Discover, summarize, and aggregate all runs into a DataFrame.
@@ -63,7 +63,7 @@ class CSVLogAutoSummarizer:
             root = self._find_run_root(f)
             run_root_to_files.setdefault(root, []).append(f)
         items = list(run_root_to_files.items())
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             summaries = list(
                 tqdm(
                     executor.map(self._merge_metrics_files, items),
@@ -113,7 +113,7 @@ class CSVLogAutoSummarizer:
 
         Keep the last occurrence for any duplicated step/epoch pair.
         """
-        files, root = args
+        root, files = args
         dfs = [self._read_data(f) for f in files]
         dfs = [df for df in dfs if df is not None and not df.empty]
         if not dfs:
@@ -135,7 +135,7 @@ class CSVLogAutoSummarizer:
         df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
         df.columns = df.columns.str.strip()
         # Try to convert numeric columns where possible
-        df = df.apply(pd.to_numeric, errors="ignore")
+        df = df.apply(pd.to_numeric)
         df.ffill(inplace=True)
         # Diagnostics if all values are NaN (excluding axis/time cols)
         metric_cols = [c for c in df.columns if c not in ("step", "epoch", "time")]

@@ -74,6 +74,8 @@ class OnlineProbe(TrainableCallback):
             Union[str, dict, partial, torch.optim.lr_scheduler.LRScheduler]
         ] = None,
         accumulate_grad_batches: int = 1,
+        gradient_clip_val: float = None,
+        gradient_clip_algorithm: str = "norm",
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
     ) -> None:
         # Initialize base class
@@ -93,6 +95,8 @@ class OnlineProbe(TrainableCallback):
             optimizer=optimizer,
             scheduler=scheduler,
             accumulate_grad_batches=accumulate_grad_batches,
+            gradient_clip_val=gradient_clip_val,
+            gradient_clip_algorithm=gradient_clip_algorithm,
         )
         logging.info(f"Initialized {self.name}")
         logging.info(f"  - Input: {input}")
