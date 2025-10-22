@@ -147,7 +147,11 @@ class CSVLogAutoSummarizer:
         df = pd.concat(dfs, ignore_index=True)
         df["root"] = root
         if self.agg is not None:
-            return self.agg(df)
+            df = self.agg(df)
+            if isinstance(df, pd.Series):
+                df = df.to_frame().T
+            elif not isinstance(df, pd.DataFrame):
+                raise RuntimeError("Can only be series or dataframe")
         return df
 
     # ----------------------------
