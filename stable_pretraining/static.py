@@ -248,7 +248,7 @@ class TIMM_PARAMETERS(metaclass=MetaStatic):
         """
         cls._ensure_loaded()
         # Return copies of values to prevent mutation
-        return ((key, list(value)) for key, value in cls._data.items())
+        return ((key, value) for key, value in cls._data.items())
 
 
 TORCHVISION_EMBEDDINGS = {
