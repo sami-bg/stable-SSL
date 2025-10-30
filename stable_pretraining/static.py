@@ -139,7 +139,7 @@ class TIMM_PARAMETERS:
                     logging.info("TIMM cache not loaded yet... loading!")
                     path = Path(os.path.abspath(__file__))
                     logging.info(
-                        f"Loading TIMM embeddings from: {path.parent.parent / 'assets/static_timm_parameters.json'}"
+                        f"Loading TIMM parameters from: {path.parent.parent / 'assets/static_timm_parameters.json'}"
                     )
                     asset_path = (
                         path.parent.parent / "assets/static_timm_parameters.json"
@@ -165,7 +165,7 @@ class TIMM_PARAMETERS:
         cls._ensure_loaded()
         # Defensive: always return a copy to prevent mutation of the cached data
         value = cls._data[key]
-        return list(value)
+        return value
 
     @classmethod
     def keys(cls):
@@ -197,7 +197,7 @@ class TIMM_PARAMETERS:
         """
         cls._ensure_loaded()
         # Return copies to prevent mutation
-        return (list(value) for value in cls._data.values())
+        return cls._data.values()
 
     @classmethod
     def items(cls):
