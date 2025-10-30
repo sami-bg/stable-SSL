@@ -9,7 +9,26 @@ import timm
 import torch
 
 
-class TIMM_EMBEDDINGS:
+class MetaStatic(type):
+    """Metaclass that enables dict-like behavior on the TIMM_PARAMETERS class."""
+
+    def __contains__(cls, key):
+        """Enable 'in' operator on the class itself."""
+        cls._ensure_loaded()
+        return key in cls._data
+
+    def __len__(cls):
+        """Enable len() on the class itself."""
+        cls._ensure_loaded()
+        return len(cls._data)
+
+    def __iter__(cls):
+        """Enable iteration over keys."""
+        cls._ensure_loaded()
+        return iter(cls._data)
+
+
+class TIMM_EMBEDDINGS(metaclass=MetaStatic):
     """Thread-safe, lazy-loaded registry for TIMM (PyTorch Image Models) embedding names, accessed via class-level indexing.
 
     This class provides a mapping from string keys to lists of embedding names, loaded on first access from a
@@ -44,6 +63,31 @@ class TIMM_EMBEDDINGS:
     data: dict[str, list[str]] = None
 
     @classmethod
+    def _ensure_loaded(cls):
+        """Ensure the TIMM parameters are loaded from the JSON file.
+
+        This method uses double-checked locking to ensure thread-safe,
+        one-time initialization of the cached data.
+
+        Raises:
+            RuntimeError: If the assets folder or JSON file is missing.
+        """
+        if cls._data is None:
+            with cls._lock:
+                # Double-check after acquiring lock
+                if cls._data is None:
+                    logging.info("TIMM cache not loaded yet... loading!")
+                    path = Path(os.path.abspath(__file__))
+                    logging.info(
+                        f"Loading TIMM embeddings from: {path.parent.parent / 'assets/static_timm.json'}"
+                    )
+                    asset_path = path.parent.parent / "assets/static_timm.json"
+                    if not asset_path.is_file():
+                        raise RuntimeError("Did you manually delete the assets folder?")
+                    with open(asset_path, "r") as f:
+                        cls._data = json.load(f)
+
+    @classmethod
     def __class_getitem__(cls, key):
         """Retrieve a copy of the list of embedding names for a given model key, loading the registry from disk if necessary.
 
@@ -72,24 +116,13 @@ class TIMM_EMBEDDINGS:
             >>> names = TIMM_EMBEDDINGS["efficientnet_b0"]
             >>> print(names)
         """
-        if cls._data is None:
-            with cls._lock:
-                logging.info("TIMM cache not loaded yet... loading!")
-                path = Path(os.path.abspath(__file__))
-                logging.info(
-                    f"Loading TIMM embeddings from: {path.parent.parent / 'assets/static_timm.json'}"
-                )
-                asset_path = path.parent.parent / "assets/static_timm.json"
-                if not asset_path.is_file():
-                    raise RuntimeError("Did you manually delete the assets folder?")
-                with open(asset_path, "r") as f:
-                    cls._data = json.load(f)
+        cls._ensure_loaded()
         # Defensive: always return a copy to prevent mutation of the cached data
         value = cls._data[key]
         return list(value)
 
 
-class TIMM_PARAMETERS:
+class TIMM_PARAMETERS(metaclass=MetaStatic):
     """Thread-safe singleton class for accessing TIMM (Timm Image Models) parameters.
 
     This class provides lazy-loaded, cached access to TIMM model parameters stored
