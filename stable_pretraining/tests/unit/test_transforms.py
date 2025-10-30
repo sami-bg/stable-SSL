@@ -7,6 +7,262 @@ import torch
 import stable_pretraining.data.transforms as transforms
 
 
+from PIL import Image
+
+
+@pytest.mark.unit
+class TestPatchMasking:
+    """Test suite for transforms.PatchMasking transform."""
+
+    @pytest.fixture
+    def pil_sample(self):
+        """Create a sample dict with PIL image (like HuggingFace dataset item)."""
+        img = Image.new("RGB", (224, 224), color=(255, 128, 64))
+        return {"image": img}
+
+    @pytest.fixture
+    def tensor_sample(self):
+        """Create a sample dict with tensor image."""
+        img = torch.rand(3, 224, 224)
+        return {"image": img}
+
+    @pytest.fixture
+    def uint8_tensor_sample(self):
+        """Create a sample dict with uint8 tensor image."""
+        img = torch.randint(0, 256, (3, 224, 224), dtype=torch.uint8)
+        return {"image": img}
+
+    def test_exact_drop_ratio_pil(self, pil_sample):
+        """Test that exact drop ratio is respected with PIL images."""
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(pil_sample)
+
+        # Check output keys
+        assert "masked_image" in result
+        assert "patch_mask" in result
+
+        # Check patch mask shape (224/16 = 14 patches per side)
+        assert result["patch_mask"].shape == (14, 14)
+
+        # Check exact drop ratio
+        total_patches = 14 * 14
+        kept_patches = result["patch_mask"].sum().item()
+        masked_patches = total_patches - kept_patches
+        expected_masked = int(total_patches * 0.5)
+
+        assert masked_patches == expected_masked, (
+            f"Expected exactly {expected_masked} masked patches, got {masked_patches}"
+        )
+
+        # Check output type matches input
+        assert isinstance(result["masked_image"], Image.Image)
+
+    def test_exact_drop_ratio_tensor(self, tensor_sample):
+        """Test that exact drop ratio is respected with tensor images."""
+        transform = transforms.PatchMasking(
+            patch_size=32,
+            drop_ratio=0.75,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(tensor_sample)
+
+        # Check patch mask shape (224/32 = 7 patches per side)
+        assert result["patch_mask"].shape == (7, 7)
+
+        # Check exact drop ratio
+        total_patches = 7 * 7
+        kept_patches = result["patch_mask"].sum().item()
+        masked_patches = total_patches - kept_patches
+        expected_masked = int(total_patches * 0.75)
+
+        assert masked_patches == expected_masked
+
+        # Check output type
+        assert isinstance(result["masked_image"], torch.Tensor)
+        assert result["masked_image"].shape == tensor_sample["image"].shape
+
+    def test_mask_value_applied_correctly(self, tensor_sample):
+        """Test that custom mask value is applied to masked patches."""
+        mask_value = 0.5
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=1.0,  # Mask all patches
+            source="image",
+            target="masked_image",
+            mask_value=mask_value,
+        )
+
+        result = transform(tensor_sample)
+
+        # With drop_ratio=1.0, all patches should be masked
+        assert result["patch_mask"].sum().item() == 0
+
+        # All pixels should be mask_value
+        assert torch.allclose(
+            result["masked_image"], torch.tensor(mask_value), atol=1e-6
+        )
+
+    def test_no_masking_when_drop_ratio_zero(self, tensor_sample):
+        """Test that no masking occurs when drop_ratio is 0."""
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.0,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(tensor_sample)
+
+        # All patches should be kept
+        total_patches = (224 // 16) ** 2
+        assert result["patch_mask"].sum().item() == total_patches
+
+        # Image should be unchanged
+        assert torch.allclose(result["masked_image"], tensor_sample["image"], atol=1e-6)
+
+    def test_default_mask_value_pil(self, pil_sample):
+        """Test that PIL images use default mask value of 128/255."""
+        transform = transforms.PatchMasking(
+            patch_size=224,  # One big patch
+            drop_ratio=1.0,  # Mask it
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(pil_sample)
+
+        # Convert to array to check values
+        img_array = np.array(result["masked_image"])
+        expected_value = 128
+
+        # All pixels should be mid-gray
+        assert np.allclose(img_array, expected_value, atol=1)
+
+    def test_default_mask_value_tensor(self, tensor_sample):
+        """Test that float tensors use default mask value of 0.0."""
+        transform = transforms.PatchMasking(
+            patch_size=224,  # One big patch
+            drop_ratio=1.0,  # Mask it
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(tensor_sample)
+
+        # All pixels should be 0.0
+        assert torch.allclose(result["masked_image"], torch.tensor(0.0), atol=1e-6)
+
+    def test_uint8_tensor_handling(self, uint8_tensor_sample):
+        """Test that uint8 tensors are handled correctly."""
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(uint8_tensor_sample)
+
+        # Should return float tensor (normalized)
+        assert result["masked_image"].dtype == torch.float32
+        assert result["masked_image"].min() >= 0.0
+        assert result["masked_image"].max() <= 1.0
+
+    def test_different_patch_sizes(self, tensor_sample):
+        """Test with various patch sizes."""
+        for patch_size in [8, 16, 32, 56]:
+            transform = transforms.PatchMasking(
+                patch_size=patch_size,
+                drop_ratio=0.3,
+                source="image",
+                target="masked_image",
+            )
+
+            result = transform(tensor_sample)
+
+            expected_patches_per_side = 224 // patch_size
+            assert result["patch_mask"].shape == (
+                expected_patches_per_side,
+                expected_patches_per_side,
+            )
+
+    def test_non_divisible_image_size(self):
+        """Test with image size not perfectly divisible by patch_size."""
+        img = torch.rand(3, 225, 225)  # Not divisible by 16
+        sample = {"image": img}
+
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(sample)
+
+        # Should handle gracefully (14x14 patches, ignoring remainder)
+        assert result["patch_mask"].shape == (14, 14)
+        assert result["masked_image"].shape == img.shape
+
+    def test_custom_source_target_keys(self):
+        """Test with custom dictionary keys."""
+        img = Image.new("RGB", (224, 224))
+        sample = {"my_image": img}
+
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="my_image",
+            target="my_output",
+        )
+
+        result = transform(sample)
+
+        assert "my_output" in result
+        assert "patch_mask" in result
+        assert "my_image" in result  # Original should still be there
+
+    def test_randomness(self, tensor_sample):
+        """Test that different calls produce different masks."""
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="image",
+            target="masked_image",
+        )
+
+        result1 = transform(tensor_sample.copy())
+        result2 = transform(tensor_sample.copy())
+
+        # Masks should be different (with very high probability)
+        assert not torch.equal(result1["patch_mask"], result2["patch_mask"])
+
+    def test_grayscale_image(self):
+        """Test with grayscale PIL image."""
+        img = Image.new("L", (224, 224), color=128)
+        sample = {"image": img}
+
+        transform = transforms.PatchMasking(
+            patch_size=16,
+            drop_ratio=0.5,
+            source="image",
+            target="masked_image",
+        )
+
+        result = transform(sample)
+
+        assert isinstance(result["masked_image"], Image.Image)
+        assert result["patch_mask"].shape == (14, 14)
+
+
 @pytest.mark.unit
 class TestTransformUtils:
     """Test transform utilities and basic functionality."""

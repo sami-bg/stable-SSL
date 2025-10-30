@@ -19,6 +19,7 @@ from .utils import (
     from_torchvision,
     set_embedding_dim,
     vit_hf,
+    EfficientMaskedTimmViT,
 )
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     MultiHeadAttentiveProbe,
     LinearProbe,
     AutoLinearClassifier,
+    EfficientMaskedTimmViT,
 ]
 
 if _MAE_AVAILABLE:

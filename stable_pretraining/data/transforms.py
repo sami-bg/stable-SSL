@@ -537,33 +537,12 @@ class PatchMasking(Transform):
 
     Args:
         patch_size (int): The size (in pixels) of each square patch to be masked.
-        drop_ratio (float): The fraction of patches to randomly mask (set to the mask value).
+        drop_ratio (float): The exact fraction of patches to randomly mask (set to the mask value).
         source (str): The key in the input dictionary from which to read the image.
         target (str): The key in the output dictionary to which the masked image will be written.
         mask_key (str): The key in the output dictionary to which the boolean patch mask will be written.
         mask_value (float, optional): The value to use for masked patches. If None, defaults to 0.0 for float tensors,
             and 128/255.0 for PIL images (mid-gray). Can be set to any float in [0,1] for normalized images.
-    Input:
-        A dictionary containing at least the key specified by `source`, whose value is a PIL Image or a torch.Tensor
-        of shape (C, H, W) or (H, W).
-    Output:
-        The input dictionary, with two new keys:
-            - `target`: The masked image (same type and shape as input).
-            - `mask_key`: A boolean torch.Tensor of shape (num_patches_h, num_patches_w), where each entry is True if
-              the patch is kept, False if it is masked.
-
-    Example:
-        >>> transform = PatchMasking(
-        ...     patch_size=16,
-        ...     drop_ratio=0.5,
-        ...     source="image",
-        ...     target="masked_image",
-        ...     mask_key="patch_mask",
-        ... )
-        >>> sample = {"image": PIL_image_or_tensor}
-        >>> out = transform(sample)
-        >>> masked_img = out["masked_image"]
-        >>> patch_mask = out["patch_mask"]
     """
 
     _NAMES = ["patch_mask"]
@@ -593,30 +572,39 @@ class PatchMasking(Transform):
         n_patches_w = W // self.patch_size
         total_patches = n_patches_h * n_patches_w
 
-        # Generate mask
-        mask = torch.rand(total_patches) > self.drop_ratio
-        mask = mask.reshape(n_patches_h, n_patches_w)
+        # Generate mask with EXACT drop ratio (not probabilistic)
+        n_masked = int(total_patches * self.drop_ratio)
+        perm = torch.randperm(total_patches)
+        mask_flat = torch.ones(total_patches, dtype=torch.bool)
+        mask_flat[perm[:n_masked]] = False  # False = masked
+        mask = mask_flat.reshape(n_patches_h, n_patches_w)
 
-        # Apply mask
-        masked_img = img_tensor.clone()
+        # Determine mask value
         if self.mask_value is not None:
             mask_value = self.mask_value
         elif isinstance(img, Image.Image):
-            mask_value = 128 / 255.0  # PIL images are converted to float [0,1]
+            mask_value = 128 / 255.0
         elif img_tensor.dtype == torch.uint8:
             mask_value = 128
         else:
             mask_value = 0.0
-        for i in range(n_patches_h):
-            for j in range(n_patches_w):
-                if not mask[i, j]:
-                    h_start = i * self.patch_size
-                    w_start = j * self.patch_size
-                    masked_img[
-                        :,
-                        h_start : h_start + self.patch_size,
-                        w_start : w_start + self.patch_size,
-                    ] = mask_value
+
+        # Vectorized masking: upsample patch mask to full resolution
+        # Create full-size mask initialized to True (keep remainder pixels)
+        full_mask = torch.ones(H, W, dtype=torch.bool, device=img_tensor.device)
+
+        # Upsample patch mask and copy to full mask
+        upsampled_mask = mask.repeat_interleave(
+            self.patch_size, dim=0
+        ).repeat_interleave(self.patch_size, dim=1)
+        full_mask[: upsampled_mask.shape[0], : upsampled_mask.shape[1]] = upsampled_mask
+
+        # Apply mask using torch.where (fully vectorized, no loops!)
+        masked_img = torch.where(
+            full_mask.unsqueeze(0),  # Broadcast across channels
+            img_tensor,
+            torch.tensor(mask_value, dtype=img_tensor.dtype, device=img_tensor.device),
+        )
 
         # Convert back to PIL if needed
         if isinstance(img, Image.Image):
@@ -641,13 +629,6 @@ class PatchMasking(Transform):
             return F.pil_to_tensor(img).float() / 255.0
         else:
             raise TypeError("Unsupported image type")
-
-
-# Example usage:
-# transform = PatchMasking(patch_size=16, drop_ratio=0.5, source="image", target="masked_image", mask_key="patch_mask")
-# sample = {"image": PIL_image_or_tensor}
-# out = transform(sample)
-# out["masked_image"], out["patch_mask"]
 
 
 class CenterCrop(Transform, v2.CenterCrop):
