@@ -1130,14 +1130,7 @@ class EfficientMaskedTimmViT(nn.Module):
             # Apply patch embedding
             x = self.vit.patch_embed(x)
 
-            # Handle different output formats from different timm models
-            if x.ndim == 4:  # (B, D, H, W) format
-                # Reshape to sequence format
-                B, D, H, W = x.shape
-                x = x.flatten(1, 2)
-            elif x.ndim == 3:  # (B, N, D) format - already good
-                pass
-            else:
+            if x.ndim != 3:
                 raise RuntimeError(
                     f"patch_embed output has unexpected shape {x.shape}. "
                     f"Expected 3D (B, N, D) or 4D (B, D, H, W)"
