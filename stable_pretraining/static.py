@@ -32,7 +32,7 @@ class MetaStatic(type):
         cls._ensure_loaded()
         # Return a copy to prevent mutation of cached data
         value = cls._data[key]
-        return list(value)
+        return value
 
     def __setitem__(cls, key, value):
         """Enable bracket notation for setting items on the class itself."""
