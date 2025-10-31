@@ -13,7 +13,7 @@ import numpy as np
 import gc
 
 from stable_pretraining.data.transforms import PatchMasking
-from stable_pretraining.backbone import EfficientMaskedTimmViT
+from stable_pretraining.backbone import EfficientMaskedTimmViT, TeacherStudentWrapper
 
 
 class BaselineViT(nn.Module):
@@ -55,11 +55,26 @@ def main(args):
 
     # Create models
     print("Creating models...")
-    baseline = BaselineViT(args.model_name, args.pretrained).to(device).train()
+    baseline = BaselineViT(args.model_name, args.pretrained).train()
     vit = timm.create_model(
         args.model_name, pretrained=args.pretrained, num_classes=1000
     )
-    wrapped = EfficientMaskedTimmViT(vit).to(device).train()
+    wrapped = EfficientMaskedTimmViT(vit).train()
+    if args.teacher_student:
+        wrapped = TeacherStudentWrapper(
+            wrapped,
+            warm_init=True,
+            base_ema_coefficient=0.994,
+            final_ema_coefficient=0.998,
+        )
+        baseline = TeacherStudentWrapper(
+            baseline,
+            warm_init=True,
+            base_ema_coefficient=0.994,
+            final_ema_coefficient=0.998,
+        )
+    wrapped = wrapped.to(device)
+    baseline = baseline.to(device)
 
     # Benchmark function
     def benchmark(model, name):
@@ -156,6 +171,9 @@ if __name__ == "__main__":
     parser.add_argument("--num-iterations", type=int, default=100, help="Iterations")
     parser.add_argument("--image-size", type=int, default=224, help="Image size")
     parser.add_argument("--patch-size", type=int, default=16, help="Patch size")
+    parser.add_argument(
+        "--teacher-student", action="store_true", help="Use teacher student wrapper"
+    )
     parser.add_argument("--drop-ratio", type=float, default=0.75, help="Masking ratio")
     parser.add_argument("--model-name", type=str, default="vit_base_patch16_224")
     parser.add_argument("--pretrained", action="store_true")
