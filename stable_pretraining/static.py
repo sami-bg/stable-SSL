@@ -27,6 +27,70 @@ class MetaStatic(type):
         cls._ensure_loaded()
         return iter(cls._data)
 
+    def __getitem__(cls, key):
+        """Enable bracket notation for getting items on the class itself."""
+        cls._ensure_loaded()
+        # Return a copy to prevent mutation of cached data
+        value = cls._data[key]
+        return list(value)
+
+    def __setitem__(cls, key, value):
+        """Enable bracket notation for setting items on the class itself."""
+        cls._ensure_loaded()
+        cls._data[key] = value
+
+    def __delitem__(cls, key):
+        """Enable bracket notation for deleting items on the class itself."""
+        cls._ensure_loaded()
+        del cls._data[key]
+
+    def keys(cls):
+        """Return a view of the keys."""
+        cls._ensure_loaded()
+        return cls._data.keys()
+
+    def values(cls):
+        """Return a view of the values (as copies to prevent mutation)."""
+        cls._ensure_loaded()
+        # Return copies of lists to prevent mutation
+        return (list(v) for v in cls._data.values())
+
+    def items(cls):
+        """Return a view of the items (with copied values)."""
+        cls._ensure_loaded()
+        # Return copies of lists to prevent mutation
+        return ((k, v) for k, v in cls._data.items())
+
+    def get(cls, key, default=None):
+        """Get value with optional default."""
+        cls._ensure_loaded()
+        if key in cls._data:
+            return list(cls._data[key])
+        return default
+
+    def clear(cls):
+        """Clear all data."""
+        cls._ensure_loaded()
+        cls._data.clear()
+
+    def update(cls, other):
+        """Update from another dict or iterable of key-value pairs."""
+        cls._ensure_loaded()
+        if isinstance(other, dict):
+            for key, value in other.items():
+                if not isinstance(value, list):
+                    raise TypeError(
+                        f"All values must be lists, got {type(value).__name__} for key '{key}'"
+                    )
+            cls._data.update(other)
+        else:
+            for key, value in other:
+                if not isinstance(value, list):
+                    raise TypeError(
+                        f"All values must be lists, got {type(value).__name__} for key '{key}'"
+                    )
+                cls._data[key] = value
+
 
 class TIMM_EMBEDDINGS(metaclass=MetaStatic):
     """Thread-safe, lazy-loaded registry for TIMM (PyTorch Image Models) embedding names, accessed via class-level indexing.
@@ -181,74 +245,6 @@ class TIMM_PARAMETERS(metaclass=MetaStatic):
                         raise RuntimeError("Did you manually delete the assets folder?")
                     with open(asset_path, "r") as f:
                         cls._data = json.load(f)
-
-    @classmethod
-    def __class_getitem__(cls, key):
-        """Access TIMM parameters by key.
-
-        Args:
-            key: The parameter key to retrieve.
-
-        Returns:
-            A copy of the list of parameters associated with the key.
-
-        Raises:
-            KeyError: If the key is not found in the parameters.
-        """
-        cls._ensure_loaded()
-        # Defensive: always return a copy to prevent mutation of the cached data
-        value = cls._data[key]
-        return value
-
-    @classmethod
-    def keys(cls):
-        """Return all parameter keys.
-
-        Returns:
-            A dict_keys view of all available parameter keys.
-
-        Example:
-            >>> list(TIMM_PARAMETERS.keys())
-            ['resnet50', 'efficientnet_b0', ...]
-        """
-        cls._ensure_loaded()
-        return cls._data.keys()
-
-    @classmethod
-    def values(cls):
-        """Return all parameter values.
-
-        Returns:
-            A generator yielding copies of all parameter value lists.
-
-        Note:
-            Returns copies to prevent mutation of cached data.
-
-        Example:
-            >>> for params in TIMM_PARAMETERS.values():
-            ...     print(params)
-        """
-        cls._ensure_loaded()
-        # Return copies to prevent mutation
-        return cls._data.values()
-
-    @classmethod
-    def items(cls):
-        """Return all parameter key-value pairs.
-
-        Returns:
-            A generator yielding tuples of (key, value_copy) pairs.
-
-        Note:
-            Values are copies to prevent mutation of cached data.
-
-        Example:
-            >>> for key, params in TIMM_PARAMETERS.items():
-            ...     print(f"{key}: {params}")
-        """
-        cls._ensure_loaded()
-        # Return copies of values to prevent mutation
-        return ((key, value) for key, value in cls._data.items())
 
 
 TORCHVISION_EMBEDDINGS = {

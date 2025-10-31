@@ -541,7 +541,7 @@ class PatchMasking(Transform):
         source (str): The key in the input dictionary from which to read the image.
         target (str): The key in the output dictionary to which the masked image will be written.
         mask_key (str): The key in the output dictionary to which the boolean patch mask will be written.
-        mask_value (float, optional): The value to use for masked patches. If None, defaults to 0.0 for float tensors,
+        fill_value (float, optional): The value to use for masked patches. If None, defaults to 0.0 for float tensors,
             and 128/255.0 for PIL images (mid-gray). Can be set to any float in [0,1] for normalized images.
     """
 
@@ -553,19 +553,19 @@ class PatchMasking(Transform):
         drop_ratio: float = 0.5,
         source: str = "image",
         target: str = "image",
-        mask_value: float = None,
+        fill_value: float = None,
     ):
         super().__init__()
         self.patch_size = patch_size
         self.drop_ratio = drop_ratio
         self.source = source
         self.target = target
-        self.mask_value = mask_value
+        self.fill_value = fill_value
 
     def __call__(self, x):
         img = self.nested_get(x, self.source)
         img_tensor = self._to_tensor(img)
-        C, H, W = img_tensor.shape
+        _, H, W = img_tensor.shape
 
         # Compute number of patches
         n_patches_h = H // self.patch_size
@@ -580,14 +580,14 @@ class PatchMasking(Transform):
         mask = mask_flat.reshape(n_patches_h, n_patches_w)
 
         # Determine mask value
-        if self.mask_value is not None:
-            mask_value = self.mask_value
+        if self.fill_value is not None:
+            fill_value = self.fill_value
         elif isinstance(img, Image.Image):
-            mask_value = 128 / 255.0
+            fill_value = 128 / 255.0
         elif img_tensor.dtype == torch.uint8:
-            mask_value = 128
+            fill_value = 128
         else:
-            mask_value = 0.0
+            fill_value = 0.0
 
         # Vectorized masking: upsample patch mask to full resolution
         # Create full-size mask initialized to True (keep remainder pixels)
@@ -599,11 +599,10 @@ class PatchMasking(Transform):
         ).repeat_interleave(self.patch_size, dim=1)
         full_mask[: upsampled_mask.shape[0], : upsampled_mask.shape[1]] = upsampled_mask
 
-        # Apply mask using torch.where (fully vectorized, no loops!)
         masked_img = torch.where(
-            full_mask.unsqueeze(0),  # Broadcast across channels
+            full_mask.unsqueeze(0),
             img_tensor,
-            torch.tensor(mask_value, dtype=img_tensor.dtype, device=img_tensor.device),
+            torch.tensor(fill_value, dtype=img_tensor.dtype, device=img_tensor.device),
         )
 
         # Convert back to PIL if needed

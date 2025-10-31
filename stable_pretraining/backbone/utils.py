@@ -895,6 +895,18 @@ class EfficientMaskedTimmViT(nn.Module):
                 "Model must have 'blocks' attribute containing transformer blocks."
             )
 
+        def nan_gradient_hook(grad):
+            """Replace NaN gradients with zeros."""
+            if torch.isnan(grad).any():
+                return torch.nan_to_num(grad)
+            return grad
+
+        # Register hook for all parameters
+        for name, param in self.vit.patch_embed.named_parameters():
+            if param.requires_grad:
+                param.register_hook(nan_gradient_hook)
+                logging.debug(f"Registered NaN hook for: {name}")
+
     def _get_num_extra_tokens(self) -> int:
         """Determine the number of extra tokens (cls, dist) the model uses.
 
@@ -967,31 +979,21 @@ class EfficientMaskedTimmViT(nn.Module):
     def _subsample_pos_embed_same_pattern(
         self, keep_idx: torch.Tensor, B: int, N: int
     ) -> torch.Tensor:
-        """Subsample positional embeddings when all samples have the same mask pattern.
-
-        This is an optimized path that uses simpler indexing.
-
-        Args:
-            keep_idx: Indices of patches to keep, shape (num_keep,)
-            B: Batch size
-            N: Original number of patches
-
-        Returns:
-            torch.Tensor: Subsampled positional embeddings, shape (B, num_keep + num_extra, D)
-        """
+        """Subsample positional embeddings when all samples have the same mask pattern."""
         pos_embed = self.vit.pos_embed
         num_extra_tokens = self._get_num_extra_tokens()
 
+        # ✨ NEW: Interpolate if needed for dynamic image sizes
+        pos_embed = self._interpolate_pos_embed(pos_embed, N)
+
         # Determine positional embedding structure
         if pos_embed.shape[1] == N + num_extra_tokens:
-            # pos_embed includes positions for extra tokens
-            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]  # (1, num_extra, D)
-            patch_pos_embed = pos_embed[:, num_extra_tokens:, :]  # (1, N, D)
+            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]
+            patch_pos_embed = pos_embed[:, num_extra_tokens:, :]
 
-            # Subsample patch positions (same for all samples)
-            patch_pos_embed = patch_pos_embed[:, keep_idx, :]  # (1, num_keep, D)
+            # Subsample patch positions
+            patch_pos_embed = patch_pos_embed[:, keep_idx, :]
 
-            # Expand and concatenate
             if num_extra_tokens > 0:
                 pos_embed = torch.cat(
                     [
@@ -1004,12 +1006,11 @@ class EfficientMaskedTimmViT(nn.Module):
                 pos_embed = patch_pos_embed.expand(B, -1, -1)
 
         elif pos_embed.shape[1] == N:
-            # No extra token positions in pos_embed
-            patch_pos_embed = pos_embed[:, keep_idx, :]  # (1, num_keep, D)
+            patch_pos_embed = pos_embed[:, keep_idx, :]
             pos_embed = patch_pos_embed.expand(B, -1, -1)
         else:
             raise RuntimeError(
-                f"Unexpected pos_embed shape: {pos_embed.shape}. "
+                f"Unexpected pos_embed shape after interpolation: {pos_embed.shape}. "
                 f"Expected shape[1] to be {N + num_extra_tokens} or {N}"
             )
 
@@ -1018,21 +1019,12 @@ class EfficientMaskedTimmViT(nn.Module):
     def _subsample_pos_embed_different_patterns(
         self, keep_indices: torch.Tensor, B: int, N: int, num_keep: int
     ) -> torch.Tensor:
-        """Subsample positional embeddings when samples have different mask patterns.
-
-        This uses advanced indexing and is slower than the same-pattern path.
-
-        Args:
-            keep_indices: Indices of patches to keep per sample, shape (B, num_keep)
-            B: Batch size
-            N: Original number of patches
-            num_keep: Number of patches to keep
-
-        Returns:
-            torch.Tensor: Subsampled positional embeddings, shape (B, num_keep + num_extra, D)
-        """
+        """Subsample positional embeddings when samples have different mask patterns."""
         pos_embed = self.vit.pos_embed
         num_extra_tokens = self._get_num_extra_tokens()
+
+        # ✨ NEW: Interpolate if needed for dynamic image sizes
+        pos_embed = self._interpolate_pos_embed(pos_embed, N)
 
         # Determine positional embedding structure
         if pos_embed.shape[1] == N + num_extra_tokens:
@@ -1043,18 +1035,15 @@ class EfficientMaskedTimmViT(nn.Module):
             patch_pos_embed = pos_embed
         else:
             raise RuntimeError(
-                f"Unexpected pos_embed shape: {pos_embed.shape}. "
+                f"Unexpected pos_embed shape after interpolation: {pos_embed.shape}. "
                 f"Expected shape[1] to be {N + num_extra_tokens} or {N}"
             )
 
-        # Subsample patch positional embeddings per sample (advanced indexing)
-        patch_pos_embed = patch_pos_embed.expand(B, -1, -1)  # (B, N, D)
+        # Subsample patch positional embeddings per sample
+        patch_pos_embed = patch_pos_embed.expand(B, -1, -1)
         batch_idx = self._get_batch_indices(B, num_keep, keep_indices.device)
-        patch_pos_embed = patch_pos_embed[
-            batch_idx, keep_indices, :
-        ]  # (B, num_keep, D)
+        patch_pos_embed = patch_pos_embed[batch_idx, keep_indices, :]
 
-        # Combine with extra token positions if they exist
         if extra_tokens_pos is not None and num_extra_tokens > 0:
             extra_tokens_pos = extra_tokens_pos.expand(B, -1, -1)
             pos_embed = torch.cat([extra_tokens_pos, patch_pos_embed], dim=1)
@@ -1127,37 +1116,42 @@ class EfficientMaskedTimmViT(nn.Module):
             - Same pattern: Optimized indexing, ~0-5% overhead vs different patterns
             - Different patterns: Uses advanced indexing, ~10-35% slower at high masking
         """
+        # Detect if this is a FakeTensor (used for shape inference/tracing)
+        is_fake_tensor = (
+            x.__class__.__name__ == "FakeTensor"
+            or hasattr(x, "fake_mode")
+            or "Fake" in type(x).__name__
+        )
+        if is_fake_tensor or not torch.isnan(x).any():
+            return self.vit(x)
+
         # Patchify if needed
-        if x.ndim == 4:  # (B, C, H, W)
+        if x.ndim == 4:  # (B, C, H, W) - raw image
+            # Apply patch embedding
             x = self.vit.patch_embed(x)
 
+            # Handle different output formats from different timm models
+            if x.ndim == 4:  # (B, D, H, W) format
+                # Reshape to sequence format
+                B, D, H, W = x.shape
+                x = x.flatten(1, 2)
+            elif x.ndim == 3:  # (B, N, D) format - already good
+                pass
+            else:
+                raise RuntimeError(
+                    f"patch_embed output has unexpected shape {x.shape}. "
+                    f"Expected 3D (B, N, D) or 4D (B, D, H, W)"
+                )
+        elif x.ndim == 3:  # (B, N, D) - already patchified
+            pass
+        else:
+            raise ValueError(
+                f"Input must be 4D (B, C, H, W) image or 3D (B, N, D) patches. "
+                f"Got shape: {x.shape}"
+            )
         B, N, D = x.shape
         device = x.device
-
-        # Detect NaN patches per sample (mark as NaN if ANY element is NaN)
         nan_mask = torch.isnan(x).any(dim=2)  # (B, N)
-
-        # FAST PATH: Early exit if no NaN patches
-        if not nan_mask.any():
-            # No masking needed - run through model normally
-            x = self._add_extra_tokens(x)
-            x = x + self.vit.pos_embed
-
-            if hasattr(self.vit, "pos_drop") and self.vit.pos_drop is not None:
-                x = self.vit.pos_drop(x)
-
-            if hasattr(self.vit, "patch_drop") and self.vit.patch_drop is not None:
-                x = self.vit.patch_drop(x)
-
-            for blk in self.vit.blocks:
-                x = blk(x)
-
-            if hasattr(self.vit, "norm") and self.vit.norm is not None:
-                x = self.vit.norm(x)
-
-            return self._apply_head(x)
-
-        # MASKING PATH: Handle NaN patches
 
         # Verify same number of NaN patches across batch
         num_nans = nan_mask.sum(dim=1)
@@ -1270,3 +1264,76 @@ class EfficientMaskedTimmViT(nn.Module):
         )
 
         return keep_indices.long()
+
+    def _interpolate_pos_embed(self, pos_embed: torch.Tensor, N: int) -> torch.Tensor:
+        """Interpolate positional embeddings to match the number of patches.
+
+        This is needed when dynamic_image_size=True and the input size differs
+        from the default/training size.
+
+        Args:
+            pos_embed: Original positional embeddings, shape (1, N_orig, D)
+            N: Target number of patches
+
+        Returns:
+            torch.Tensor: Interpolated positional embeddings, shape (1, N + num_extra, D)
+        """
+        num_extra_tokens = self._get_num_extra_tokens()
+        N_orig = pos_embed.shape[1]
+
+        # If already correct size, return as-is
+        if N_orig == N + num_extra_tokens or N_orig == N:
+            return pos_embed
+
+        # Separate extra tokens from patch embeddings
+        if N_orig > num_extra_tokens:
+            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]  # (1, num_extra, D)
+            patch_pos_embed = pos_embed[
+                :, num_extra_tokens:, :
+            ]  # (1, N_orig - num_extra, D)
+        else:
+            extra_tokens_pos = None
+            patch_pos_embed = pos_embed
+
+        # Calculate grid sizes
+        N_orig_patches = patch_pos_embed.shape[1]
+        gs_orig = int(N_orig_patches**0.5)
+        gs_new = int(N**0.5)
+
+        if gs_orig * gs_orig != N_orig_patches:
+            raise RuntimeError(
+                f"Original positional embeddings ({N_orig_patches}) don't form a square grid. "
+                f"Non-square grids require custom interpolation."
+            )
+
+        if gs_new * gs_new != N:
+            raise RuntimeError(
+                f"Target number of patches ({N}) doesn't form a square grid. "
+                f"Non-square grids require custom interpolation."
+            )
+
+        # Reshape to 2D grid: (1, N_orig, D) -> (1, D, H_orig, W_orig)
+        D = patch_pos_embed.shape[2]
+        patch_pos_embed = patch_pos_embed.reshape(1, gs_orig, gs_orig, D).permute(
+            0, 3, 1, 2
+        )
+
+        # Interpolate using bicubic (same as timm)
+        patch_pos_embed = torch.nn.functional.interpolate(
+            patch_pos_embed,
+            size=(gs_new, gs_new),
+            mode="bicubic",
+            align_corners=False,
+            antialias=False,  # Match timm behavior
+        )
+
+        # Reshape back: (1, D, H_new, W_new) -> (1, N, D)
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, N, D)
+
+        # Recombine with extra tokens
+        if extra_tokens_pos is not None and num_extra_tokens > 0:
+            pos_embed = torch.cat([extra_tokens_pos, patch_pos_embed], dim=1)
+        else:
+            pos_embed = patch_pos_embed
+
+        return pos_embed
