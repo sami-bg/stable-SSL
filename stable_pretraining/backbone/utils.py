@@ -1129,12 +1129,15 @@ class EfficientMaskedTimmViT(nn.Module):
         if x.ndim == 4:  # (B, C, H, W) - raw image
             # Apply patch embedding
             x = self.vit.patch_embed(x)
-
-            if x.ndim != 3:
-                raise RuntimeError(
-                    f"patch_embed output has unexpected shape {x.shape}. "
-                    f"Expected 3D (B, N, D) or 4D (B, D, H, W)"
+            # Ensure 3D output (B, N, C)
+            if x.ndim == 4:
+                # Dynamic: (B, H, W, C) -> (B, H*W, C)
+                x = x.flatten(1, 2)
+            elif x.ndim != 3:
+                raise ValueError(
+                    f"Expected patch_embed output to be 3D or 4D, got {x.ndim}D with shape {x.shape}"
                 )
+
         elif x.ndim == 3:  # (B, N, D) - already patchified
             pass
         else:
