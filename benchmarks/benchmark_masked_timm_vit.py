@@ -85,7 +85,10 @@ def main(args):
 
         # Warmup
         for batch in data[:3]:
-            output = model(batch)
+            if args.teacher_student:
+                output = model.forward_student(batch)
+            else:
+                output = model(batch)
             loss = output.mean()
             loss.backward()
             model.zero_grad()
@@ -103,7 +106,10 @@ def main(args):
                 end_event = torch.cuda.Event(enable_timing=True)
                 start_event.record()
 
-            output = model(batch)
+            if args.teacher_student:
+                output = model.forward_student(batch)
+            else:
+                output = model(batch)
             loss = output.mean()
             loss.backward()
             model.zero_grad()
