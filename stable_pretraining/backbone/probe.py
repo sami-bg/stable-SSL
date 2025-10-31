@@ -157,7 +157,7 @@ class AutoLinearClassifier(torch.nn.Module):
         pooling=None,
         normalization=["none", "norm", "bn"],
         dropout=[0, 0.5],
-        label_smoothing=[0, 1, 5],
+        label_smoothing=[0, 1],
     ):
         super().__init__()
         assert pooling in (

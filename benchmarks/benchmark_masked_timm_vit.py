@@ -44,7 +44,7 @@ def main(args):
         drop_ratio=args.drop_ratio,
         source="image",
         target="image",
-        mask_value=float("nan") if args.use_nan else 0.0,
+        fill_value=float("nan") if args.use_nan else 0.0,
     )
 
     data = []
