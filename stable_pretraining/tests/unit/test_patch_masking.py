@@ -9,8 +9,8 @@ from stable_pretraining.data.transforms import PatchMasking
 
 @pytest.mark.unit
 @pytest.mark.parametrize("input_type", ["pil", "tensor_float", "tensor_uint8"])
-@pytest.mark.parametrize("mask_value", [None, 0.5, 0.0, 1.0])
-def test_patch_masking_transform(input_type, mask_value):
+@pytest.mark.parametrize("fill_value", [None, 0.5, 0.0, 1.0])
+def test_patch_masking_transform(input_type, fill_value):
     # Create a dummy image (3x32x32)
     np_img = np.ones((32, 32, 3), dtype=np.uint8) * 255
     if input_type == "pil":
@@ -29,7 +29,7 @@ def test_patch_masking_transform(input_type, mask_value):
         drop_ratio=drop_ratio,
         source="image",
         target="masked_image",
-        mask_value=mask_value,
+        fill_value=fill_value,
     )
     out = transform(sample)
     # Check output keys
@@ -57,14 +57,14 @@ def test_patch_masking_transform(input_type, mask_value):
         else:
             masked_img_tensor = masked_img
     # Determine expected mask value
-    if mask_value is not None:
-        expected_mask_value = mask_value
+    if fill_value is not None:
+        expected_fill_value = fill_value
     elif input_type == "pil" or (
         input_type == "tensor_uint8" and masked_img_tensor.max() > 1.0
     ):
-        expected_mask_value = 128 / 255.0
+        expected_fill_value = 128 / 255.0
     else:
-        expected_mask_value = 0.0
+        expected_fill_value = 0.0
     # Check that at least one patch is masked and that masked patches have the correct value
     found_masked = False
     for i in range(n_patches_h):
@@ -78,32 +78,32 @@ def test_patch_masking_transform(input_type, mask_value):
                 found_masked = True
                 # All values in the patch should be close to the mask value
                 assert torch.allclose(
-                    patch, torch.full_like(patch, expected_mask_value), atol=1e-2
+                    patch, torch.full_like(patch, expected_fill_value), atol=1e-2
                 )
             else:
-                # Only check if the original image is not all mask_value
-                if not np.isclose(expected_mask_value, 1.0, atol=1e-2):
+                # Only check if the original image is not all fill_value
+                if not np.isclose(expected_fill_value, 1.0, atol=1e-2):
                     assert not torch.allclose(
-                        patch, torch.full_like(patch, expected_mask_value), atol=1e-2
+                        patch, torch.full_like(patch, expected_fill_value), atol=1e-2
                     )
     assert found_masked, "At least one patch should be masked"
 
 
-def test_patch_masking_mask_value_mean(monkeypatch):
-    # Test using the mean of the image as mask_value
+def test_patch_masking_fill_value_mean(monkeypatch):
+    # Test using the mean of the image as fill_value
     np_img = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
     img = torch.from_numpy(np_img).permute(2, 0, 1).float() / 255.0
     sample = {"image": img}
     patch_size = 8
     drop_ratio = 1.0  # Mask all patches
 
-    # Patch the transform to use the mean as mask_value
+    # Patch the transform to use the mean as fill_value
     class PatchMaskingMean(PatchMasking):
         def __call__(self, x):
             img = self.nested_get(x, self.source)
             img_tensor = self._to_tensor(img)
             mean_val = img_tensor.mean().item()
-            self.mask_value = mean_val
+            self.fill_value = mean_val
             return super().__call__(x)
 
     transform = PatchMaskingMean(
@@ -112,7 +112,7 @@ def test_patch_masking_mask_value_mean(monkeypatch):
         source="image",
         target="masked_image",
         mask_key="patch_mask",
-        mask_value=None,
+        fill_value=None,
     )
     out = transform(sample)
     masked_img = out["masked_image"]
