@@ -89,15 +89,15 @@ class TestPatchMasking:
         assert isinstance(result["masked_image"], torch.Tensor)
         assert result["masked_image"].shape == tensor_sample["image"].shape
 
-    def test_mask_value_applied_correctly(self, tensor_sample):
+    def test_fill_value_applied_correctly(self, tensor_sample):
         """Test that custom mask value is applied to masked patches."""
-        mask_value = 0.5
+        fill_value = 0.5
         transform = transforms.PatchMasking(
             patch_size=16,
             drop_ratio=1.0,  # Mask all patches
             source="image",
             target="masked_image",
-            mask_value=mask_value,
+            fill_value=fill_value,
         )
 
         result = transform(tensor_sample)
@@ -105,9 +105,9 @@ class TestPatchMasking:
         # With drop_ratio=1.0, all patches should be masked
         assert result["patch_mask"].sum().item() == 0
 
-        # All pixels should be mask_value
+        # All pixels should be fill_value
         assert torch.allclose(
-            result["masked_image"], torch.tensor(mask_value), atol=1e-6
+            result["masked_image"], torch.tensor(fill_value), atol=1e-6
         )
 
     def test_no_masking_when_drop_ratio_zero(self, tensor_sample):
@@ -128,7 +128,7 @@ class TestPatchMasking:
         # Image should be unchanged
         assert torch.allclose(result["masked_image"], tensor_sample["image"], atol=1e-6)
 
-    def test_default_mask_value_pil(self, pil_sample):
+    def test_default_fill_value_pil(self, pil_sample):
         """Test that PIL images use default mask value of 128/255."""
         transform = transforms.PatchMasking(
             patch_size=224,  # One big patch
@@ -146,7 +146,7 @@ class TestPatchMasking:
         # All pixels should be mid-gray
         assert np.allclose(img_array, expected_value, atol=1)
 
-    def test_default_mask_value_tensor(self, tensor_sample):
+    def test_default_fill_value_tensor(self, tensor_sample):
         """Test that float tensors use default mask value of 0.0."""
         transform = transforms.PatchMasking(
             patch_size=224,  # One big patch
