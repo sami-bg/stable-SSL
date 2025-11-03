@@ -24,12 +24,13 @@ dependencies = [
     "prettytable",
     "submitit",
     "timm",
+    "zstandard"
 ]
 
 dynamic = ["version"]
 
-[project.entry-points."console_scripts"]
-spt = "stable_pretraining.cli:main"
+[project.scripts]
+spt = "stable_pretraining.cli:app"
 
 [project.entry-points."lightning.pytorch.callbacks_factory"]
 stablepretraining_callbacks = "stable_pretraining.callbacks.factories:default"
