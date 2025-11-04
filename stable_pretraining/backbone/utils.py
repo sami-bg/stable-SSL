@@ -119,6 +119,11 @@ def vit_hf(
             "num_hidden_layers": 24,
             "num_attention_heads": 16,
         },
+        "huge": {
+            "hidden_size": 1280,
+            "num_hidden_layers": 32,
+            "num_attention_heads": 16,
+        },
     }
 
     if size not in size_configs:
