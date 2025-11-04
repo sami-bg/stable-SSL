@@ -1,6 +1,7 @@
 import torch
 import torchmetrics
 from torchmetrics.classification import MulticlassAccuracy
+from .utils import register_lr_scale_hook
 
 
 class MultiHeadAttentiveProbe(torch.nn.Module):
@@ -155,6 +156,8 @@ class AutoLinearClassifier(torch.nn.Module):
         embedding_dim,
         num_classes,
         pooling=None,
+        weight_decay=[0],
+        lr_scaling=[1],
         normalization=["none", "norm", "bn"],
         dropout=[0, 0.5],
         label_smoothing=[0, 1],
@@ -168,26 +171,29 @@ class AutoLinearClassifier(torch.nn.Module):
         self.fc = torch.nn.ModuleDict()
         self.losses = torch.nn.ModuleDict()
         metrics = {}
-        for norm in normalization:
-            for drop in dropout:
-                for ls in label_smoothing:
-                    if norm == "bn":
-                        layer_norm = torch.nn.BatchNorm1d(embedding_dim)
-                    elif norm == "norm":
-                        layer_norm = torch.nn.LayerNorm(embedding_dim)
-                    else:
-                        assert norm == "none"
-                        layer_norm = torch.nn.Identity()
-                    id = f"{name}_{norm}_{drop}_{ls}".replace(".", "")
-                    self.fc[id] = torch.nn.Sequential(
-                        layer_norm,
-                        torch.nn.Dropout(drop),
-                        torch.nn.Linear(embedding_dim, num_classes),
-                    )
-                    self.losses[id] = torch.nn.CrossEntropyLoss(
-                        label_smoothing=ls / num_classes
-                    )
-                    metrics[id] = MulticlassAccuracy(num_classes)
+        for lr in lr_scaling:
+            for wd in weight_decay:
+                for norm in normalization:
+                    for drop in dropout:
+                        for ls in label_smoothing:
+                            if norm == "bn":
+                                layer_norm = torch.nn.BatchNorm1d(embedding_dim)
+                            elif norm == "norm":
+                                layer_norm = torch.nn.LayerNorm(embedding_dim)
+                            else:
+                                assert norm == "none"
+                                layer_norm = torch.nn.Identity()
+                            id = f"{name}_{norm}_{drop}_{ls}_{lr}_{wd}".replace(".", "")
+                            self.fc[id] = torch.nn.Sequential(
+                                layer_norm,
+                                torch.nn.Dropout(drop),
+                                torch.nn.Linear(embedding_dim, num_classes),
+                            )
+                            register_lr_scale_hook(self.fc[id], lr, wd)
+                            self.losses[id] = torch.nn.CrossEntropyLoss(
+                                label_smoothing=ls / num_classes
+                            )
+                            metrics[id] = MulticlassAccuracy(num_classes)
         self.metrics = torchmetrics.MetricCollection(
             metrics, prefix="eval/", postfix="_top1"
         )

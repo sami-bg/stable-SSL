@@ -27,6 +27,34 @@ except ImportError:
     _TRANSFORMERS_AVAILABLE = False
 
 
+def register_lr_scale_hook(module, lr_scale, weight_decay=0.0):
+    """Registers a hook that scales gradients and applies weight decay during backward pass.
+
+    Args:
+        module: PyTorch module/layer
+        lr_scale: Scaling factor for the learning rate (scales gradients)
+        weight_decay: L2 penalty coefficient (default: 0.0)
+
+    Returns:
+        module: The same module (for chaining)
+    """
+
+    def make_hook(param):
+        def gradient_scaling_hook(grad):
+            # Add weight decay (L2 regularization)
+            if weight_decay != 0.0:
+                grad = grad + weight_decay * param.data
+            # Scale gradient (equivalent to scaling learning rate)
+            return grad * lr_scale
+
+        return gradient_scaling_hook
+
+    for param in module.parameters():
+        param.register_hook(make_hook(param))
+
+    return module
+
+
 def vit_hf(
     size: str = "tiny",
     patch_size: int = 16,

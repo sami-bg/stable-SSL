@@ -73,6 +73,11 @@ class Module(pl.LightningModule):
         self.callbacks_modules = torch.nn.ModuleDict()
         self.callbacks_metrics = torch.nn.ModuleDict()
 
+        self._optimizer_index_to_name = {}
+        self._optimizer_frequencies = {}
+        self._optimizer_gradient_clip_val = {}
+        self._optimizer_gradient_clip_algorithm = {}
+
         if len(args) > 0:
             raise ValueError(
                 "Module does not accept positional arguments (*args). Please use keyword arguments instead (e.g., Module(forward=my_forward, hparams=my_hparams))."
@@ -251,6 +256,8 @@ class Module(pl.LightningModule):
     def on_train_start(self):
         logging.info("Double checking optimizers!")
         optimizers = self.optimizers()
+        if not isinstance(optimizers, (list, tuple)):
+            optimizers = [optimizers]
         logging.info(f"`self.optimizers() gave us {len(optimizers)} optimizers")
         for i in range(len(optimizers)):
             # check if optimizer i is named and well setup
@@ -499,11 +506,6 @@ class Module(pl.LightningModule):
             - decoder                 -> None (no match, no parameters collected)
         """
         logging.info("Configuring optimizers and learning rate schedulers...")
-
-        self._optimizer_index_to_name = {}
-        self._optimizer_frequencies = {}
-        self._optimizer_gradient_clip_val = {}
-        self._optimizer_gradient_clip_algorithm = {}
 
         # Early exit for disabled optimization
         if hasattr(self, "optim") and not self.optim:

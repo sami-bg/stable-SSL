@@ -20,6 +20,7 @@ from .utils import (
     set_embedding_dim,
     vit_hf,
     EfficientMaskedTimmViT,
+    register_lr_scale_hook,
 )
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     LinearProbe,
     AutoLinearClassifier,
     EfficientMaskedTimmViT,
+    register_lr_scale_hook,
 ]
 
 if _MAE_AVAILABLE:

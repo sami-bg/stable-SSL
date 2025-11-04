@@ -722,10 +722,17 @@ class CSVLogAutoSummarizer:
             logger.warning(f"All metric values are NaN in {path}")
             logger.debug(f"Dtypes:\n{df.dtypes}\nHead:\n{df.head()}")
         hparams = self._find_hparams(path.parent / "hparams.yaml")
-        for k, v in list(hparams.items()):
-            hparams[f"config/{k}"] = v
-            del hparams[k]
-        df[list(hparams.keys())] = list(hparams.values())
+        for k, v in hparams.items():
+            # Convert lists/dicts to string representation
+            if isinstance(v, (list, dict)):
+                df[f"config/{k}"] = str(v)
+            else:
+                df[f"config/{k}"] = v
+        # hparams = self._find_hparams(path.parent / "hparams.yaml")
+        # for k, v in list(hparams.items()):
+        #     hparams[f"config/{k}"] = v
+        #     del hparams[k]
+        # df[list(hparams.keys())] = list(hparams.values())
         return df
 
     # ----------------------------
