@@ -22,15 +22,20 @@ from stable_pretraining.data.masking import multi_block_mask
 class Transform(v2.Transform):
     """Base transform class extending torchvision v2.Transform with nested data handling."""
 
-    def nested_get(self, v, name):
+    def single_nested_get(self, v, name):
         if name == "":
             return v
         i = name.split(".")
         if i[0].isnumeric():
             i[0] = int(i[0])
-        return self.nested_get(v[i[0]], ".".join(i[1:]))
+        return self.single_nested_get(v[i[0]], ".".join(i[1:]))
 
-    def nested_set(self, original, value, name):
+    def nested_get(self, v, name):
+        if type(name) in [list, tuple]:
+            return [self.single_nested_get(v, n) for n in name]
+        return self.single_nested_get(v, name)
+
+    def single_nested_set(self, original, value, name):
         if "." not in name:
             if name.isnumeric():
                 name = int(name)
@@ -39,7 +44,14 @@ class Transform(v2.Transform):
             i = name.split(".")
             if i[0].isnumeric():
                 i[0] = int(i[0])
-            self.nested_set(original[i[0]], value, ".".join(i[1:]))
+            self.single_nested_set(original[i[0]], value, ".".join(i[1:]))
+
+    def nested_set(self, original, value, name):
+        if type(name) in [list, tuple]:
+            assert type(value) in [list, tuple]
+            assert len(value) == len(name)
+            return [self.single_nested_set(original, v, n) for v, n in zip(value, name)]
+        return self.single_nested_set(original, value, name)
 
     def get_name(self, x):
         base = self.name
@@ -483,9 +495,12 @@ class RandomHorizontalFlip(Transform, v2.RandomHorizontalFlip):
 
     def __call__(self, x) -> Any:
         if self.p > 0 and torch.rand(1) < self.p:
-            self.nested_set(
-                x, F.horizontal_flip(self.nested_get(x, self.source)), self.target
-            )
+            candidates = self.nested_get(x, self.source)
+            if type(candidates) in [tuple, list]:
+                out = [F.horizontal_flip(c) for c in candidates]
+                self.nested_set(x, out, self.target)
+            else:
+                self.nested_set(x, F.horizontal_flip(candidates), self.target)
             x[self.get_name(x)] = True
         else:
             self.nested_set(x, self.nested_get(x, self.source), self.target)
@@ -514,9 +529,15 @@ class RandomResizedCrop(Transform, v2.RandomResizedCrop):
 
     def __call__(self, x):
         params = self.make_params([self.nested_get(x, self.source)])
-        self.nested_set(
-            x, self.transform(self.nested_get(x, self.source), params), self.target
-        )
+
+        candidates = self.nested_get(x, self.source)
+        if type(candidates) in [tuple, list]:
+            out = [self.transform(c, params) for c in candidates]
+            self.nested_set(x, out, self.target)
+        else:
+            self.nested_set(
+                x, self.transform(self.nested_get(x, self.source), params), self.target
+            )
         values = []
         values.append(params["top"])
         values.append(params["left"])

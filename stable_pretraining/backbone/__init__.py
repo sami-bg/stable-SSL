@@ -10,7 +10,12 @@ except ImportError:
 from .convmixer import ConvMixer
 from .mlp import MLP
 from .resnet9 import Resnet9
-from .probe import MultiHeadAttentiveProbe, LinearProbe, AutoLinearClassifier
+from .probe import (
+    MultiHeadAttentiveProbe,
+    LinearProbe,
+    AutoLinearClassifier,
+    AutoTuneMLP,
+)
 from .utils import (
     EvalOnly,
     FeaturesConcat,
@@ -23,8 +28,11 @@ from .utils import (
     register_lr_scale_hook,
 )
 
+from .aggregator import TensorAggregator
+
 __all__ = [
     MLP,
+    TensorAggregator,
     TeacherStudentWrapper,
     Resnet9,
     from_timm,
@@ -39,6 +47,7 @@ __all__ = [
     AutoLinearClassifier,
     EfficientMaskedTimmViT,
     register_lr_scale_hook,
+    AutoTuneMLP,
 ]
 
 if _MAE_AVAILABLE:
