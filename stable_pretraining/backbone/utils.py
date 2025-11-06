@@ -376,7 +376,9 @@ class TeacherStudentWrapper(nn.Module):
 
         Everything is updated, including buffers (e.g. batch norm running averages).
         """
-        if self.ema_coefficient.item() == 0.0:
+        if not self.training:
+            return  # We don't update in eval
+        elif self.ema_coefficient.item() == 0.0:
             return  # Nothing to update when the teacher is the student.
         elif self.ema_coefficient.item() == 1.0:
             return  # No need to update when the teacher is fixed.
