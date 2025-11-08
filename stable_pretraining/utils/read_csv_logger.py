@@ -644,8 +644,10 @@ class CSVLogAutoSummarizer:
                     total=len(items),
                 )
             )
-
-        return pd.concat(summaries)
+        summaries = [s for s in summaries if s is not None]
+        if not summaries:
+            return pd.DataFrame()
+        return pd.concat(summaries, ignore_index=True)
 
     # ----------------------------
     # Discovery and selection

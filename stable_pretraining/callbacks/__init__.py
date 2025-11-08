@@ -1,4 +1,8 @@
-from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
+from .checkpoint_sklearn import (
+    SklearnCheckpoint,
+    WandbCheckpoint,
+    StrictCheckpointCallback,
+)
 from .image_retrieval import ImageRetrieval
 from .knn import OnlineKNN
 from .latent_viz import LatentViz
@@ -37,5 +41,6 @@ __all__ = [
     EpochMilestones,
     WeightDecayUpdater,
     CleanUpCallback,
+    StrictCheckpointCallback,
     EnvironmentDumpCallback,
 ]
