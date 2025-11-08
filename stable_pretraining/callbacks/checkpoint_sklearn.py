@@ -96,57 +96,12 @@ def _get_sklearn_modules(module):
 
 
 class StrictCheckpointCallback(Callback):
-    """A PyTorch Lightning callback that controls strict checkpoint loading behavior.
-
-    This callback allows you to load checkpoints with mismatched keys by setting
-    `strict=False`, which is useful when:
-    - Fine-tuning a model with a different architecture
-    - Adding or removing layers from a pre-trained model
-    - Loading partial weights from a checkpoint
-
-    When `strict=False`, the callback will:
-    1. Filter out parameters that don't exist in the current model
-    2. Skip parameters with shape mismatches
-    3. Clear optimizer states to prevent conflicts
-    4. Provide detailed logging of all actions taken
-
-    Args:
-        strict (bool): Whether to enforce strict checkpoint loading.
-            - If True: All keys must match exactly (default PyTorch Lightning behavior)
-            - If False: Missing or mismatched keys are allowed and logged
-
-    Example:
-        ```python
-        from lightning.pytorch import Trainer
-
-        # Create callback with strict=False
-        callback = StrictCheckpointCallback(strict=False)
-
-        # Use with Trainer
-        trainer = Trainer(callbacks=[callback])
-        trainer.fit(model, ckpt_path="path/to/checkpoint.ckpt")
-        ```
-
-    Note:
-        When using `strict=False`, optimizer states are automatically cleared
-        to prevent shape mismatches during training resumption.
-    """
+    """A PyTorch Lightning callback that controls strict checkpoint loading behavior."""
 
     def __init__(self, strict: bool = True):
-        """Initialize the StrictCheckpointCallback.
-
-        Args:
-            strict (bool): Whether to enforce strict checkpoint loading. Defaults to True.
-        """
         super().__init__()
         self.strict = strict
-
         logger.info(f"StrictCheckpointCallback initialized with strict={self.strict}")
-        if not self.strict:
-            logger.warning(
-                "Strict mode is disabled. Checkpoint loading will be lenient and "
-                "may skip mismatched parameters."
-            )
 
     def on_load_checkpoint(
         self,
@@ -154,32 +109,20 @@ class StrictCheckpointCallback(Callback):
         pl_module: pl.LightningModule,
         checkpoint: Dict[str, Any],
     ) -> None:
-        """Called when loading a checkpoint.
-
-        Args:
-            trainer: The PyTorch Lightning Trainer instance
-            pl_module: The LightningModule being trained
-            checkpoint: The checkpoint dictionary being loaded
-        """
+        """Called when loading a checkpoint."""
         if self.strict:
-            logger.info(
-                "Strict mode enabled - using default checkpoint loading behavior"
-            )
             return
 
         logger.info("=" * 80)
-        logger.info("StrictCheckpointCallback: Processing checkpoint with strict=False")
+        logger.info("Processing checkpoint with strict=False")
         logger.info("=" * 80)
 
         if "state_dict" not in checkpoint:
-            logger.warning("No 'state_dict' found in checkpoint. Skipping processing.")
+            logger.warning("No 'state_dict' found in checkpoint.")
             return
 
         checkpoint_state_dict = checkpoint["state_dict"]
         model_state_dict = pl_module.state_dict()
-
-        logger.info(f"Checkpoint contains {len(checkpoint_state_dict)} parameters")
-        logger.info(f"Current model contains {len(model_state_dict)} parameters")
 
         # Track statistics
         matched_keys = []
@@ -187,35 +130,47 @@ class StrictCheckpointCallback(Callback):
         missing_in_model = []
         shape_mismatches = []
 
-        # Check for missing keys in checkpoint
-        for key in model_state_dict.keys():
-            if key not in checkpoint_state_dict:
-                missing_in_checkpoint.append(key)
-                logger.warning(f"⚠️  Parameter missing in checkpoint: '{key}'")
-
-        # Check for extra keys and shape mismatches
+        # Build the new filtered state dict
         filtered_state_dict = {}
-        for key, value in checkpoint_state_dict.items():
+
+        # 1. Check all model keys
+        for key in model_state_dict.keys():
+            if key in checkpoint_state_dict:
+                # Key exists in both
+                if checkpoint_state_dict[key].shape == model_state_dict[key].shape:
+                    # Shapes match - use checkpoint value
+                    filtered_state_dict[key] = checkpoint_state_dict[key]
+                    matched_keys.append(key)
+                else:
+                    # Shape mismatch - use model's current value
+                    filtered_state_dict[key] = model_state_dict[key]
+                    shape_mismatches.append(
+                        {
+                            "key": key,
+                            "checkpoint_shape": checkpoint_state_dict[key].shape,
+                            "model_shape": model_state_dict[key].shape,
+                        }
+                    )
+                    logger.warning(
+                        f"❌ Shape mismatch for '{key}': "
+                        f"checkpoint={checkpoint_state_dict[key].shape}, "
+                        f"model={model_state_dict[key].shape} - Using model's current value"
+                    )
+            else:
+                # Key missing in checkpoint - use model's current value
+                filtered_state_dict[key] = model_state_dict[key]
+                missing_in_checkpoint.append(key)
+                logger.warning(
+                    f"⚠️  Parameter missing in checkpoint: '{key}' - Using model's current value"
+                )
+
+        # 2. Check for extra keys in checkpoint
+        for key in checkpoint_state_dict.keys():
             if key not in model_state_dict:
                 missing_in_model.append(key)
                 logger.warning(
                     f"⚠️  Parameter in checkpoint but not in model: '{key}' - SKIPPING"
                 )
-            elif value.shape != model_state_dict[key].shape:
-                shape_mismatches.append(
-                    {
-                        "key": key,
-                        "checkpoint_shape": value.shape,
-                        "model_shape": model_state_dict[key].shape,
-                    }
-                )
-                logger.error(
-                    f"❌ Shape mismatch for '{key}': "
-                    f"checkpoint={value.shape}, model={model_state_dict[key].shape} - SKIPPING"
-                )
-            else:
-                filtered_state_dict[key] = value
-                matched_keys.append(key)
 
         # Update checkpoint with filtered state dict
         checkpoint["state_dict"] = filtered_state_dict
@@ -224,69 +179,55 @@ class StrictCheckpointCallback(Callback):
         if missing_in_model or shape_mismatches or missing_in_checkpoint:
             if "optimizer_states" in checkpoint:
                 logger.warning(
-                    "🗑️  Clearing optimizer states due to parameter mismatches. "
-                    "Training will restart optimizer from scratch."
+                    "🗑️  Clearing optimizer states due to parameter mismatches."
                 )
                 checkpoint.pop("optimizer_states", None)
 
             if "lr_schedulers" in checkpoint:
-                logger.warning(
-                    "🗑️  Clearing learning rate scheduler states due to parameter mismatches."
-                )
+                logger.warning("🗑️  Clearing learning rate scheduler states.")
                 checkpoint.pop("lr_schedulers", None)
 
         # Print summary
+        self._print_summary(
+            matched_keys,
+            missing_in_checkpoint,
+            missing_in_model,
+            shape_mismatches,
+            len(model_state_dict),
+        )
+
+    def _print_summary(
+        self,
+        matched_keys,
+        missing_in_checkpoint,
+        missing_in_model,
+        shape_mismatches,
+        total_model_params,
+    ):
         logger.info("-" * 80)
-        logger.success(f"✅ Successfully matched parameters: {len(matched_keys)}")
+        logger.info(f"✅ Successfully matched parameters: {len(matched_keys)}")
 
         if missing_in_checkpoint:
             logger.warning(
                 f"⚠️  Parameters missing in checkpoint: {len(missing_in_checkpoint)}"
             )
-            if len(missing_in_checkpoint) <= 10:
-                for key in missing_in_checkpoint:
-                    logger.debug(f"    - {key}")
-            else:
-                logger.debug(f"    (showing first 10 of {len(missing_in_checkpoint)})")
-                for key in missing_in_checkpoint[:10]:
-                    logger.debug(f"    - {key}")
 
         if missing_in_model:
             logger.warning(
-                f"⚠️  Extra parameters in checkpoint (not in model): {len(missing_in_model)}"
+                f"⚠️  Extra parameters in checkpoint: {len(missing_in_model)}"
             )
-            if len(missing_in_model) <= 10:
-                for key in missing_in_model:
-                    logger.debug(f"    - {key}")
-            else:
-                logger.debug(f"    (showing first 10 of {len(missing_in_model)})")
-                for key in missing_in_model[:10]:
-                    logger.debug(f"    - {key}")
 
         if shape_mismatches:
-            logger.error(f"❌ Shape mismatches found: {len(shape_mismatches)}")
-            for mismatch in shape_mismatches[:10]:
-                logger.debug(
-                    f"    - {mismatch['key']}: "
-                    f"{mismatch['checkpoint_shape']} → {mismatch['model_shape']}"
-                )
-            if len(shape_mismatches) > 10:
-                logger.debug(f"    ... and {len(shape_mismatches) - 10} more")
+            logger.warning(f"❌ Shape mismatches found: {len(shape_mismatches)}")
 
-        # Calculate loading percentage
-        total_model_params = len(model_state_dict)
         loaded_percentage = (
             (len(matched_keys) / total_model_params * 100)
             if total_model_params > 0
             else 0
         )
-
         logger.info(
             f"📊 Checkpoint loading coverage: {loaded_percentage:.2f}% ({len(matched_keys)}/{total_model_params})"
         )
-
-        logger.info("=" * 80)
-        logger.success("StrictCheckpointCallback: Checkpoint processing complete")
         logger.info("=" * 80)
 
 

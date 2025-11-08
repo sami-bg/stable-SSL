@@ -167,13 +167,21 @@ class TestStrictCheckpointCallback:
 
         callback.on_load_checkpoint(mock_trainer, simple_model, checkpoint)
 
-        # Only layer1 parameters should be in checkpoint
+        # ALL model parameters should now be in checkpoint
+        # layer1 from checkpoint, layer2 from model's current state
         assert "layer1.weight" in checkpoint["state_dict"]
         assert "layer1.bias" in checkpoint["state_dict"]
-        assert "layer2.weight" not in checkpoint["state_dict"]
-        assert "layer2.bias" not in checkpoint["state_dict"]
+        assert (
+            "layer2.weight" in checkpoint["state_dict"]
+        )  # CHANGED: Now added from model
+        assert (
+            "layer2.bias" in checkpoint["state_dict"]
+        )  # CHANGED: Now added from model
 
-        # Optimizer states should be cleared
+        # Should have all 4 parameters
+        assert len(checkpoint["state_dict"]) == 4  # CHANGED: Was expecting 2
+
+        # Optimizer states should be cleared due to missing keys
         assert "optimizer_states" not in checkpoint
 
     def test_extra_keys_in_checkpoint(
@@ -215,13 +223,21 @@ class TestStrictCheckpointCallback:
 
         callback.on_load_checkpoint(mock_trainer, simple_model, checkpoint)
 
-        # Mismatched key should be removed
-        assert "layer1.weight" not in checkpoint["state_dict"]
+        # Mismatched key should be replaced with model's current value
+        assert (
+            "layer1.weight" in checkpoint["state_dict"]
+        )  # CHANGED: Still present but with model's value
+        assert checkpoint["state_dict"]["layer1.weight"].shape == torch.Size(
+            [20, 10]
+        )  # CHANGED: Correct shape from model
 
-        # Correctly shaped keys should remain
+        # Correctly shaped keys should remain with checkpoint values
         assert "layer1.bias" in checkpoint["state_dict"]
         assert "layer2.weight" in checkpoint["state_dict"]
         assert "layer2.bias" in checkpoint["state_dict"]
+
+        # All 4 parameters should be present
+        assert len(checkpoint["state_dict"]) == 4  # CHANGED: All keys present
 
         # Optimizer states should be cleared
         assert "optimizer_states" not in checkpoint
@@ -273,8 +289,14 @@ class TestStrictCheckpointCallback:
 
         callback.on_load_checkpoint(mock_trainer, simple_model, checkpoint)
 
-        # State dict should be empty
-        assert len(checkpoint["state_dict"]) == 0
+        # State dict should now contain all model parameters (from model's current state)
+        assert len(checkpoint["state_dict"]) == len(
+            simple_model.state_dict()
+        )  # CHANGED: Now has all model params
+
+        # All model keys should be present
+        for key in simple_model.state_dict().keys():
+            assert key in checkpoint["state_dict"]
 
         # Optimizer states should be cleared (due to missing keys)
         assert "optimizer_states" not in checkpoint
@@ -294,8 +316,26 @@ class TestStrictCheckpointCallback:
 
         callback.on_load_checkpoint(mock_trainer, simple_model, checkpoint)
 
-        # All keys should be filtered out due to shape mismatches
-        assert len(checkpoint["state_dict"]) == 0
+        # All keys should be present with correct shapes from model
+        assert len(checkpoint["state_dict"]) == 4  # CHANGED: All keys present
+
+        # Verify all have correct shapes (from model)
+        assert (
+            checkpoint["state_dict"]["layer1.weight"].shape
+            == simple_model.state_dict()["layer1.weight"].shape
+        )
+        assert (
+            checkpoint["state_dict"]["layer1.bias"].shape
+            == simple_model.state_dict()["layer1.bias"].shape
+        )
+        assert (
+            checkpoint["state_dict"]["layer2.weight"].shape
+            == simple_model.state_dict()["layer2.weight"].shape
+        )
+        assert (
+            checkpoint["state_dict"]["layer2.bias"].shape
+            == simple_model.state_dict()["layer2.bias"].shape
+        )
 
     def test_partial_match(self, mock_trainer, simple_model):
         """Test partial matching of checkpoint to model."""
@@ -313,14 +353,19 @@ class TestStrictCheckpointCallback:
 
         callback.on_load_checkpoint(mock_trainer, simple_model, checkpoint)
 
-        # Only matching keys should remain
+        # All model keys should be present
         assert "layer1.weight" in checkpoint["state_dict"]
         assert "layer1.bias" in checkpoint["state_dict"]
-        assert "layer2.weight" not in checkpoint["state_dict"]
+        assert (
+            "layer2.weight" in checkpoint["state_dict"]
+        )  # CHANGED: Now added from model
+        assert (
+            "layer2.bias" in checkpoint["state_dict"]
+        )  # CHANGED: Now added from model
         assert "extra_layer.weight" not in checkpoint["state_dict"]
 
-        # Should have 2 out of 4 parameters
-        assert len(checkpoint["state_dict"]) == 2
+        # Should have all 4 parameters
+        assert len(checkpoint["state_dict"]) == 4  # CHANGED: Was expecting 2
 
     def test_large_number_of_mismatches_logging(self, mock_trainer, simple_model):
         """Test logging behavior with many mismatches (>10)."""
@@ -366,8 +411,12 @@ class TestStrictCheckpointCallback:
         # Should be the same object (modified in-place)
         assert id(checkpoint) == checkpoint_id
 
-        # But contents should be different
+        # Extra key should be removed
         assert "extra_key" not in checkpoint["state_dict"]
+
+        # Missing keys should be added
+        assert "layer2.weight" in checkpoint["state_dict"]
+        assert "layer2.bias" in checkpoint["state_dict"]
 
 
 @pytest.mark.unit
@@ -392,7 +441,17 @@ class TestStrictCheckpointCallbackIntegration:
         # Should handle the shape mismatch gracefully
         callback.on_load_checkpoint(mock_trainer, small_model, large_checkpoint)
 
-        # Only matching shapes should be loaded (biases might match if sizes align)
+        # All model parameters should be present with correct shapes
+        assert len(large_checkpoint["state_dict"]) == len(small_model.state_dict())
+
+        # Verify shapes match the small model
+        for key in small_model.state_dict().keys():
+            assert (
+                large_checkpoint["state_dict"][key].shape
+                == small_model.state_dict()[key].shape
+            )
+
+        # Optimizer states should be cleared
         assert "optimizer_states" not in large_checkpoint
 
     def test_workflow_adding_new_layers(self):
@@ -419,11 +478,16 @@ class TestStrictCheckpointCallbackIntegration:
 
         callback.on_load_checkpoint(mock_trainer, new_model, old_checkpoint)
 
-        # Old layers should be loaded
+        # Old layers should be loaded from checkpoint
         assert "layer1.weight" in old_checkpoint["state_dict"]
         assert "layer2.weight" in old_checkpoint["state_dict"]
-        # New layer won't be in checkpoint
-        assert "layer3.weight" not in old_checkpoint["state_dict"]
+
+        # New layer should be added from model's current state
+        assert "layer3.weight" in old_checkpoint["state_dict"]  # CHANGED: Now added
+        assert "layer3.bias" in old_checkpoint["state_dict"]  # CHANGED: Now added
+
+        # All model parameters should be present
+        assert len(old_checkpoint["state_dict"]) == len(new_model.state_dict())
 
         # Optimizer states should be cleared
         assert "optimizer_states" not in old_checkpoint
