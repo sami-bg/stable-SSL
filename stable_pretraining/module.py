@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from tabulate import tabulate
 from pathlib import Path
 from prettytable import PrettyTable
-
+from lightning.pytorch.core.optimizer import LightningOptimizer
 from .optim import create_optimizer, create_scheduler
 
 
@@ -241,15 +241,19 @@ class Module(pl.LightningModule):
                     gradient_clip_val=clip_val,
                     gradient_clip_algorithm=clip_algo,
                 )
-            # Use precision plugin for proper AMP handling with multiple optimizers
-            base_opt = getattr(opt, "optimizer", opt)
-            self.trainer.precision_plugin.optimizer_step(
-                optimizer=base_opt, model=self, closure=lambda: None
-            )
+
+            if not isinstance(opt, LightningOptimizer):
+                msg = (
+                    "We received an optimizer that is not wrapped"
+                    "by lightning, make sure you define all your optimizers"
+                    f"in the configure_optimizers method! {opt}"
+                )
+                logging.error(msg)
+                raise ValueError(msg)
+            opt.step()
             zero_grad_opts.append(opt)
             # Step its scheduler if it exists
             if schedulers[idx] is not None:
-                assert getattr(schedulers[idx], "optimizer", None) is base_opt
                 schedulers[idx].step()
 
         # zero grad what's needed
