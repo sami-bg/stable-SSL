@@ -19,6 +19,7 @@ from .earlystop import EpochMilestones
 from .wd_schedule import WeightDecayUpdater
 from .cleanup import CleanUpCallback
 from .env_info import EnvironmentDumpCallback
+from .cpu_offload import CPUOffloadCallback
 
 __all__ = [
     OnlineProbe,
@@ -35,6 +36,7 @@ __all__ = [
     RankMe,
     LiDAR,
     ImageRetrieval,
+    CPUOffloadCallback,
     TeacherStudentCallback,
     CLIPZeroShot,
     EmbeddingCache,
