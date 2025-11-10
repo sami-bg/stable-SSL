@@ -867,7 +867,7 @@ class EfficientMaskedTimmViT(nn.Module):
     This module is designed to work with timm ViT models and provides:
     - Per-sample NaN masking (different NaN patterns per image in batch)
     - Fast path for same masking pattern across batch
-    - Support for class tokens (cls_token) and distillation tokens (dist_token)
+    - Support for class tokens (cls_token), distillation tokens (dist_token), and register tokens
     - Compatibility with various timm ViT architectures (vit_*, deit_*, beit_*, etc.)
     - Minimal overhead when no masking is present
 
@@ -887,7 +887,9 @@ class EfficientMaskedTimmViT(nn.Module):
 
     Example:
         >>> import timm
-        >>> vit = timm.create_model("vit_base_patch16_224", pretrained=True)
+        >>> vit = timm.create_model(
+        ...     "vit_base_patch16_224", pretrained=False, reg_tokens=4
+        ... )
         >>> masked_vit = EfficientMaskedTimmViT(vit)
         >>>
         >>> # Create input with some NaN patches
@@ -903,12 +905,8 @@ class EfficientMaskedTimmViT(nn.Module):
     Note:
         All samples in a batch must have the same NUMBER of NaN patches,
         but the LOCATION of NaN patches can differ per sample.
-    Performance Notes:
-        - Works best with vit_small and larger models
-        - vit_tiny: ~1.5x max speedup (model too small)
-        - vit_small: ~3-4x speedup at high masking
-        - vit_base: ~7-8x speedup at high masking
-        - Same pattern: 0-5% faster than different patterns
+
+        Register tokens (DINOv2 style) do NOT receive positional embeddings.
     """
 
     def __init__(self, vit: nn.Module):
@@ -943,33 +941,71 @@ class EfficientMaskedTimmViT(nn.Module):
                 logging.debug(f"Registered NaN hook for: {name}")
 
     def _get_num_extra_tokens(self) -> int:
-        """Determine the number of extra tokens (cls, dist) the model uses.
+        """Determine the number of extra tokens (cls, dist, register) the model uses.
 
         Returns:
-            int: Number of extra tokens (0, 1, or 2)
+            int: Number of extra tokens (cls + dist + register)
 
         Note:
-            This is cached based on model structure and doesn't change during forward pass.
+            This counts ALL extra tokens that occupy sequence positions.
+            Register tokens don't receive positional embeddings but do occupy positions.
         """
         num_extra = 0
+
+        # CLS token
         if hasattr(self.vit, "cls_token") and self.vit.cls_token is not None:
             num_extra += 1
+
+        # Distillation token (DeiT)
         if hasattr(self.vit, "dist_token") and self.vit.dist_token is not None:
             num_extra += 1
+
+        # Register tokens (DINOv2 style)
+        if hasattr(self.vit, "reg_token") and self.vit.reg_token is not None:
+            num_extra += self.vit.reg_token.shape[1]
+        elif hasattr(self.vit, "num_reg_tokens"):
+            num_extra += self.vit.num_reg_tokens
+
         return num_extra
 
+    def _get_num_pos_tokens(self) -> int:
+        """Get the number of tokens that RECEIVE positional embeddings.
+
+        Returns:
+            int: Number of tokens with positional embeddings
+
+        Note:
+            With timm's dynamic_img_size=True, register tokens ARE included in pos_embed.
+            This method returns CLS + DIST (not register) for non-dynamic models,
+            but we need to check pos_embed.shape to know the actual structure.
+        """
+        num_pos = 0
+
+        # CLS token gets positional embedding
+        if hasattr(self.vit, "cls_token") and self.vit.cls_token is not None:
+            num_pos += 1
+
+        # Distillation token gets positional embedding
+        if hasattr(self.vit, "dist_token") and self.vit.dist_token is not None:
+            num_pos += 1
+
+        # Note: Register tokens may or may not be in pos_embed depending on timm config
+        # This is checked dynamically in _interpolate_pos_embed
+
+        return num_pos
+
     def _add_extra_tokens(self, x: torch.Tensor) -> torch.Tensor:
-        """Add cls_token and/or dist_token to the sequence.
+        """Add cls_token, dist_token, and/or register tokens to the sequence.
 
         Args:
             x: Input tensor of shape (B, N, D) containing patch embeddings
 
         Returns:
-            torch.Tensor: Tensor with extra tokens prepended, shape (B, N+num_extra, D)
+            torch.Tensor: Tensor with extra tokens prepended
 
         Note:
-            Tokens are added in the order: [cls_token, dist_token (if present), patches]
-            For DeiT models, the order is: [cls_token, dist_token, patches]
+            Token order: [cls_token, dist_token (if present), register_tokens (if present), patches]
+            This matches the timm convention for ViTs with register tokens.
         """
         B = x.shape[0]
 
@@ -981,11 +1017,27 @@ class EfficientMaskedTimmViT(nn.Module):
         # Add dist_token if present (for DeiT models)
         if hasattr(self.vit, "dist_token") and self.vit.dist_token is not None:
             dist_tokens = self.vit.dist_token.expand(B, -1, -1)
-            # Insert after cls_token if it exists, otherwise at the beginning
             if hasattr(self.vit, "cls_token") and self.vit.cls_token is not None:
                 x = torch.cat([x[:, :1, :], dist_tokens, x[:, 1:, :]], dim=1)
             else:
                 x = torch.cat([dist_tokens, x], dim=1)
+
+        # Add register tokens if present (DINOv2 style)
+        if hasattr(self.vit, "reg_token") and self.vit.reg_token is not None:
+            reg_tokens = self.vit.reg_token.expand(B, -1, -1)
+            # Register tokens come after cls/dist but before patches
+            num_prefix = 0
+            if hasattr(self.vit, "cls_token") and self.vit.cls_token is not None:
+                num_prefix += 1
+            if hasattr(self.vit, "dist_token") and self.vit.dist_token is not None:
+                num_prefix += 1
+
+            if num_prefix > 0:
+                x = torch.cat(
+                    [x[:, :num_prefix, :], reg_tokens, x[:, num_prefix:, :]], dim=1
+                )
+            else:
+                x = torch.cat([reg_tokens, x], dim=1)
 
         return x
 
@@ -1016,20 +1068,45 @@ class EfficientMaskedTimmViT(nn.Module):
     ) -> torch.Tensor:
         """Subsample positional embeddings when all samples have the same mask pattern."""
         pos_embed = self.vit.pos_embed
-        num_extra_tokens = self._get_num_extra_tokens()
+        num_pos_tokens = self._get_num_pos_tokens()
 
-        # ✨ NEW: Interpolate if needed for dynamic image sizes
+        # Check if model has register tokens
+        num_register_tokens = 0
+        if hasattr(self.vit, "reg_token") and self.vit.reg_token is not None:
+            num_register_tokens = self.vit.reg_token.shape[1]
+        elif hasattr(self.vit, "num_reg_tokens"):
+            num_register_tokens = self.vit.num_reg_tokens
+
+        # Interpolate if needed for dynamic image sizes
         pos_embed = self._interpolate_pos_embed(pos_embed, N)
 
         # Determine positional embedding structure
-        if pos_embed.shape[1] == N + num_extra_tokens:
-            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]
-            patch_pos_embed = pos_embed[:, num_extra_tokens:, :]
+        # With dynamic_img_size=True, pos_embed may include register tokens
+        # Check both: with and without register tokens
+        if pos_embed.shape[1] == N + num_pos_tokens + num_register_tokens:
+            # pos_embed includes register tokens: [CLS, REG, PATCHES]
+            extra_tokens_pos = pos_embed[:, : num_pos_tokens + num_register_tokens, :]
+            patch_pos_embed = pos_embed[:, num_pos_tokens + num_register_tokens :, :]
 
             # Subsample patch positions
             patch_pos_embed = patch_pos_embed[:, keep_idx, :]
 
-            if num_extra_tokens > 0:
+            pos_embed = torch.cat(
+                [
+                    extra_tokens_pos.expand(B, -1, -1),
+                    patch_pos_embed.expand(B, -1, -1),
+                ],
+                dim=1,
+            )
+        elif pos_embed.shape[1] == N + num_pos_tokens:
+            # pos_embed doesn't include register tokens: [CLS, PATCHES]
+            extra_tokens_pos = pos_embed[:, :num_pos_tokens, :]
+            patch_pos_embed = pos_embed[:, num_pos_tokens:, :]
+
+            # Subsample patch positions
+            patch_pos_embed = patch_pos_embed[:, keep_idx, :]
+
+            if num_pos_tokens > 0:
                 pos_embed = torch.cat(
                     [
                         extra_tokens_pos.expand(B, -1, -1),
@@ -1039,14 +1116,15 @@ class EfficientMaskedTimmViT(nn.Module):
                 )
             else:
                 pos_embed = patch_pos_embed.expand(B, -1, -1)
-
         elif pos_embed.shape[1] == N:
+            # No extra tokens at all
             patch_pos_embed = pos_embed[:, keep_idx, :]
             pos_embed = patch_pos_embed.expand(B, -1, -1)
         else:
             raise RuntimeError(
                 f"Unexpected pos_embed shape after interpolation: {pos_embed.shape}. "
-                f"Expected shape[1] to be {N + num_extra_tokens} or {N}"
+                f"Expected shape[1] to be {N + num_pos_tokens + num_register_tokens}, "
+                f"{N + num_pos_tokens}, or {N}"
             )
 
         return pos_embed
@@ -1056,22 +1134,37 @@ class EfficientMaskedTimmViT(nn.Module):
     ) -> torch.Tensor:
         """Subsample positional embeddings when samples have different mask patterns."""
         pos_embed = self.vit.pos_embed
-        num_extra_tokens = self._get_num_extra_tokens()
+        num_pos_tokens = self._get_num_pos_tokens()
 
-        # ✨ NEW: Interpolate if needed for dynamic image sizes
+        # Check if model has register tokens
+        num_register_tokens = 0
+        if hasattr(self.vit, "reg_token") and self.vit.reg_token is not None:
+            num_register_tokens = self.vit.reg_token.shape[1]
+        elif hasattr(self.vit, "num_reg_tokens"):
+            num_register_tokens = self.vit.num_reg_tokens
+
+        # Interpolate if needed for dynamic image sizes
         pos_embed = self._interpolate_pos_embed(pos_embed, N)
 
         # Determine positional embedding structure
-        if pos_embed.shape[1] == N + num_extra_tokens:
-            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]
-            patch_pos_embed = pos_embed[:, num_extra_tokens:, :]
+        # With dynamic_img_size=True, pos_embed may include register tokens
+        if pos_embed.shape[1] == N + num_pos_tokens + num_register_tokens:
+            # pos_embed includes register tokens: [CLS, REG, PATCHES]
+            extra_tokens_pos = pos_embed[:, : num_pos_tokens + num_register_tokens, :]
+            patch_pos_embed = pos_embed[:, num_pos_tokens + num_register_tokens :, :]
+        elif pos_embed.shape[1] == N + num_pos_tokens:
+            # pos_embed doesn't include register tokens: [CLS, PATCHES]
+            extra_tokens_pos = pos_embed[:, :num_pos_tokens, :]
+            patch_pos_embed = pos_embed[:, num_pos_tokens:, :]
         elif pos_embed.shape[1] == N:
+            # No extra tokens
             extra_tokens_pos = None
             patch_pos_embed = pos_embed
         else:
             raise RuntimeError(
                 f"Unexpected pos_embed shape after interpolation: {pos_embed.shape}. "
-                f"Expected shape[1] to be {N + num_extra_tokens} or {N}"
+                f"Expected shape[1] to be {N + num_pos_tokens + num_register_tokens}, "
+                f"{N + num_pos_tokens}, or {N}"
             )
 
         # Subsample patch positional embeddings per sample
@@ -1079,7 +1172,7 @@ class EfficientMaskedTimmViT(nn.Module):
         batch_idx = self._get_batch_indices(B, num_keep, keep_indices.device)
         patch_pos_embed = patch_pos_embed[batch_idx, keep_indices, :]
 
-        if extra_tokens_pos is not None and num_extra_tokens > 0:
+        if extra_tokens_pos is not None:
             extra_tokens_pos = extra_tokens_pos.expand(B, -1, -1)
             pos_embed = torch.cat([extra_tokens_pos, patch_pos_embed], dim=1)
         else:
@@ -1133,11 +1226,12 @@ class EfficientMaskedTimmViT(nn.Module):
         - Optimized indexing for same masking patterns across batch
         - Per-sample masking support with advanced indexing
         - Automatic NaN replacement for partial NaN patches
+        - Support for register tokens (DINOv2 style)
 
         Args:
             x: Input tensor, either:
-               - Raw images: shape (B, C, H, W)
-               - Pre-patchified: shape (B, N, D) where N is number of patches
+            - Raw images: shape (B, C, H, W)
+            - Pre-patchified: shape (B, N, D) where N is number of patches
 
         Returns:
             torch.Tensor: Model output (logits if head exists, features otherwise)
@@ -1180,6 +1274,7 @@ class EfficientMaskedTimmViT(nn.Module):
                 f"Input must be 4D (B, C, H, W) image or 3D (B, N, D) patches. "
                 f"Got shape: {x.shape}"
             )
+
         B, N, D = x.shape
         device = x.device
         nan_mask = torch.isnan(x).any(dim=2)  # (B, N)
@@ -1224,10 +1319,12 @@ class EfficientMaskedTimmViT(nn.Module):
         if torch.isnan(x).any():
             x = torch.nan_to_num(x, nan=0.0)
 
-        # Add cls_token and/or dist_token
+        # Add cls_token, dist_token, and/or register tokens
         x = self._add_extra_tokens(x)
 
         # Add positional embeddings
+        # The subsample methods ensure pos_embed matches x in length
+        # (includes register tokens when using dynamic_img_size=True)
         x = x + pos_embed
 
         # Apply positional dropout if it exists
@@ -1307,22 +1404,48 @@ class EfficientMaskedTimmViT(nn.Module):
             N: Target number of patches
 
         Returns:
-            torch.Tensor: Interpolated positional embeddings, shape (1, N + num_extra, D)
+            torch.Tensor: Interpolated positional embeddings
+
+        Note:
+            When using timm with dynamic_img_size=True and reg_tokens, the pos_embed
+            INCLUDES register tokens: [CLS_pos, REG_pos, PATCH_pos]
         """
-        num_extra_tokens = self._get_num_extra_tokens()
+        num_pos_tokens = self._get_num_pos_tokens()
+
+        # Check if model has register tokens
+        num_register_tokens = 0
+        if hasattr(self.vit, "reg_token") and self.vit.reg_token is not None:
+            num_register_tokens = self.vit.reg_token.shape[1]
+        elif hasattr(self.vit, "num_reg_tokens"):
+            num_register_tokens = self.vit.num_reg_tokens
+
         N_orig = pos_embed.shape[1]
 
         # If already correct size, return as-is
-        if N_orig == N + num_extra_tokens or N_orig == N:
+        # Check both possibilities: with and without register tokens
+        if (
+            N_orig == N + num_pos_tokens + num_register_tokens
+            or N_orig == N + num_pos_tokens
+            or N_orig == N
+        ):
             return pos_embed
 
-        # Separate extra tokens from patch embeddings
-        if N_orig > num_extra_tokens:
-            extra_tokens_pos = pos_embed[:, :num_extra_tokens, :]  # (1, num_extra, D)
-            patch_pos_embed = pos_embed[
-                :, num_extra_tokens:, :
-            ]  # (1, N_orig - num_extra, D)
+        # Determine structure: timm may include register tokens in pos_embed when dynamic_img_size=True
+        # Structure can be: [CLS_pos, REG_pos, PATCH_pos] or [CLS_pos, PATCH_pos]
+
+        # Calculate expected position with register tokens
+        expected_with_reg = num_pos_tokens + num_register_tokens
+
+        if N_orig > expected_with_reg and num_register_tokens > 0:
+            # pos_embed includes register tokens: [CLS, REG, PATCHES]
+            extra_tokens_pos = pos_embed[:, :expected_with_reg, :]
+            patch_pos_embed = pos_embed[:, expected_with_reg:, :]
+        elif num_pos_tokens > 0 and N_orig > num_pos_tokens:
+            # pos_embed doesn't include register tokens: [CLS, PATCHES]
+            extra_tokens_pos = pos_embed[:, :num_pos_tokens, :]
+            patch_pos_embed = pos_embed[:, num_pos_tokens:, :]
         else:
+            # No extra tokens
             extra_tokens_pos = None
             patch_pos_embed = pos_embed
 
@@ -1355,14 +1478,14 @@ class EfficientMaskedTimmViT(nn.Module):
             size=(gs_new, gs_new),
             mode="bicubic",
             align_corners=False,
-            antialias=False,  # Match timm behavior
+            antialias=False,
         )
 
         # Reshape back: (1, D, H_new, W_new) -> (1, N, D)
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, N, D)
 
-        # Recombine with extra tokens
-        if extra_tokens_pos is not None and num_extra_tokens > 0:
+        # Recombine with extra token positions
+        if extra_tokens_pos is not None:
             pos_embed = torch.cat([extra_tokens_pos, patch_pos_embed], dim=1)
         else:
             pos_embed = patch_pos_embed
