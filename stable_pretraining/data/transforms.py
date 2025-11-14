@@ -566,8 +566,6 @@ class PatchMasking(Transform):
             and 128/255.0 for PIL images (mid-gray). Can be set to any float in [0,1] for normalized images.
     """
 
-    _NAMES = ["patch_mask"]
-
     def __init__(
         self,
         patch_size: int = 16,
@@ -575,8 +573,14 @@ class PatchMasking(Transform):
         source: str = "image",
         target: str = "image",
         fill_value: float = None,
+        mask_key: str = "patch_mask",
     ):
         super().__init__()
+        if not 0.0 <= drop_ratio <= 1.0:
+            raise ValueError(f"drop_ratio must be in [0, 1], got {drop_ratio}")
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be positive, got {patch_size}")
+        self.mask_key = mask_key
         self.patch_size = patch_size
         self.drop_ratio = drop_ratio
         self.source = source
@@ -603,12 +607,11 @@ class PatchMasking(Transform):
         # Determine mask value
         if self.fill_value is not None:
             fill_value = self.fill_value
-        elif isinstance(img, Image.Image):
-            fill_value = 128 / 255.0
-        elif img_tensor.dtype == torch.uint8:
-            fill_value = 128
         else:
             fill_value = 0.0
+        fill_value = torch.tensor(
+            fill_value, dtype=img_tensor.dtype, device=img_tensor.device
+        )
 
         # Vectorized masking: upsample patch mask to full resolution
         # Create full-size mask initialized to True (keep remainder pixels)
@@ -620,20 +623,10 @@ class PatchMasking(Transform):
         ).repeat_interleave(self.patch_size, dim=1)
         full_mask[: upsampled_mask.shape[0], : upsampled_mask.shape[1]] = upsampled_mask
 
-        masked_img = torch.where(
-            full_mask.unsqueeze(0),
-            img_tensor,
-            torch.tensor(fill_value, dtype=img_tensor.dtype, device=img_tensor.device),
-        )
-
-        # Convert back to PIL if needed
-        if isinstance(img, Image.Image):
-            masked_img_out = F.to_pil_image(masked_img)
-        else:
-            masked_img_out = masked_img
+        masked_img_out = torch.where(full_mask, img_tensor, fill_value)
 
         self.nested_set(x, masked_img_out, self.target)
-        x[self._NAMES[0]] = mask
+        self.nested_set(x, mask, self.mask_key)
         return x
 
     @staticmethod

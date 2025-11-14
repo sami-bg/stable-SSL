@@ -44,8 +44,8 @@ def test_patch_masking_transform(input_type, fill_value):
     # Check that masked_image is still an image of the same size and type
     masked_img = out["masked_image"]
     if input_type == "pil":
-        assert isinstance(masked_img, Image.Image)
-        assert masked_img.size == (32, 32)
+        assert isinstance(masked_img, torch.Tensor)
+        assert masked_img.shape == (32, 32)
         masked_img_tensor = (
             torch.from_numpy(np.array(masked_img)).permute(2, 0, 1).float() / 255.0
         )

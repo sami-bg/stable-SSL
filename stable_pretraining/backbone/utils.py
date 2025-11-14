@@ -1266,7 +1266,6 @@ class EfficientMaskedTimmViT(nn.Module):
                 raise ValueError(
                     f"Expected patch_embed output to be 3D or 4D, got {x.ndim}D with shape {x.shape}"
                 )
-
         elif x.ndim == 3:  # (B, N, D) - already patchified
             pass
         else:
