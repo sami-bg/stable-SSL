@@ -43,26 +43,13 @@ def test_patch_masking_transform(input_type, fill_value):
     assert mask.dtype == torch.bool
     # Check that masked_image is still an image of the same size and type
     masked_img = out["masked_image"]
-    if input_type == "pil":
-        assert isinstance(masked_img, torch.Tensor)
-        assert masked_img.shape == (32, 32)
-        masked_img_tensor = (
-            torch.from_numpy(np.array(masked_img)).permute(2, 0, 1).float() / 255.0
-        )
-    else:
-        assert isinstance(masked_img, torch.Tensor)
-        assert masked_img.shape[1:] == (32, 32)
-        if masked_img.dtype == torch.uint8:
-            masked_img_tensor = masked_img.float() / 255.0
-        else:
-            masked_img_tensor = masked_img
+    assert isinstance(masked_img, torch.Tensor)
+    assert masked_img.shape == (3, 32, 32)
+    masked_img_tensor = masked_img
+
     # Determine expected mask value
     if fill_value is not None:
         expected_fill_value = fill_value
-    elif input_type == "pil" or (
-        input_type == "tensor_uint8" and masked_img_tensor.max() > 1.0
-    ):
-        expected_fill_value = 128 / 255.0
     else:
         expected_fill_value = 0.0
     # Check that at least one patch is masked and that masked patches have the correct value
