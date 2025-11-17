@@ -2,6 +2,104 @@ import time
 from huggingface_hub.utils import HfHubHTTPError
 import requests
 from loguru import logger as logging
+import sys
+import os
+import traceback
+from contextlib import contextmanager
+from functools import wraps
+from typing import Callable, Any
+
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
+
+def get_rank():
+    """Get distributed training rank."""
+    return int(os.environ.get("RANK", "0"))
+
+
+def is_main_process():
+    """Check if this is the main process."""
+    return get_rank() == 0
+
+
+@contextmanager
+def catch_errors():
+    """Catch and log errors from all ranks before re-raising.
+
+    Ensures errors appear in Slurm logs, wandb, and everywhere else.
+    """
+    try:
+        yield
+
+    except Exception as e:
+        rank = get_rank()
+        rank_prefix = f"[Rank {rank}] " if rank > 0 else ""
+
+        error_msg = (
+            f"\n{'=' * 80}\n"
+            f"{rank_prefix}💥 EXCEPTION CAUGHT\n"
+            f"{'=' * 80}\n"
+            f"Type: {type(e).__name__}\n"
+            f"Message: {str(e)}\n"
+            f"{'=' * 80}\n"
+            f"TRACEBACK:\n"
+            f"{traceback.format_exc()}"
+            f"{'=' * 80}\n"
+        )
+
+        # Log from ALL ranks (important for debugging distributed issues)
+        logging.opt(depth=1).error(error_msg)
+
+        # Direct prints to stderr/stdout (backup for Slurm logs)
+        print(error_msg, file=sys.stderr, flush=True)
+        print(error_msg, file=sys.stdout, flush=True)
+
+        # Wandb logging (only from main process, with error handling)
+        if is_main_process() and wandb is not None:
+            try:
+                if getattr(wandb, "run", None) is not None:
+                    wandb.log(
+                        {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "traceback": traceback.format_exc(),
+                        }
+                    )
+                    wandb.finish(exit_code=1)
+            except Exception as wandb_error:
+                # Don't let wandb errors hide the original error
+                print(
+                    f"Warning: Failed to log to wandb: {wandb_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+        # Always re-raise
+        raise
+
+
+def catch_errors_decorator():
+    """Decorator version of catch_errors.
+
+    Usage:
+        @catch_errors_decorator()
+        def train():
+            ...
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            with catch_errors():
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def with_hf_retry_ratelimit(func, *args, delay=10, max_attempts=100, **kwargs):
@@ -67,3 +165,52 @@ def with_hf_retry_ratelimit(func, *args, delay=10, max_attempts=100, **kwargs):
                 time.sleep(retry_after)
             else:
                 raise
+
+
+def catch_errors_class(exclude_methods=None):
+    """Class decorator that wraps all methods with catch_errors.
+
+    Usage:
+        @catch_errors_class()
+        class Manager(submitit.helpers.Checkpointable):
+            def train(self):
+                ...
+
+    Args:
+        exclude_methods: List of method names to exclude from wrapping
+                        (default: excludes __init__, __new__, __del__, checkpoint)
+    """
+    if exclude_methods is None:
+        # Default exclusions - dunder methods and checkpoint (for Submitit)
+        exclude_methods = {
+            "__init__",
+            "__new__",
+            "__del__",
+            "__repr__",
+            "__str__",
+            "checkpoint",
+            "__call__",
+        }
+
+    def decorator(cls):
+        # Iterate over all attributes
+        for attr_name in dir(cls):
+            # Skip excluded methods
+            if attr_name in exclude_methods:
+                continue
+
+            # Skip private methods (starting with _)
+            if attr_name.startswith("_"):
+                continue
+
+            attr = getattr(cls, attr_name)
+
+            # Only wrap callable methods
+            if callable(attr):
+                # Wrap the method
+                wrapped = catch_errors_decorator()(attr)
+                setattr(cls, attr_name, wrapped)
+
+        return cls
+
+    return decorator
