@@ -167,48 +167,57 @@ def with_hf_retry_ratelimit(func, *args, delay=10, max_attempts=100, **kwargs):
                 raise
 
 
-def catch_errors_class(exclude_methods=None):
-    """Class decorator that wraps all methods with catch_errors.
+def catch_errors_class(exclude_methods=None, include_private=False):
+    """Class decorator that wraps all public methods with catch_errors.
+
+    Only wraps methods defined in the class itself, not inherited methods.
+
+    Args:
+        exclude_methods: Set/list of method names to exclude
+        include_private: If True, wrap private methods too (starting with _)
 
     Usage:
         @catch_errors_class()
-        class Manager(submitit.helpers.Checkpointable):
-            def train(self):
+        class MyClass:
+            def method(self):
                 ...
-
-    Args:
-        exclude_methods: List of method names to exclude from wrapping
-                        (default: excludes __init__, __new__, __del__, checkpoint)
     """
     if exclude_methods is None:
-        # Default exclusions - dunder methods and checkpoint (for Submitit)
         exclude_methods = {
-            "__init__",
             "__new__",
             "__del__",
             "__repr__",
             "__str__",
-            "checkpoint",
-            "__call__",
+            "__dict__",
+            "__weakref__",
+            "__module__",
+            "__doc__",
+            # PyTorch methods - don't wrap these!
+            "get_extra_state",
+            "set_extra_state",
+            "_apply",
+            "_save_to_state_dict",
+            "_load_from_state_dict",
         }
+    else:
+        exclude_methods = set(exclude_methods)
 
     def decorator(cls):
-        # Iterate over all attributes
-        for attr_name in dir(cls):
-            # Skip excluded methods
+        # Only iterate over methods defined in THIS class, not inherited
+        for attr_name, attr_value in cls.__dict__.items():
+            # Skip excluded
             if attr_name in exclude_methods:
                 continue
 
-            # Skip private methods (starting with _)
-            if attr_name.startswith("_"):
+            # Skip private unless requested
+            if not include_private and attr_name.startswith("_"):
                 continue
 
-            attr = getattr(cls, attr_name)
-
-            # Only wrap callable methods
-            if callable(attr):
-                # Wrap the method
-                wrapped = catch_errors_decorator()(attr)
+            # Only wrap callable methods (not classmethods, staticmethods, properties)
+            if callable(attr_value) and not isinstance(
+                attr_value, (classmethod, staticmethod, property)
+            ):
+                wrapped = catch_errors_decorator()(attr_value)
                 setattr(cls, attr_name, wrapped)
 
         return cls
