@@ -1,11 +1,11 @@
 from typing import Optional, Dict, Any
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import Callback
+from lightning.pytorch import LightningModule, Trainer
+from lightning.pytorch.callbacks import Callback
 
-_MODULE_REGISTRY: Dict[str, pl.LightningModule] = {}
+_MODULE_REGISTRY: Dict[str, LightningModule] = {}
 
 
-def get_module(name: str = "default") -> Optional[pl.LightningModule]:
+def get_module(name: str = "default") -> Optional[LightningModule]:
     """Retrieve a registered module."""
     return _MODULE_REGISTRY.get(name)
 
@@ -23,14 +23,12 @@ class ModuleRegistryCallback(Callback):
     def __init__(self, name: str = "default"):
         self.name = name
 
-    def setup(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
-    ) -> None:
+    def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
         """Register module at the start of any stage (fit, validate, test, predict)."""
         _MODULE_REGISTRY[self.name] = pl_module
 
     def teardown(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str
+        self, trainer: Trainer, pl_module: LightningModule, stage: str
     ) -> None:
         """Clean up registry when done."""
         _MODULE_REGISTRY.pop(self.name, None)
