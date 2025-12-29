@@ -26,6 +26,7 @@ from .utils import (
     vit_hf,
     EfficientMaskedTimmViT,
     register_lr_scale_hook,
+    HiddenStateExtractor,
 )
 
 from .aggregator import TensorAggregator
@@ -48,6 +49,7 @@ __all__ = [
     EfficientMaskedTimmViT,
     register_lr_scale_hook,
     AutoTuneMLP,
+    HiddenStateExtractor,
 ]
 
 if _MAE_AVAILABLE:
