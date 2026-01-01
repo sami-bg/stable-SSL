@@ -2,6 +2,7 @@ from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
 from .trainer_info import LoggingCallback, ModuleSummary, TrainerInfo, SLURMInfo
 from .env_info import EnvironmentDumpCallback
 from .registry import ModuleRegistryCallback
+from .unused_parameters import LogUnusedParametersOnce
 
 
 def default():
@@ -16,6 +17,7 @@ def default():
         WandbCheckpoint(),
         ModuleSummary(),
         SLURMInfo(),
+        LogUnusedParametersOnce(),
     ]
 
     return callbacks

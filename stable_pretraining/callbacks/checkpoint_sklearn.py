@@ -285,6 +285,11 @@ class WandbCheckpoint(Callback):
                     "Run not initialized yet, skipping since this is a slave process!"
                 )
                 return
+            if wandb.run is not None and wandb.run.id == checkpoint["wandb"]["id"]:
+                logging.info(
+                    "Run already property initialized, skipping deletion and setup!"
+                )
+                return
             logging.info(
                 f"Deleting current run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}... 🔧"
             )

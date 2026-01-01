@@ -21,6 +21,7 @@ from .cleanup import CleanUpCallback
 from .env_info import EnvironmentDumpCallback
 from .cpu_offload import CPUOffloadCallback
 from .registry import ModuleRegistryCallback
+from .unused_parameters import LogUnusedParametersOnce
 
 __all__ = [
     OnlineProbe,
@@ -47,4 +48,5 @@ __all__ = [
     StrictCheckpointCallback,
     EnvironmentDumpCallback,
     ModuleRegistryCallback,
+    LogUnusedParametersOnce,
 ]
