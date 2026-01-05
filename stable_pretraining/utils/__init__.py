@@ -51,6 +51,7 @@ from .nn_modules import (
     UnsortedQueue,
 )
 from .visualization import format_df_to_latex
+from . import flops
 
 __all__ = [
     "detach_tensors",
@@ -107,4 +108,5 @@ __all__ = [
     "load_hparams_from_ckpt",
     "CSVLogAutoSummarizer",
     "format_df_to_latex",
+    "flops",
 ]

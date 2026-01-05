@@ -194,6 +194,9 @@ class Module(pl.LightningModule):
         )
         return loss / accum
 
+    def after_manual_backward(self):
+        pass
+
     def training_step(self, batch, batch_idx):
         """Manual optimization training step with support for multiple optimizers.
 
@@ -228,6 +231,7 @@ class Module(pl.LightningModule):
 
         # Compute gradients once for the joint loss
         self.manual_backward(state["loss"])
+        self.after_manual_backward()
 
         zero_grad_opts = []
         # Stepping and gradient clipping at accumulation boundary
