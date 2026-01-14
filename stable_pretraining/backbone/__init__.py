@@ -28,7 +28,7 @@ from .utils import (
     register_lr_scale_hook,
     HiddenStateExtractor,
 )
-
+from .vit import MAEDecoder
 from .aggregator import TensorAggregator
 
 __all__ = [
@@ -50,6 +50,7 @@ __all__ = [
     register_lr_scale_hook,
     AutoTuneMLP,
     HiddenStateExtractor,
+    MAEDecoder,
 ]
 
 if _MAE_AVAILABLE:

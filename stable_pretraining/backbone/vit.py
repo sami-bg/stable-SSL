@@ -2,6 +2,115 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Literal
+from timm.models.vision_transformer import Block
+from timm.layers import trunc_normal_
+
+from .pos_embed import get_sincos_pos_embed
+
+__all__ = ["MAEDecoder"]
+
+
+class MAEDecoder(nn.Module):
+    """MAE-style ViT Decoder.
+
+    Takes encoded visible tokens (N, T', D) and mask (N, T) with 0=kept, 1=masked,
+    returns full reconstructed sequence (N, T, D).
+
+    :param embed_dim: Encoder embedding dimension (input/output D)
+    :param decoder_embed_dim: Internal decoder dimension (default: 512)
+    :param num_patches: Total sequence length T
+    :param depth: Number of transformer blocks (default: 8)
+    :param num_heads: Attention heads (default: 16)
+    :param mlp_ratio: MLP expansion ratio (default: 4.0)
+    :param pos_embed_type: 'sincos_1d' (MAE default), 'sincos_2d', or 'learned'
+    :param grid_size: Grid size for 2D pos embed
+    :param kwargs: Additional args passed to timm.Block (qkv_bias, drop, attn_drop, drop_path, etc.)
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 768,
+        decoder_embed_dim: int = 512,
+        num_patches: int = 196,
+        depth: int = 8,
+        num_heads: int = 16,
+        mlp_ratio: float = 4.0,
+        pos_embed_type: Literal["sincos_1d", "sincos_2d", "learned"] = "sincos_1d",
+        grid_size: int | None = None,
+        **kwargs,
+    ):
+        super().__init__()
+        self.num_patches = num_patches
+
+        # Projection layers
+        self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim)
+        self.decoder_pred = nn.Linear(decoder_embed_dim, embed_dim)
+
+        # Learnable mask token
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        trunc_normal_(self.mask_token, std=0.02)
+
+        # Positional embeddings
+        if pos_embed_type == "learned":
+            self.pos_embed = nn.Parameter(
+                torch.zeros(1, num_patches, decoder_embed_dim)
+            )
+            trunc_normal_(self.pos_embed, std=0.02)
+        else:
+            mode = "2d" if pos_embed_type == "sincos_2d" else "1d"
+            pe = get_sincos_pos_embed(
+                decoder_embed_dim, num_patches, mode=mode, grid_size=grid_size
+            )
+            self.register_buffer("pos_embed", pe.unsqueeze(0))
+
+        # Transformer blocks from timm (highly optimized)
+        self.blocks = nn.Sequential(
+            *[
+                Block(
+                    dim=decoder_embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    **kwargs,
+                )
+                for _ in range(depth)
+            ]
+        )
+
+        self.norm = nn.LayerNorm(decoder_embed_dim)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Applies the decoder transform.
+
+        :param x: Visible tokens (N, T', D)
+        :param mask: Binary mask (N, T), 0=kept, 1=masked
+        :return: Reconstructed full sequence (N, T, D)
+        """
+        N, T = mask.shape
+
+        # Project to decoder dim
+        x = self.decoder_embed(x)  # (N, T', decoder_embed_dim)
+
+        # Build full sequence: place visible tokens and mask tokens
+        tokens = self.mask_token.expand(N, T, -1).clone()
+        visible_mask = ~mask.bool()
+
+        # Scatter visible tokens back to original positions
+        batch_indices = torch.arange(N, device=x.device)[:, None].expand_as(
+            visible_mask
+        )
+        seq_indices = torch.arange(T, device=x.device)[None, :].expand_as(visible_mask)
+
+        # Efficient vectorized scatter
+        tokens[batch_indices[visible_mask], seq_indices[visible_mask]] = x.reshape(
+            -1, x.shape[-1]
+        )
+
+        # Add positional embeddings + transform
+        tokens = tokens + self.pos_embed
+        tokens = self.blocks(tokens)
+        tokens = self.norm(tokens)
+
+        return self.decoder_pred(tokens)
 
 
 class PositionalEncoding2D(nn.Module):

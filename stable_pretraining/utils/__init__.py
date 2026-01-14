@@ -52,6 +52,7 @@ from .nn_modules import (
 )
 from .visualization import format_df_to_latex
 from . import flops
+from .stats import mean_std
 
 __all__ = [
     "detach_tensors",
@@ -109,4 +110,5 @@ __all__ = [
     "CSVLogAutoSummarizer",
     "format_df_to_latex",
     "flops",
+    "mean_std",
 ]

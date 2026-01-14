@@ -206,6 +206,7 @@ class Module(pl.LightningModule):
         When multiple optimizers are configured, the same loss is used for all of them.
         Each optimizer updates its assigned parameters based on gradients from this joint loss.
         """
+        batch["batch_idx"] = batch_idx
         state = self(batch, stage="fit")
 
         # Resolve optimizers and schedulers (can be single or list)
@@ -319,12 +320,15 @@ class Module(pl.LightningModule):
         )
 
     def validation_step(self, batch, batch_idx):
+        batch["batch_idx"] = batch_idx
         return self.forward(batch, stage="validate")
 
     def test_step(self, batch, batch_idx):
+        batch["batch_idx"] = batch_idx
         return self.forward(batch, stage="test")
 
     def predict_step(self, batch, batch_idx):
+        batch["batch_idx"] = batch_idx
         return self.forward(batch, stage="predict")
 
     def _get_scheduler_name(self, scheduler_config, scheduler_instance=None):
