@@ -13,29 +13,28 @@ __all__ = ["MAEDecoder"]
 class MAEDecoder(nn.Module):
     """MAE-style ViT Decoder.
 
-    Takes encoded visible tokens (N, T', D) and mask (N, T) with 0=kept, 1=masked,
-    returns full reconstructed sequence (N, T, D).
-
-    :param embed_dim: Encoder embedding dimension (input/output D)
-    :param decoder_embed_dim: Internal decoder dimension (default: 512)
+    :param embed_dim: Encoder embedding dimension (input D)
+    :param decoder_embed_dim: Internal decoder dimension
+    :param output_dim: Output dimension (e.g., patch_size² × in_chans for pixels)
     :param num_patches: Total sequence length T
-    :param depth: Number of transformer blocks (default: 8)
-    :param num_heads: Attention heads (default: 16)
-    :param mlp_ratio: MLP expansion ratio (default: 4.0)
-    :param pos_embed_type: 'sincos_1d' (MAE default), 'sincos_2d', or 'learned'
-    :param grid_size: Grid size for 2D pos embed
-    :param kwargs: Additional args passed to timm.Block (qkv_bias, drop, attn_drop, drop_path, etc.)
+    :param depth: Number of transformer blocks
+    :param num_heads: Attention heads
+    :param mlp_ratio: MLP expansion ratio
+    :param pos_embed_type: 'sincos_1d', 'sincos_2d', or 'learned'
+    :param grid_size: Grid size for 2D pos embed (auto-inferred if None)
+    :param kwargs: Additional args passed to timm.Block
     """
 
     def __init__(
         self,
         embed_dim: int = 768,
         decoder_embed_dim: int = 512,
+        output_dim: int = 768,
         num_patches: int = 196,
-        depth: int = 8,
+        depth: int = 4,
         num_heads: int = 16,
         mlp_ratio: float = 4.0,
-        pos_embed_type: Literal["sincos_1d", "sincos_2d", "learned"] = "sincos_1d",
+        pos_embed_type: Literal["sincos_1d", "sincos_2d", "learned"] = "sincos_2d",
         grid_size: int | None = None,
         **kwargs,
     ):
@@ -44,11 +43,18 @@ class MAEDecoder(nn.Module):
 
         # Projection layers
         self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim)
-        self.decoder_pred = nn.Linear(decoder_embed_dim, embed_dim)
+        self.decoder_pred = nn.Linear(decoder_embed_dim, output_dim)
 
         # Learnable mask token
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
         trunc_normal_(self.mask_token, std=0.02)
+
+        # Auto-infer grid_size if not provided
+        if pos_embed_type == "sincos_2d" and grid_size is None:
+            grid_size = int(num_patches**0.5)
+            assert grid_size**2 == num_patches, (
+                "num_patches must be a perfect square for 2D pos embed"
+            )
 
         # Positional embeddings
         if pos_embed_type == "learned":

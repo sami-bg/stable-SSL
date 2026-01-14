@@ -53,6 +53,7 @@ from .nn_modules import (
 from .visualization import format_df_to_latex
 from . import flops
 from .stats import mean_std
+from .mae_loss import mae_loss
 
 __all__ = [
     "detach_tensors",
@@ -111,4 +112,5 @@ __all__ = [
     "format_df_to_latex",
     "flops",
     "mean_std",
+    "mae_loss",
 ]
