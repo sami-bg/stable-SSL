@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Literal, Union, Type
+from typing import Optional, Tuple, Literal, Union
 import timm
 from timm.models.vision_transformer import Block
 from timm.layers import trunc_normal_, Mlp
@@ -18,12 +18,11 @@ from .pos_embed import (
 __all__ = [
     "MAEDecoder",
     "TransformerPredictor",
-    "AdaLNDecoderBlock",
     "MaskedEncoder",
     "MaskedEncoderOutput",
-    "AdaLNCrossAttentionBlock",
     "CrossAttentionBlock",
-    "CrossAttentionDecoder",
+    "AdaLNBlock",
+    "AdaLNTransformer",
 ]
 
 
@@ -313,71 +312,235 @@ class MaskedEncoder(nn.Module):
         )
 
 
-class AdaLNDecoderBlock(nn.Module):
-    """Decoder block with AdaLN-Zero conditioning (DiT-style)."""
+class AdaLNBlock(nn.Module):
+    """Unified transformer block with configurable attention pattern and AdaLN-Zero conditioning.
 
-    def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 4.0):
+    This block supports three attention configurations for different use cases in
+    flow matching / diffusion models:
+
+    **Mode 1: Pure Cross-Attention** (`self_attn=False, cross_attn=True`)
+
+        Information flow:
+            x (queries) ──cross_attn──> context (keys/values) ──> MLP ──> output
+
+        - Queries attend to context but NOT to each other
+        - Each query token independently gathers information from context
+        - Use case: Lightweight decoder where query tokens don't need to coordinate
+        - Limitation: No communication between query tokens (e.g., masked patches
+          can't see what other masked patches are predicting)
+
+    **Mode 2: Decoder-Style** (`self_attn=True, cross_attn=True`)
+
+        Information flow:
+            x ──self_attn(x,x)──> cross_attn(x, context) ──> MLP ──> output
+            (context remains frozen, not updated)
+
+        - Queries first attend to each other (self-attention)
+        - Then queries attend to context (cross-attention)
+        - Context is read-only: same context tensor passed to every layer
+        - Use case: Standard decoder where queries need to coordinate AND
+          gather info from a fixed context
+        - Limitation: Context can't adapt based on what queries are generating
+
+    **Mode 3: Joint Attention** (`self_attn=True, cross_attn=False`)
+
+        Information flow:
+            x = [context; queries]  (concatenated before passing to blocks)
+            x ──self_attn(x,x)──> MLP ──> output
+            (both context and queries are updated each layer)
+
+        - All tokens (context + queries) attend to all other tokens
+        - Requires concatenating context and queries BEFORE passing to block
+        - Both context and query representations evolve through layers
+        - Use case: Full bidirectional flow, best for high masking ratios where
+          context benefits from seeing query predictions
+        - Note: Caller must handle concatenation/splitting; block just sees one sequence
+
+    **AdaLN-Zero Conditioning:**
+
+        Each operation (self-attn, cross-attn, MLP) is modulated by learned
+        (γ, β, α) parameters predicted from the conditioning signal:
+
+            h = LayerNorm(x) * (1 + γ) + β   # scale and shift
+            x = x + α * operation(h)          # gated residual (α starts at 0)
+
+        The α parameters are initialized to zero, so at init the block is
+        an identity function (DiT-style "zero init").
+
+    :param dim: Hidden dimension
+    :param num_heads: Number of attention heads
+    :param mlp_ratio: MLP hidden dim = dim * mlp_ratio
+    :param self_attn: Enable self-attention on x
+    :param cross_attn: Enable cross-attention from x to context
+
+    Example::
+
+        # Mode 1: Pure cross-attention
+        block = AdaLNBlock(384, 6, self_attn=False, cross_attn=True)
+        out = block(queries, context=ctx, cond=t_emb)
+
+        # Mode 2: Decoder-style
+        block = AdaLNBlock(384, 6, self_attn=True, cross_attn=True)
+        out = block(queries, context=ctx, cond=t_emb)
+
+        # Mode 3: Joint attention (caller concatenates)
+        block = AdaLNBlock(384, 6, self_attn=True, cross_attn=False)
+        x = torch.cat([ctx, queries], dim=1)
+        out = block(x, cond=t_emb)  # no context arg needed
+        queries_out = out[:, -n_queries:]  # caller extracts query positions
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        self_attn: bool = True,
+        cross_attn: bool = True,
+    ):
         super().__init__()
-        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
-        self.self_attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        self.use_self_attn = self_attn
+        self.use_cross_attn = cross_attn
 
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
-        self.cross_attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
+        if not self_attn and not cross_attn:
+            raise ValueError("At least one of self_attn or cross_attn must be True")
 
-        self.norm3 = nn.LayerNorm(dim, elementwise_affine=False)
+        # Self-attention (optional)
+        if self_attn:
+            self.norm_self = nn.LayerNorm(dim, elementwise_affine=False)
+            self.self_attn_layer = nn.MultiheadAttention(
+                dim, num_heads, batch_first=True
+            )
+
+        # Cross-attention (optional)
+        if cross_attn:
+            self.norm_cross_q = nn.LayerNorm(dim, elementwise_affine=False)
+            self.norm_cross_kv = nn.LayerNorm(dim, elementwise_affine=False)
+            self.cross_attn_layer = nn.MultiheadAttention(
+                dim, num_heads, batch_first=True
+            )
+
+        # MLP (always present)
+        self.norm_mlp = nn.LayerNorm(dim, elementwise_affine=False)
         self.mlp = Mlp(dim, int(dim * mlp_ratio))
 
-        # AdaLN: predicts (γ1, β1, α1, γ2, β2, α2, γ3, β3, α3)
+        # AdaLN: 3 params (γ, β, α) per operation
+        num_ops = int(self_attn) + int(cross_attn) + 1  # +1 for MLP
+        self.num_mods = num_ops * 3
         self.adaLN_mlp = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(dim, 9 * dim),
+            nn.Linear(dim, self.num_mods * dim),
         )
         nn.init.zeros_(self.adaLN_mlp[1].weight)
         nn.init.zeros_(self.adaLN_mlp[1].bias)
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor, cond: torch.Tensor):
-        mods = self.adaLN_mlp(cond).chunk(9, dim=-1)
-        γ1, β1, α1, γ2, β2, α2, γ3, β3, α3 = [m.unsqueeze(1) for m in mods]
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: Optional[torch.Tensor] = None,
+        cond: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute forward pass.
 
-        h = self.norm1(x) * (1 + γ1) + β1
-        x = x + α1 * self.self_attn(h, h, h, need_weights=False)[0]
+        :param x: Input tensor [B, N, D]. For joint attention mode, this should
+                  be the concatenated [context; queries] sequence.
+        :param context: Context tensor [B, M, D] for cross-attention modes.
+                        Required if cross_attn=True, ignored otherwise.
+        :param cond: Conditioning tensor [B, D] (e.g., timestep embedding).
+        :return: Output tensor [B, N, D], same shape as x.
+        """
+        if self.use_cross_attn and context is None:
+            raise ValueError("context required when cross_attn=True")
 
-        h = self.norm2(x) * (1 + γ2) + β2
-        x = x + α2 * self.cross_attn(h, context, context, need_weights=False)[0]
+        mods = [
+            m.unsqueeze(1) for m in self.adaLN_mlp(cond).chunk(self.num_mods, dim=-1)
+        ]
+        i = 0
 
-        h = self.norm3(x) * (1 + γ3) + β3
-        x = x + α3 * self.mlp(h)
+        # Self-attention
+        if self.use_self_attn:
+            γ, β, α = mods[i], mods[i + 1], mods[i + 2]
+            i += 3
+            h = self.norm_self(x) * (1 + γ) + β
+            x = x + α * self.self_attn_layer(h, h, h, need_weights=False)[0]
+
+        # Cross-attention
+        if self.use_cross_attn:
+            γ, β, α = mods[i], mods[i + 1], mods[i + 2]
+            i += 3
+            h = self.norm_cross_q(x) * (1 + γ) + β
+            kv = self.norm_cross_kv(context)
+            x = x + α * self.cross_attn_layer(h, kv, kv, need_weights=False)[0]
+
+        # MLP
+        γ, β, α = mods[i], mods[i + 1], mods[i + 2]
+        h = self.norm_mlp(x) * (1 + γ) + β
+        x = x + α * self.mlp(h)
+
         return x
 
 
-class CrossAttentionDecoder(nn.Module):
-    """Cross-attention decoder with pluggable block type.
+class AdaLNTransformer(nn.Module):
+    """Transformer decoder with AdaLN-Zero conditioning for flow matching / diffusion.
 
-    :param input_dim: Input dimension
-    :param hidden_dim: Internal dimension
-    :param output_dim: Output dimension
-    :param num_patches: Total patches (for pos embed)
-    :param depth: Number of blocks
-    :param num_heads: Attention heads
-    :param mlp_ratio: MLP expansion
-    :param block_class: Block class to use (e.g., CrossAttentionBlock, AdaLNCrossAttentionBlock)
+    Supports three attention modes controlled by `self_attn` and `cross_attn` flags:
+
+    **Mode 1: Pure Cross-Attention** (`self_attn=False, cross_attn=True`)
+
+        queries ──[cross-attn to context]──> output
+
+        - Queries independently attend to context, no query-query communication
+        - Fastest, but limited for complex distributions
+
+    **Mode 2: Decoder-Style** (`self_attn=True, cross_attn=True`)
+
+        queries ──[self-attn]──[cross-attn to context]──> output
+
+        - Queries communicate with each other, then attend to frozen context
+        - Good balance of expressivity and efficiency
+
+    **Mode 3: Joint Attention** (`self_attn=True, cross_attn=False`)
+
+        [context; queries] ──[joint self-attn]──> output (query positions extracted)
+
+        - Full bidirectional attention: all tokens attend to all tokens
+        - Context representations evolve through layers
+        - Best for high masking ratios / complex distributions
+        - Highest compute cost
+
+    :param input_dim: Input embedding dimension (from encoder)
+    :param hidden_dim: Internal transformer dimension
+    :param output_dim: Output dimension (typically same as input_dim)
+    :param num_patches: Total number of patches (for positional embeddings)
+    :param depth: Number of transformer blocks
+    :param num_heads: Number of attention heads
+    :param mlp_ratio: MLP hidden dim multiplier
+    :param self_attn: Enable self-attention in blocks
+    :param cross_attn: Enable cross-attention in blocks
     :param pos_embed_type: 'sincos_1d', 'sincos_2d', or 'learned'
-    :param grid_size: Grid size for 2D pos embed
-    :param zero_init_output: Zero-init output projection
-    :param num_prefix_tokens: extra tokens passed in forward
+    :param grid_size: Grid size for 2D positional embeddings
+    :param zero_init_output: Zero-initialize output projection (for residual learning)
+    :param num_prefix_tokens: Number of prefix tokens (e.g., CLS token)
+
     Example::
-        # Pure cross-attention (no conditioning)
-        decoder = CrossAttentionDecoder(
-            768, 384, 768, 196, depth=4, block_class=CrossAttentionBlock
+
+        # Mode 1: Pure cross-attention (lightweight)
+        model = AdaLNTransformer(
+            768, 384, 768, 196, depth=4, self_attn=False, cross_attn=True
         )
-        # With AdaLN for flow matching
-        decoder = CrossAttentionDecoder(
-            768, 384, 768, 196, depth=4, block_class=AdaLNCrossAttentionBlock
+
+        # Mode 2: Decoder-style (balanced)
+        model = AdaLNTransformer(
+            768, 384, 768, 196, depth=6, self_attn=True, cross_attn=True
         )
-        # With your full decoder block (self + cross attn)
-        decoder = CrossAttentionDecoder(
-            768, 384, 768, 196, depth=4, block_class=AdaLNDecoderBlock
+
+        # Mode 3: Joint attention (most expressive)
+        model = AdaLNTransformer(
+            768, 384, 768, 196, depth=8, self_attn=True, cross_attn=False
         )
+
+        # Forward call is the same for all modes
+        output = model(context, queries, context_idx, query_idx, t=timesteps)
     """
 
     def __init__(
@@ -389,7 +552,8 @@ class CrossAttentionDecoder(nn.Module):
         depth: int = 4,
         num_heads: int = 6,
         mlp_ratio: float = 4.0,
-        block_class: Type[nn.Module] = AdaLNCrossAttentionBlock,
+        self_attn: bool = True,
+        cross_attn: bool = True,
         pos_embed_type: Literal["sincos_1d", "sincos_2d", "learned"] = "sincos_2d",
         grid_size: Optional[int] = None,
         zero_init_output: bool = True,
@@ -400,18 +564,25 @@ class CrossAttentionDecoder(nn.Module):
             raise ValueError(
                 f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"
             )
+
         self.hidden_dim = hidden_dim
+        self.num_prefix_tokens = num_prefix_tokens
+        self.use_cross_attn = cross_attn
+
         # Projections
         self.context_proj = nn.Linear(input_dim, hidden_dim)
         self.query_proj = nn.Linear(input_dim, hidden_dim)
         self.output_proj = nn.Linear(hidden_dim, output_dim)
+
         if zero_init_output:
             nn.init.zeros_(self.output_proj.weight)
             nn.init.zeros_(self.output_proj.bias)
+
         # Positional embeddings
         if pos_embed_type == "sincos_2d" and grid_size is None:
             grid_size = int(num_patches**0.5)
             assert grid_size**2 == num_patches
+
         if pos_embed_type == "learned":
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_dim))
             trunc_normal_(self.pos_embed, std=0.02)
@@ -421,33 +592,41 @@ class CrossAttentionDecoder(nn.Module):
                 hidden_dim, num_patches, mode=mode, grid_size=grid_size
             )
             self.register_buffer("pos_embed", pe.unsqueeze(0))
-        # Time MLP
-        self.time_mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 4),
-            nn.GELU(),
-            nn.Linear(hidden_dim * 4, hidden_dim),
-        )
-        # Blocks
-        self.blocks = nn.ModuleList(
-            [block_class(hidden_dim, num_heads, mlp_ratio) for _ in range(depth)]
-        )
-        # Final norm
-        self.final_norm = nn.LayerNorm(hidden_dim)
-        # Learnable position embedding for CLS/prefix tokens
-        self.num_prefix_tokens = num_prefix_tokens
+
         if num_prefix_tokens > 0:
             self.prefix_pos_embed = nn.Parameter(
                 torch.zeros(1, num_prefix_tokens, hidden_dim)
             )
             nn.init.normal_(self.prefix_pos_embed, std=0.02)
 
-    def _gather_pos(self, idx: torch.Tensor, num_prefix: int = 0) -> torch.Tensor:
-        B = idx.shape[0]
+        # Time embedding MLP
+        self.time_mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            nn.GELU(),
+            nn.Linear(hidden_dim * 4, hidden_dim),
+        )
 
+        # Transformer blocks
+        self.blocks = nn.ModuleList(
+            [
+                AdaLNBlock(
+                    hidden_dim,
+                    num_heads,
+                    mlp_ratio,
+                    self_attn=self_attn,
+                    cross_attn=cross_attn,
+                )
+                for _ in range(depth)
+            ]
+        )
+
+        self.final_norm = nn.LayerNorm(hidden_dim)
+
+    def _gather_pos(self, idx: torch.Tensor, num_prefix: int = 0) -> torch.Tensor:
+        """Gather positional embeddings for given indices."""
+        B = idx.shape[0]
         if num_prefix > 0:
-            # Prefix tokens get learnable pos embed
             prefix_pos = self.prefix_pos_embed.expand(B, -1, -1)
-            # Patch tokens get gathered pos embed
             patch_idx = idx[:, num_prefix:]
             patch_pos = torch.gather(
                 self.pos_embed.expand(B, -1, -1),
@@ -468,23 +647,45 @@ class CrossAttentionDecoder(nn.Module):
         t: Optional[torch.Tensor] = None,
         num_prefix: int = None,
     ) -> torch.Tensor:
+        """Computes forward pass.
+
+        :param context: Unmasked/clean token embeddings [B, N_ctx, input_dim]
+        :param queries: Masked/noisy token embeddings [B, N_qry, input_dim]
+        :param context_idx: Patch indices for context tokens [B, N_ctx]
+        :param query_idx: Patch indices for query tokens [B, N_qry]
+        :param t: Timesteps for flow matching [B]
+        :param num_prefix: Override for number of prefix tokens
+        :return: Predicted embeddings for query positions [B, N_qry, output_dim]
+        """
         if num_prefix is None:
             num_prefix = self.num_prefix_tokens
-        # Project + pos embed
-        context = self.context_proj(context) + self._gather_pos(
-            context_idx, self.num_prefix_tokens
-        )
+
+        # Project and add positional embeddings
+        context = self.context_proj(context) + self._gather_pos(context_idx, num_prefix)
         queries = self.query_proj(queries) + self._gather_pos(query_idx)
-        # Time embedding (passed to blocks, they decide whether to use it)
+
+        # Time conditioning
         cond = (
             self.time_mlp(get_timestep_embed(t, self.hidden_dim))
             if t is not None
             else None
         )
-        # Blocks
-        for block in self.blocks:
-            queries = block(queries, context, cond)
-        return self.output_proj(self.final_norm(queries))
+
+        n_queries = queries.shape[1]
+
+        if self.use_cross_attn:
+            # Modes 1 & 2: queries attend to context (context stays separate)
+            for block in self.blocks:
+                queries = block(queries, context=context, cond=cond)
+            output = queries
+        else:
+            # Mode 3: joint attention (concatenate, process, extract)
+            x = torch.cat([context, queries], dim=1)
+            for block in self.blocks:
+                x = block(x, cond=cond)
+            output = x[:, -n_queries:]  # extract query positions
+
+        return self.output_proj(self.final_norm(output))
 
 
 class TransformerPredictor(nn.Module):
