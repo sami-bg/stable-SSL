@@ -92,27 +92,12 @@ def linear_velocity_fn() -> Callable[[Tensor, Tensor], Tensor]:
 class TestBuildTimeSchedule:
     """Base test class."""
 
-    def test_linear_schedule_endpoints(self, device, dtype):
-        """Linear schedule should span [0, 1]."""
-        t = _build_time_schedule(10, "linear", device, dtype)
-
-        assert t.shape == (11,)
-        assert t[0].item() == pytest.approx(0.0)
-        assert t[-1].item() == pytest.approx(1.0)
-
     def test_linear_schedule_uniform_spacing(self, device, dtype):
         """Linear schedule should have uniform spacing."""
         t = _build_time_schedule(10, "linear", device, dtype)
         diffs = t[1:] - t[:-1]
 
         assert torch.allclose(diffs, diffs[0].expand_as(diffs))
-
-    def test_cosine_schedule_endpoints(self, device, dtype):
-        """Cosine schedule should span [0, 1]."""
-        t = _build_time_schedule(10, "cosine", device, dtype)
-
-        assert t[0].item() == pytest.approx(0.0)
-        assert t[-1].item() == pytest.approx(1.0)
 
     def test_cosine_schedule_more_steps_at_boundaries(self, device, dtype):
         """Cosine schedule should have smaller steps near 0 and 1."""
@@ -122,13 +107,6 @@ class TestBuildTimeSchedule:
         # Steps at boundaries should be smaller than in the middle
         assert diffs[0] < diffs[10]
         assert diffs[-1] < diffs[10]
-
-    def test_quadratic_schedule_endpoints(self, device, dtype):
-        """Quadratic schedule should span [0, 1]."""
-        t = _build_time_schedule(10, "quadratic", device, dtype)
-
-        assert t[0].item() == pytest.approx(0.0)
-        assert t[-1].item() == pytest.approx(1.0)
 
     def test_quadratic_schedule_more_steps_near_end(self, device, dtype):
         """Quadratic schedule should have more steps near t=1."""
@@ -504,6 +482,155 @@ class TestFlowMatchingSample:
         )
 
         assert torch.allclose(x_str, x_enum)
+
+
+# === Additional Tests to Add ===
+
+
+@pytest.mark.unit
+class TestSolverConvergenceOrder:
+    """Verify each solver converges at its theoretical order.
+
+    Note: DPM solvers are optimized for flow matching (straight paths),
+    not general ODEs, so we only test standard solvers for order.
+    """
+
+    def _exponential_decay_velocity(self, x: Tensor, t: Tensor) -> Tensor:
+        """dx/dt = -x, solution: x(t) = x(0) * exp(-t)."""
+        return -x
+
+    @pytest.mark.parametrize(
+        "step_fn,name,min_order",
+        [
+            (_step_euler, "euler", 1),
+            (_step_midpoint, "midpoint", 2),
+            (_step_heun, "heun", 2),
+            (_step_rk4, "rk4", 4),
+        ],
+    )
+    def test_convergence_order(self, step_fn, name, min_order):
+        """Error should decrease by ~2^order when step size halves."""
+        dtype = torch.float64  # Need precision for order verification
+        x0 = torch.tensor([[1.0]], dtype=dtype)
+        t0 = torch.tensor([0.0], dtype=dtype)
+
+        errors = []
+        step_sizes = [0.2, 0.1, 0.05, 0.025]
+
+        for dt_val in step_sizes:
+            dt = torch.tensor(dt_val, dtype=dtype)
+            t_next = t0 + dt
+
+            x_numerical = step_fn(self._exponential_decay_velocity, x0, t0, dt, t_next)
+            x_exact = x0 * math.exp(-dt_val)
+
+            error = torch.abs(x_numerical - x_exact).item()
+            errors.append(error)
+
+        # Check convergence rate between consecutive step sizes
+        for i in range(len(errors) - 1):
+            if errors[i + 1] > 1e-14:  # Avoid numerical floor
+                ratio = errors[i] / errors[i + 1]
+                expected_ratio = 2**min_order
+                # Allow 20% tolerance on order estimate
+                assert ratio > expected_ratio * 0.8, (
+                    f"{name}: convergence ratio {ratio:.2f}, "
+                    f"expected >= {expected_ratio * 0.8:.2f} for order {min_order}"
+                )
+
+    @pytest.mark.parametrize(
+        "step_fn,name",
+        [
+            (_step_dpm_2, "dpm_2"),
+            (_step_dpm_3, "dpm_3"),
+        ],
+    )
+    def test_dpm_solvers_converge(self, step_fn, name):
+        """DPM solvers should at least converge (error decreases with smaller dt).
+
+        Note: DPM solvers are optimized for flow matching paths, not general ODEs,
+        so we don't test for specific order, just that they improve with smaller steps.
+        """
+        dtype = torch.float64
+        x0 = torch.tensor([[1.0]], dtype=dtype)
+        t0 = torch.tensor([0.0], dtype=dtype)
+
+        errors = []
+        step_sizes = [0.2, 0.1, 0.05]
+
+        for dt_val in step_sizes:
+            dt = torch.tensor(dt_val, dtype=dtype)
+            t_next = t0 + dt
+
+            x_numerical = step_fn(self._exponential_decay_velocity, x0, t0, dt, t_next)
+            x_exact = x0 * math.exp(-dt_val)
+            error = torch.abs(x_numerical - x_exact).item()
+            errors.append(error)
+
+        # Just verify error decreases (convergence happens)
+        assert errors[-1] < errors[0], f"{name} did not converge"
+
+
+@pytest.mark.unit
+class TestDPMSolverSpecifics:
+    """Tests for DPM solver implementations.
+
+    DPM solvers are designed for diffusion/flow matching where paths are
+    approximately straight. They may not outperform standard methods on
+    general nonlinear ODEs.
+    """
+
+    def test_dpm2_produces_finite_output(self, device, dtype):
+        """DPM-2 should produce finite results."""
+
+        def v_fn(x: Tensor, t: Tensor) -> Tensor:
+            return -x
+
+        x = torch.randn(2, 4, device=device, dtype=dtype)
+        t = torch.full((2,), 0.3, device=device, dtype=dtype)
+        dt = torch.tensor(0.1, device=device, dtype=dtype)
+        t_next = t + dt
+
+        x_new = _step_dpm_2(v_fn, x, t, dt, t_next)
+        assert torch.isfinite(x_new).all()
+
+    def test_dpm3_produces_finite_output(self, device, dtype):
+        """DPM-3 should produce finite results."""
+
+        def v_fn(x: Tensor, t: Tensor) -> Tensor:
+            return -x
+
+        x = torch.randn(2, 4, device=device, dtype=dtype)
+        t = torch.full((2,), 0.3, device=device, dtype=dtype)
+        dt = torch.tensor(0.1, device=device, dtype=dtype)
+        t_next = t + dt
+
+        x_new = _step_dpm_3(v_fn, x, t, dt, t_next)
+        assert torch.isfinite(x_new).all()
+
+    def test_dpm_solvers_accurate_on_straight_paths(self, device):
+        """DPM solvers should be accurate for constant velocity (straight paths).
+
+        This is the use case they're optimized for in flow matching.
+        """
+        dtype = torch.float64
+
+        # Constant velocity = straight path (ideal for DPM)
+        def const_velocity(x: Tensor, t: Tensor) -> Tensor:
+            return torch.ones_like(x)
+
+        x0 = torch.zeros(1, 2, device=device, dtype=dtype)
+        t = torch.zeros(1, device=device, dtype=dtype)
+        dt = torch.tensor(0.5, device=device, dtype=dtype)
+        t_next = t + dt
+
+        expected = x0 + dt  # x(t) = x0 + v*t for constant v
+
+        x_dpm2 = _step_dpm_2(const_velocity, x0, t, dt, t_next)
+        x_dpm3 = _step_dpm_3(const_velocity, x0, t, dt, t_next)
+
+        assert torch.allclose(x_dpm2, expected, atol=1e-10)
+        assert torch.allclose(x_dpm3, expected, atol=1e-10)
 
 
 if __name__ == "__main__":

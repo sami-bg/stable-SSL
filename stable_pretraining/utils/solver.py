@@ -88,20 +88,19 @@ def flow_matching_sample(
     step_fn = _get_solver_step_fn(solver)
 
     # Integrate
-    with torch.inference_mode():
-        for i in range(num_steps):
-            t = timesteps[i]
-            t_next = timesteps[i + 1]
-            dt = t_next - t
+    for i in range(num_steps):
+        t = timesteps[i]
+        t_next = timesteps[i + 1]
+        dt = t_next - t
 
-            t_batch = t.expand(batch_size)
-            x = step_fn(velocity_fn, x, t_batch, dt, t_next)
+        t_batch = t.expand(batch_size)
+        x = step_fn(velocity_fn, x, t_batch, dt, t_next)
 
-            if clamp_range is not None:
-                x = x.clamp(*clamp_range)
+        if clamp_range is not None:
+            x = x.clamp(*clamp_range)
 
-            if trajectory is not None:
-                trajectory.append(x.clone())
+        if trajectory is not None:
+            trajectory.append(x.clone())
 
     if return_trajectory:
         return x, trajectory
@@ -113,9 +112,10 @@ def _build_time_schedule(
     schedule: str,
     device: Optional[torch.device],
     dtype: Optional[torch.dtype],
+    eps=1e-3,
 ) -> Tensor:
     """Build time discretization from t=0 to t=1."""
-    t = torch.linspace(0, 1, num_steps + 1, device=device, dtype=dtype)
+    t = torch.linspace(eps, 1 - eps, num_steps + 1, device=device, dtype=dtype)
 
     if schedule == "linear":
         return t
@@ -241,6 +241,6 @@ def _step_dpm_3(
     # 3rd order combination
     c0 = 1.0 - 1.0 / (2 * r2)
     c1 = 1.0 / (2 * r1 * r2) - 1.0 / (2 * r2 * (r2 - r1))
-    c2 = 1.0 / (2 * r2 * (r2 - r1))
+    c2 = r1 / (2 * r2 * (r2 - r1))  # = 3/4 = 0.75 ✓
 
     return x + dt * (c0 * v0 + c1 * v1 + c2 * v2)
