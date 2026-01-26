@@ -512,9 +512,6 @@ class TransformerBlock(nn.Module):
         return x
 
 
-# =============================================================================
-# Full Transformer
-# =============================================================================
 class FlexibleTransformer(nn.Module):
     """Flexible transformer supporting multiple architectures.
 
@@ -522,7 +519,7 @@ class FlexibleTransformer(nn.Module):
     - **MAE decoder**: `self_attn=True, cross_attn=False, use_adaln=False`
     - **IJEPA predictor**: `self_attn=True, cross_attn=True, use_adaln=False`
     - **DiT / Flow**: `self_attn=True, cross_attn=True/False, use_adaln=True`
-    - **MaskGIT**: `self_attn=True, cross_attn=False, use_adaln=True`
+    - **MaskGIT**: `self_attn=True, cross_attn=False, use_adaln=True, add_mask_token=True`
     :param input_dim: Input embedding dimension (from encoder)
     :param hidden_dim: Internal transformer dimension
     :param output_dim: Output dimension
@@ -540,6 +537,9 @@ class FlexibleTransformer(nn.Module):
     :param proj_drop: Projection dropout rate
     :param zero_init_output: Zero-initialize output projection
     :param num_prefix_tokens: Number of prefix tokens (e.g., CLS token)
+    :param add_mask_token: Enable learnable [MASK] token for masked prediction.
+        When enabled, use `context_mask` and/or `query_mask` in forward() to
+        replace tokens at specified positions with the [MASK] token.
     Example::
         # MAE decoder
         decoder = FlexibleTransformer(
@@ -577,6 +577,52 @@ class FlexibleTransformer(nn.Module):
             use_adaln=True,
         )
         out = flow(context, queries, context_idx, query_idx, t=timesteps)
+        # MaskGIT-style: variable number of masks per sample
+        maskgit = FlexibleTransformer(
+            768,
+            512,
+            768,
+            196,
+            depth=8,
+            self_attn=True,
+            cross_attn=False,
+            use_adaln=True,
+            add_mask_token=True,
+        )
+        # Each sample can have different number of masked positions
+        # context_mask[b, i] = True means replace context[b, i] with [MASK]
+        context_mask = torch.rand(B, num_patches) < mask_ratio  # Variable per sample!
+        out = maskgit(
+            context=all_patches,  # [B, 196, D]
+            queries=all_patches[:, :0],  # [B, 0, D] empty
+            context_idx=torch.arange(196).expand(B, -1),  # [B, 196]
+            query_idx=torch.empty(B, 0, dtype=torch.long),
+            context_mask=context_mask,  # [B, 196] bool, variable True count
+            t=timesteps,
+            return_all=True,
+        )  # Returns [B, 196, output_dim]
+        # BERT-style MLM: mask random tokens in sequence
+        bert = FlexibleTransformer(
+            768,
+            768,
+            768,
+            512,
+            depth=12,
+            self_attn=True,
+            cross_attn=False,
+            use_adaln=False,
+            add_mask_token=True,
+        )
+        # Random 15% masking, different positions per sample
+        context_mask = torch.rand(B, seq_len) < 0.15
+        out = bert(
+            context=token_embeddings,
+            queries=token_embeddings[:, :0],
+            context_idx=position_ids,
+            query_idx=torch.empty(B, 0, dtype=torch.long),
+            context_mask=context_mask,
+            return_all=True,
+        )
     """
 
     def __init__(
@@ -598,6 +644,7 @@ class FlexibleTransformer(nn.Module):
         proj_drop: float = 0.0,
         zero_init_output: bool = True,
         num_prefix_tokens: int = 1,
+        add_mask_token: bool = False,
     ):
         super().__init__()
         if hidden_dim % num_heads != 0:
@@ -608,6 +655,7 @@ class FlexibleTransformer(nn.Module):
         self.num_prefix_tokens = num_prefix_tokens
         self.use_cross_attn = cross_attn
         self.use_adaln = use_adaln
+        self.add_mask_token = add_mask_token
         # Input/output projections
         self.context_proj = nn.Linear(input_dim, hidden_dim)
         self.query_proj = nn.Linear(input_dim, hidden_dim)
@@ -639,6 +687,10 @@ class FlexibleTransformer(nn.Module):
                 torch.zeros(1, num_prefix_tokens, hidden_dim)
             )
             nn.init.normal_(self.prefix_pos_embed, std=0.02)
+        # Learnable mask token (shared for context and query masking)
+        if add_mask_token:
+            self.mask_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+            nn.init.normal_(self.mask_token, std=0.02)
         # Time embedding MLP (only needed for AdaLN)
         if use_adaln:
             self.time_mlp = nn.Sequential(
@@ -691,6 +743,8 @@ class FlexibleTransformer(nn.Module):
         t: Optional[torch.Tensor] = None,
         num_prefix: Optional[int] = None,
         return_all: bool = False,
+        context_mask: Optional[torch.Tensor] = None,
+        query_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass.
 
@@ -699,17 +753,43 @@ class FlexibleTransformer(nn.Module):
         :param context_idx: Patch indices for context tokens [B, N_ctx]
         :param query_idx: Patch indices for query tokens [B, N_qry]
         :param t: Timesteps for conditioning [B] (required if use_adaln=True)
-        :param num_prefix: Override for number of prefix tokens
+        :param num_prefix: Override for number of prefix tokens in context
         :param return_all: If True and using joint attention (cross_attn=False),
-                          return all tokens in original position order
-                          [B, N_ctx + N_qry, output_dim]. Ignored for cross-attention modes.
-        :return: Output embeddings [B, N_qry, output_dim] or [B, T, output_dim] if return_all
+            return all tokens unshuffled to original position order.
+            Output shape: [B, N_ctx + N_qry, output_dim].
+            Ignored for cross-attention modes.
+        :param context_mask: Boolean mask indicating which context tokens to replace
+            with [MASK] token [B, N_ctx]. True = replace with mask. Each sample can
+            have a different number of True values. Requires add_mask_token=True.
+        :param query_mask: Boolean mask indicating which query tokens to replace
+            with [MASK] token [B, N_qry]. True = replace with mask. Each sample can
+            have a different number of True values. Requires add_mask_token=True.
+        :return: Output embeddings. Shape depends on mode:
+            - cross_attn=True: [B, N_qry, output_dim]
+            - cross_attn=False, return_all=False: [B, N_qry, output_dim]
+            - cross_attn=False, return_all=True: [B, N_ctx + N_qry, output_dim].
         """
+        # Validate mask token usage
+        if context_mask is not None or query_mask is not None:
+            if not self.add_mask_token:
+                raise ValueError(
+                    "context_mask or query_mask provided but "
+                    "add_mask_token=False at initialization"
+                )
         if num_prefix is None:
             num_prefix = self.num_prefix_tokens
-        # Project and add positional embeddings
-        context = self.context_proj(context) + self._gather_pos(context_idx, num_prefix)
-        queries = self.query_proj(queries) + self._gather_pos(query_idx)
+        # Project context and optionally replace masked positions with [MASK] token
+        context = self.context_proj(context)
+        if context_mask is not None:
+            mask_tokens = self.mask_token.expand_as(context)
+            context = torch.where(context_mask.unsqueeze(-1), mask_tokens, context)
+        context = context + self._gather_pos(context_idx, num_prefix)
+        # Project queries and optionally replace masked positions with [MASK] token
+        queries = self.query_proj(queries)
+        if query_mask is not None:
+            mask_tokens = self.mask_token.expand_as(queries)
+            queries = torch.where(query_mask.unsqueeze(-1), mask_tokens, queries)
+        queries = queries + self._gather_pos(query_idx)
         # Time conditioning (only for AdaLN mode)
         cond = None
         if self.use_adaln:
@@ -719,11 +799,11 @@ class FlexibleTransformer(nn.Module):
         n_context = context.shape[1]
         n_queries = queries.shape[1]
         if self.use_cross_attn:
-            # Modes 1 & 2: queries attend to context (return_all ignored)
+            # Cross-attention mode: queries attend to context
             for block in self.blocks:
                 queries = block(queries, context=context, cond=cond)
             return self.output_proj(self.final_norm(queries))
-        # Mode 3: joint attention
+        # Joint attention mode
         x = torch.cat([context, queries], dim=1)
         for block in self.blocks:
             x = block(x, cond=cond)
@@ -744,13 +824,12 @@ class FlexibleTransformer(nn.Module):
                 src=x[:, n_context:],
             )
             return self.output_proj(out)
-        # Handle edge case: no queries
+        # Return only query outputs
         if n_queries == 0:
             B = context.shape[0]
             return torch.empty(
                 B, 0, self.output_proj.out_features, device=x.device, dtype=x.dtype
             )
-
         return self.output_proj(x[:, -n_queries:])
 
 
@@ -884,20 +963,157 @@ class TransformerPredictor(nn.Module):
 
 
 class MAEDecoder(nn.Module):
-    """MAE-style ViT Decoder using FlexibleTransformer.
+    """MAE-style Vision Transformer Decoder using FlexibleTransformer.
 
-    Uses joint self-attention where visible tokens and mask tokens
-    all attend to each other.
-    :param embed_dim: Encoder embedding dimension (input D)
-    :param decoder_embed_dim: Internal decoder dimension
-    :param output_dim: Output dimension (e.g., patch_size² × in_chans for pixels)
-    :param num_patches: Total number of patches T
-    :param depth: Number of transformer blocks
-    :param num_heads: Attention heads
-    :param mlp_ratio: MLP expansion ratio
-    :param pos_embed_type: 'sincos_1d', 'sincos_2d', or 'learned'
-    :param grid_size: Grid size for 2D pos embed (auto-inferred if None)
-    :param drop_path_rate: Stochastic depth rate
+    Implements the decoder component of Masked Autoencoders (MAE) [1]_ for
+    self-supervised visual representation learning. The decoder reconstructs
+    masked patches from visible patch embeddings using joint self-attention,
+    where visible tokens and learnable mask tokens attend to each other.
+    The decoder is intentionally lightweight compared to the encoder, as MAE
+    demonstrates that a shallow decoder is sufficient for pixel reconstruction
+    while keeping the encoder focused on learning semantic representations.
+    Architecture Overview
+    ---------------------
+    1. **Input projection**: Maps encoder embeddings (embed_dim) to decoder
+       dimension (decoder_embed_dim)
+    2. **Mask token expansion**: Learnable mask tokens are placed at masked
+       positions
+    3. **Positional encoding**: Adds position information to all tokens
+    4. **Transformer blocks**: Joint self-attention over visible + mask tokens
+    5. **Output projection**: Maps to output_dim (typically patch_size² × channels)
+    Parameters
+    ----------
+    embed_dim : int, default=768
+        Embedding dimension from the encoder. This is the input dimension
+        of visible tokens passed to the decoder.
+    decoder_embed_dim : int, default=512
+        Internal hidden dimension of the decoder transformer blocks.
+        Typically smaller than embed_dim for efficiency.
+    output_dim : int, default=768
+        Output dimension per token. For pixel reconstruction, this should be
+        ``patch_size ** 2 * in_channels`` (e.g., 16×16×3 = 768 for RGB).
+    num_patches : int, default=196
+        Total number of patches T in the image (e.g., 14×14 = 196 for
+        224×224 images with patch_size=16).
+    depth : int, default=4
+        Number of transformer blocks in the decoder. MAE typically uses
+        fewer blocks than the encoder (e.g., 4-8 vs 12-24).
+    num_heads : int, default=16
+        Number of attention heads in multi-head self-attention.
+    mlp_ratio : float, default=4.0
+        Expansion ratio for the MLP hidden dimension relative to
+        decoder_embed_dim.
+    pos_embed_type : {'sincos_1d', 'sincos_2d', 'learned'}, default='sincos_2d'
+        Type of positional embedding:
+        - 'sincos_2d': Fixed 2D sinusoidal (recommended for images)
+        - 'sincos_1d': Fixed 1D sinusoidal
+        - 'learned': Learnable positional embeddings
+    grid_size : int, optional
+        Spatial grid size for 2D positional embeddings. If None, inferred
+        as ``int(sqrt(num_patches))``. Required for non-square grids.
+    drop_path_rate : float, default=0.0
+        Stochastic depth rate for regularization during training.
+
+    Attributes:
+    ----------
+    mask_token : nn.Parameter
+        Learnable token of shape (1, 1, embed_dim) used to represent
+        masked positions. Initialized with truncated normal (std=0.02).
+    transformer : FlexibleTransformer
+        Core transformer module handling attention and projections.
+
+    Notes:
+    -----
+    - The mask convention follows MAE: **0 = visible/kept, 1 = masked**
+    - The decoder receives visible tokens and reconstructs masked positions
+    - For efficiency, only masked positions are predicted by default
+
+    References:
+    ----------
+    .. [1] He, K., et al. "Masked Autoencoders Are Scalable Vision Learners."
+           CVPR 2022. https://arxiv.org/abs/2111.06377
+
+    Examples:
+    --------
+    **Basic Usage with MAE Encoder**
+    >>> import torch
+    >>> import torch.nn as nn
+    >>>
+    >>> # Configuration matching ViT-Base
+    >>> B, T = 4, 196  # batch size, num_patches (14x14)
+    >>> embed_dim = 768  # encoder dimension
+    >>> mask_ratio = 0.75  # MAE default: mask 75% of patches
+    >>>
+    >>> # Initialize decoder
+    >>> decoder = MAEDecoder(
+    ...     embed_dim=embed_dim,
+    ...     decoder_embed_dim=512,
+    ...     output_dim=16 * 16 * 3,  # patch_size² × channels = 768
+    ...     num_patches=T,
+    ...     depth=4,
+    ...     num_heads=16,
+    ... )
+    >>>
+    >>> # Simulate encoder output (visible tokens only)
+    >>> N_vis = int(T * (1 - mask_ratio))  # 49 visible patches
+    >>> visible_tokens = torch.randn(B, N_vis, embed_dim)
+    >>>
+    >>> # Create random mask (0=visible, 1=masked)
+    >>> mask = torch.zeros(B, T)
+    >>> for i in range(B):
+    ...     masked_indices = torch.randperm(T)[: T - N_vis]
+    ...     mask[i, masked_indices] = 1
+    >>>
+    >>> # Decode - predict masked patches only
+    >>> pred_masked = decoder(visible_tokens, mask, output_masked_only=True)
+    >>> print(pred_masked.shape)  # [B, N_mask, output_dim]
+    torch.Size([4, 147, 768])
+    **Full Sequence Reconstruction**
+    >>> # Get predictions for ALL positions (for visualization)
+    >>> pred_full = decoder(visible_tokens, mask, output_masked_only=False)
+    >>> print(pred_full.shape)  # [B, T, output_dim]
+    torch.Size([4, 196, 768])
+    **Using Full Sequence Input**
+    If you have the full sequence with mask tokens already inserted:
+    >>> full_sequence = torch.randn(B, T, embed_dim)  # [B, 196, 768]
+    >>> pred = decoder(full_sequence, mask, output_masked_only=True)
+    >>> print(pred.shape)
+    torch.Size([4, 147, 768])
+    **Integration with MAE Training Loop**
+    >>> # Typical MAE training step (pseudocode)
+    >>> def mae_forward(encoder, decoder, images, mask_ratio=0.75):
+    ...     # Patchify and mask
+    ...     patches = patchify(images)  # [B, T, patch_dim]
+    ...     mask = random_mask(B, T, mask_ratio)  # [B, T], 0=keep, 1=mask
+    ...
+    ...     # Encode visible patches only
+    ...     visible_patches = patches[~mask.bool()].reshape(B, -1, patch_dim)
+    ...     latent = encoder(visible_patches)  # [B, N_vis, embed_dim]
+    ...
+    ...     # Decode to predict masked patches
+    ...     pred = decoder(
+    ...         latent, mask, output_masked_only=True
+    ...     )  # [B, N_mask, output_dim]
+    ...
+    ...     # Reconstruction loss on masked patches only
+    ...     target = patches[mask.bool()].reshape(B, -1, patch_dim)
+    ...     loss = F.mse_loss(pred, target)
+    ...     return loss
+    **Custom Configuration for ViT-Large**
+    >>> decoder_large = MAEDecoder(
+    ...     embed_dim=1024,  # ViT-L encoder dim
+    ...     decoder_embed_dim=512,  # Keep decoder lightweight
+    ...     output_dim=768,  # 16×16×3 pixels
+    ...     num_patches=256,  # 16×16 patches for 256×256 images
+    ...     depth=8,  # Slightly deeper
+    ...     num_heads=16,
+    ...     pos_embed_type="sincos_2d",
+    ...     drop_path_rate=0.1,  # Regularization
+    ... )
+
+    See Also:
+    --------
+    FlexibleTransformer : Core transformer implementation used internally.
     """
 
     def __init__(
@@ -941,7 +1157,7 @@ class MAEDecoder(nn.Module):
         self,
         x: torch.Tensor,
         mask: torch.Tensor,
-        output_masked_only: bool = True,
+        output_masked_only: bool = False,
     ) -> torch.Tensor:
         """Forward pass.
 
