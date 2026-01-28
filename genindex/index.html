@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; stable-pretraining 0.1.dev1+g739d196dc documentation</title>
+    <title>Index &#8212; stable-pretraining 0.1.dev1+g9b0b2e131 documentation</title>
   
   
   
@@ -39,7 +39,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
   <script src="../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
 
-    <script src="../_static/documentation_options.js?v=ac5f65b1"></script>
+    <script src="../_static/documentation_options.js?v=027cdc71"></script>
     <script src="../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
@@ -135,7 +135,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g739d196dc documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+g9b0b2e131 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -377,10 +377,6 @@ document.write(`
         <li><a href="../stable_pretraining.callbacks/#id0">(stable_pretraining.callbacks.queue.OnlineQueue property)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.AdaLNCrossAttentionBlock">AdaLNCrossAttentionBlock (class in stable_pretraining.backbone.vit)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.AdaLNDecoderBlock">AdaLNDecoderBlock (class in stable_pretraining.backbone.vit)</a>
-</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.adapt_resnet_for_lowres">adapt_resnet_for_lowres() (in module stable_pretraining.utils)</a>
 
       <ul>
@@ -407,10 +403,10 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.distributed.all_reduce">(in module stable_pretraining.utils.distributed)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.alphanum_key">alphanum_key() (in module stable_pretraining.utils.log_reader)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.OrderedQueue.append">append() (stable_pretraining.utils.nn_modules.OrderedQueue method)</a>
 
       <ul>
@@ -430,6 +426,8 @@ document.write(`
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.lightning_patch.apply_manual_optimization_patch">apply_manual_optimization_patch() (in module stable_pretraining.utils.lightning_patch)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.utils.apply_masks">apply_masks() (in module stable_pretraining.data.utils)</a>
+</li>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.Attention">Attention (class in stable_pretraining.backbone.vit)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.MultiHeadAttentiveProbe.attn_vectors">attn_vectors (stable_pretraining.backbone.probe.MultiHeadAttentiveProbe attribute)</a>
 </li>
@@ -561,10 +559,10 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.MinariStepsDataset.column_names">(stable_pretraining.data.synthetic_data.MinariStepsDataset property)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Compose">Compose (class in stable_pretraining.data.transforms)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Compose">Compose (class in stable_pretraining.data.transforms)</a>
+</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.aggregator.TensorAggregator.compute_output_dim">compute_output_dim() (stable_pretraining.backbone.aggregator.TensorAggregator method)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.compute_pairwise_distances">compute_pairwise_distances() (in module stable_pretraining.utils)</a>
@@ -627,9 +625,7 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.dino.cross_entropy_loss">cross_entropy_loss() (in module stable_pretraining.losses.dino)</a>
 </li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttentionBlock">CrossAttentionBlock (class in stable_pretraining.backbone.vit)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttentionDecoder">CrossAttentionDecoder (class in stable_pretraining.backbone.vit)</a>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttention">CrossAttention (class in stable_pretraining.backbone.vit)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.CSVLogAutoSummarizer">CSVLogAutoSummarizer (class in stable_pretraining.utils)</a>
 
@@ -715,6 +711,10 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.download.download">(in module stable_pretraining.data.download)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.DPM_2">DPM_2 (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.DPM_3">DPM_3 (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.dump">dump() (stable_pretraining.callbacks.writer.OnlineWriter method)</a>
 
       <ul>
@@ -759,6 +759,8 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.visualization.escape_labels">escape_labels() (in module stable_pretraining.utils.visualization)</a>
 </li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.EULER">EULER (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.EvalOnly/#stable_pretraining.backbone.EvalOnly">EvalOnly (class in stable_pretraining.backbone)</a>
 
       <ul>
@@ -788,8 +790,6 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MaskedEncoder.extra_repr">(stable_pretraining.backbone.vit.MaskedEncoder method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerPredictor.extra_repr">(stable_pretraining.backbone.vit.TransformerPredictor method)</a>
-</li>
       </ul></li>
   </ul></td>
 </tr></table>
@@ -817,9 +817,13 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.flatten_config">flatten_config() (in module stable_pretraining.utils.log_reader)</a>
 </li>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.FlexibleTransformer">FlexibleTransformer (class in stable_pretraining.backbone.vit)</a>
+</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.flops.flop_budget">flop_budget() (in module stable_pretraining.utils.flops)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.flops.FLOPBudgetExceeded">FLOPBudgetExceeded</a>
+</li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.flow_matching_sample">flow_matching_sample() (in module stable_pretraining.utils.solver)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.fold_views/#stable_pretraining.data.fold_views">fold_views() (in module stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.fold_views">[1]</a>
 
@@ -874,17 +878,19 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.TeacherStudentWrapper.forward">(stable_pretraining.backbone.utils.TeacherStudentWrapper method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.AdaLNCrossAttentionBlock.forward">(stable_pretraining.backbone.vit.AdaLNCrossAttentionBlock method)</a>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.Attention.forward">(stable_pretraining.backbone.vit.Attention method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.AdaLNDecoderBlock.forward">(stable_pretraining.backbone.vit.AdaLNDecoderBlock method)</a>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttention.forward">(stable_pretraining.backbone.vit.CrossAttention method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttentionBlock.forward">(stable_pretraining.backbone.vit.CrossAttentionBlock method)</a>
-</li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttentionDecoder.forward">(stable_pretraining.backbone.vit.CrossAttentionDecoder method)</a>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.FlexibleTransformer.forward">(stable_pretraining.backbone.vit.FlexibleTransformer method)</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MAEDecoder.forward">(stable_pretraining.backbone.vit.MAEDecoder method)</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MaskedEncoder.forward">(stable_pretraining.backbone.vit.MaskedEncoder method)</a>
+</li>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.PositionalEncoding2D.forward">(stable_pretraining.backbone.vit.PositionalEncoding2D method)</a>
+</li>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerBlock.forward">(stable_pretraining.backbone.vit.TransformerBlock method)</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerPredictor.forward">(stable_pretraining.backbone.vit.TransformerPredictor method)</a>
 </li>
@@ -945,6 +951,10 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.ImageToVideoEncoder.forward">(stable_pretraining.utils.ImageToVideoEncoder method)</a>
 </li>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.L2Norm.forward">(stable_pretraining.utils.L2Norm method)</a>
+</li>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.forward">(stable_pretraining.utils.mae_loss.MAELoss method)</a>
+</li>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.MAELoss.forward">(stable_pretraining.utils.MAELoss method)</a>
 </li>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.EMA.forward">(stable_pretraining.utils.nn_modules.EMA method)</a>
 </li>
@@ -1167,6 +1177,8 @@ document.write(`
 <h2 id="H">H</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.HEUN">HEUN (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.HF_EMBEDDINGS">HF_EMBEDDINGS (class in stable_pretraining.static)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.HF_PARAMETERS">HF_PARAMETERS (class in stable_pretraining.static)</a>
@@ -1343,10 +1355,10 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.lr_scheduler.LinearWarmupCyclicAnnealing">LinearWarmupCyclicAnnealing() (in module stable_pretraining.optim.lr_scheduler)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../api/gen_modules/stable_pretraining.optim.LinearWarmupThreeStepsAnnealing/#stable_pretraining.optim.LinearWarmupThreeStepsAnnealing">LinearWarmupThreeStepsAnnealing (class in stable_pretraining.optim)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.lr_scheduler.LinearWarmupThreeStepsAnnealing">LinearWarmupThreeStepsAnnealing() (in module stable_pretraining.optim.lr_scheduler)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.MultiHeadAttentiveProbe.ln">ln (stable_pretraining.backbone.probe.MultiHeadAttentiveProbe attribute)</a>
@@ -1393,6 +1405,12 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce">LogUnusedParametersOnce (class in stable_pretraining.callbacks.unused_parameters)</a>
 </li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.LOSS_TYPES">LOSS_TYPES (stable_pretraining.utils.mae_loss.MAELoss attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.MAELoss.LOSS_TYPES">(stable_pretraining.utils.MAELoss attribute)</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -1407,14 +1425,14 @@ document.write(`
         <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.reconstruction.mae">(in module stable_pretraining.losses.reconstruction)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss">mae_loss() (in module stable_pretraining.utils)</a>
-
-      <ul>
-        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.mae_loss">(in module stable_pretraining.utils.mae_loss)</a>
-</li>
-      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MAEDecoder">MAEDecoder (class in stable_pretraining.backbone.vit)</a>
 </li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.MAELoss">MAELoss (class in stable_pretraining.utils)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss">(class in stable_pretraining.utils.mae_loss)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.run.main">main() (in module stable_pretraining.run)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.Manager">Manager (class in stable_pretraining)</a>
@@ -1443,6 +1461,12 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.stats.mean_std">(in module stable_pretraining.utils.stats)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mean_var">mean_var() (in module stable_pretraining.utils)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.stats.mean_var">(in module stable_pretraining.utils.stats)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic">MetaStatic (class in stable_pretraining.static)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.CSVLogAutoSummarizer.METRICS_PATTERNS">METRICS_PATTERNS (stable_pretraining.utils.CSVLogAutoSummarizer attribute)</a>
@@ -1451,6 +1475,8 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.read_csv_logger.CSVLogAutoSummarizer.METRICS_PATTERNS">(stable_pretraining.utils.read_csv_logger.CSVLogAutoSummarizer attribute)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.MIDPOINT">MIDPOINT (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
       <li><a href="../api/gen_modules/stable_pretraining.data.MinariEpisodeDataset/#stable_pretraining.data.MinariEpisodeDataset">MinariEpisodeDataset (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.MinariEpisodeDataset">[1]</a>
 
       <ul>
@@ -1471,6 +1497,8 @@ document.write(`
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.resnet9.MLP">(class in stable_pretraining.backbone.resnet9)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.modulate">modulate() (in module stable_pretraining.backbone.vit)</a>
+</li>
       <li>
     module
 
@@ -1631,9 +1659,9 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.read_csv_logger">stable_pretraining.utils.read_csv_logger</a>
 </li>
-        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.stats">stable_pretraining.utils.stats</a>
+        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.solver">stable_pretraining.utils.solver</a>
 </li>
-        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.timm_to_hf_hub">stable_pretraining.utils.timm_to_hf_hub</a>
+        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.stats">stable_pretraining.utils.stats</a>
 </li>
         <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.visualization">stable_pretraining.utils.visualization</a>
 </li>
@@ -1744,6 +1772,8 @@ document.write(`
 <h2 id="O">O</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver">ODESolver (class in stable_pretraining.utils.solver)</a>
+</li>
       <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.off_diagonal">off_diagonal() (in module stable_pretraining.losses)</a>
 
       <ul>
@@ -1856,14 +1886,14 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentCallback.on_train_batch_end">(stable_pretraining.TeacherStudentCallback method)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.on_train_batch_start">on_train_batch_start() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce.on_train_batch_start">(stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_train_end">on_train_end() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback.on_train_epoch_end">on_train_epoch_end() (stable_pretraining.callbacks.cleanup.CleanUpCallback method)</a>
@@ -1984,8 +2014,18 @@ document.write(`
         <li><a href="../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.parameters">(stable_pretraining.module.Module method)</a>, <a href="../stable_pretraining/#stable_pretraining.module.Module.parameters">[1]</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.patchify">patchify() (stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.patchify">patchify() (in module stable_pretraining.utils)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.patchify">(in module stable_pretraining.utils.mae_loss)</a>
 </li>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.patchify">(stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
+</li>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.patchify">(stable_pretraining.utils.mae_loss.MAELoss method)</a>
+</li>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.MAELoss.patchify">(stable_pretraining.utils.MAELoss method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.PatchMasking">PatchMasking (class in stable_pretraining.backbone.patch_masking)</a>
 
       <ul>
@@ -2000,14 +2040,16 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.PILGaussianBlur">PILGaussianBlur (class in stable_pretraining.data.transforms)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.PositionalEncoding2D">PositionalEncoding2D (class in stable_pretraining.backbone.vit)</a>
+</li>
       <li><a href="../stable_pretraining/#stable_pretraining.Manager.predict">predict() (stable_pretraining.Manager method)</a>
 
       <ul>
         <li><a href="../stable_pretraining/#stable_pretraining.manager.Manager.predict">(stable_pretraining.manager.Manager method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../api/gen_modules/stable_pretraining.data.DataModule/#stable_pretraining.data.DataModule.predict_dataloader">predict_dataloader() (stable_pretraining.data.DataModule method)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.DataModule.predict_dataloader">[1]</a>
 
       <ul>
@@ -2033,8 +2075,6 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.latent_viz.LatentViz.projection_module">projection_module (stable_pretraining.callbacks.latent_viz.LatentViz property)</a>
-</li>
-      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.timm_to_hf_hub.push_timm_to_hf">push_timm_to_hf() (in module stable_pretraining.utils.timm_to_hf_hub)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -2112,6 +2152,12 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.config.recursive_instantiate">recursive_instantiate() (in module stable_pretraining.config)</a>
 </li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.register_custom_loss">register_custom_loss() (stable_pretraining.utils.mae_loss.MAELoss method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.MAELoss.register_custom_loss">(stable_pretraining.utils.MAELoss method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.register_lr_scale_hook">register_lr_scale_hook() (in module stable_pretraining.backbone.utils)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.HiddenStateExtractor.remove_hooks">remove_hooks() (stable_pretraining.backbone.utils.HiddenStateExtractor method)</a>
@@ -2154,6 +2200,8 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.config.rgetattr">(in module stable_pretraining.utils.config)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.RK4">RK4 (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RoundRobinMultiViewTransform">RoundRobinMultiViewTransform (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RoutingTransform">RoutingTransform (class in stable_pretraining.data.transforms)</a>
@@ -2885,17 +2933,17 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    stable_pretraining.utils.solver
+
+      <ul>
+        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.solver">module</a>
+</li>
+      </ul></li>
+      <li>
     stable_pretraining.utils.stats
 
       <ul>
         <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.stats">module</a>
-</li>
-      </ul></li>
-      <li>
-    stable_pretraining.utils.timm_to_hf_hub
-
-      <ul>
-        <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.timm_to_hf_hub">module</a>
 </li>
       </ul></li>
       <li>
@@ -3078,6 +3126,8 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Transform">Transform (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerBlock">TransformerBlock (class in stable_pretraining.backbone.vit)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerPredictor">TransformerPredictor (class in stable_pretraining.backbone.vit)</a>
 </li>
