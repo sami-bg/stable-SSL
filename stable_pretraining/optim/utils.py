@@ -68,7 +68,9 @@ def split_params_for_weight_decay(
 
     Example:
         >>> named_params = model.named_parameters()
-        >>> param_groups = split_params_for_weight_decay(named_params, weight_decay=0.01)
+        >>> param_groups = split_params_for_weight_decay(
+        ...     named_params, weight_decay=0.01
+        ... )
         >>> optimizer = torch.optim.AdamW(param_groups, lr=1e-3)
     """
     regular_params = []
@@ -133,7 +135,12 @@ def create_optimizer(
         >>> # With exclude_bias_norm - excludes bias/norm params from weight decay
         >>> opt = create_optimizer(
         ...     model.parameters(),
-        ...     {"type": "AdamW", "lr": 1e-3, "weight_decay": 0.01, "exclude_bias_norm": True},
+        ...     {
+        ...         "type": "AdamW",
+        ...         "lr": 1e-3,
+        ...         "weight_decay": 0.01,
+        ...         "exclude_bias_norm": True,
+        ...     },
         ...     named_params=model.named_parameters(),
         ... )
 
@@ -204,7 +211,9 @@ def create_optimizer(
         param_groups = split_params_for_weight_decay(named_params_list, weight_decay)
 
         if not param_groups:
-            raise ValueError("No parameters to optimize after splitting for weight decay")
+            raise ValueError(
+                "No parameters to optimize after splitting for weight decay"
+            )
 
         logging.info(
             f"Creating {opt_class.__name__} with exclude_bias_norm=True: "

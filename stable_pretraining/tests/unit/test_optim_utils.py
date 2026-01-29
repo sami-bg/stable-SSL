@@ -273,4 +273,3 @@ class TestCreateOptimizerWithExcludeBiasNorm:
         assert len(opt.param_groups) == 2
         assert opt.param_groups[0]["weight_decay"] == 0.0
         assert opt.param_groups[1]["weight_decay"] == 0.0
-

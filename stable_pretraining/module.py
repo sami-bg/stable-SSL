@@ -627,7 +627,9 @@ class Module(pl.LightningModule):
 
             # Pass named_params for exclude_bias_norm support
             named_params = named_params_by_name.get(name, [])
-            opt = create_optimizer(params, config["optimizer"], named_params=named_params)
+            opt = create_optimizer(
+                params, config["optimizer"], named_params=named_params
+            )
             optimizers.append(opt)
 
             sched_config = config.get("scheduler", "CosineAnnealingLR")
