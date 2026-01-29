@@ -67,5 +67,4 @@ __all__ = [
     # Legacy compatibility
     "noise",
     "manifold",
-    "datasets",
 ]
