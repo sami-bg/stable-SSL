@@ -61,7 +61,11 @@ class EnvironmentDumpCallback(Callback):
         self._start_time = time.time()
 
         # 🔥 CRITICAL: Get log_dir in main thread BEFORE starting background thread
-        log_dir = Path(trainer.default_root_dir)
+        # Use trainer.log_dir for the run-specific versioned directory
+        # Falls back to default_root_dir if no logger is configured
+        log_dir = (
+            Path(trainer.log_dir) if trainer.log_dir else Path(trainer.default_root_dir)
+        )
 
         if self.async_dump:
             logger.info(

@@ -90,7 +90,7 @@ class TestProbingIntegration:
             input="embedding",
             target="label",
             probe=torch.nn.Linear(512, 10),
-            loss_fn=torch.nn.CrossEntropyLoss(),
+            loss=torch.nn.CrossEntropyLoss(),
             metrics=torchmetrics.classification.MulticlassAccuracy(10),
         )
 
