@@ -8,8 +8,6 @@ from .patch_masking import PatchMasking
 from dataclasses import dataclass
 from .pos_embed import (
     get_sincos_pos_embed,
-    get_1d_sincos_pos_embed,
-    get_2d_sincos_pos_embed,
     get_timestep_embed,
     interpolate_pos_embed,
 )
@@ -249,11 +247,32 @@ class Attention(nn.Module):
     - Flash Attention (when available, fastest)
     - Memory-efficient attention (xformers-style)
     - Math fallback
+
+    Supports attention masking for patterns like:
+    - Causal (autoregressive) attention
+    - Leave-one-out prediction (diagonal blocked)
+    - Arbitrary sparse patterns
+
     :param dim: Input dimension
     :param num_heads: Number of attention heads
     :param qkv_bias: Add bias to QKV projection
     :param attn_drop: Attention dropout rate
     :param proj_drop: Output projection dropout rate
+
+    Example::
+
+        attn = Attention(dim=768, num_heads=12)
+
+        # Standard self-attention
+        out = attn(x)  # [B, N, 768]
+
+        # Leave-one-out: each token cannot attend to itself
+        mask = torch.eye(N, dtype=torch.bool, device=x.device)
+        out = attn(x, attn_mask=mask)  # out[:, i] based on x[:, ≠i]
+
+        # Causal attention
+        causal_mask = torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)
+        out = attn(x, attn_mask=causal_mask)
     """
 
     def __init__(
@@ -269,19 +288,31 @@ class Attention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
+
         # Fused QKV projection for efficiency
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Forward pass.
 
         :param x: Input tensor [B, N, D]
+        :param attn_mask: Attention mask. Can be one of:
+            - [N, N]: Same mask for all batches and heads
+            - [B, N, N]: Per-batch mask, broadcast over heads
+            - [B, H, N, N]: Full per-batch, per-head mask
+            Mask values: True = blocked (cannot attend), False = allowed.
+            For leave-one-out prediction, use `torch.eye(N, dtype=torch.bool)`.
         :return: Output tensor [B, N, D]
         """
         B, N, C = x.shape
+
         # Fused QKV: [B, N, 3*D] -> [B, N, 3, H, head_dim] -> [3, B, H, N, head_dim]
         qkv = (
             self.qkv(x)
@@ -289,30 +320,86 @@ class Attention(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         q, k, v = qkv.unbind(0)
+
+        # Convert mask to SDPA format if provided
+        attn_mask_sdpa = self._prepare_attn_mask(attn_mask, q.dtype, q.device)
+
         # Efficient attention (Flash/Memory-efficient when available)
         x = F.scaled_dot_product_attention(
             q,
             k,
             v,
+            attn_mask=attn_mask_sdpa,
             dropout_p=self.attn_drop if self.training else 0.0,
         )
+
         # Reshape back: [B, H, N, head_dim] -> [B, N, D]
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
 
+    def _prepare_attn_mask(
+        self,
+        attn_mask: Optional[torch.Tensor],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
+        """Convert boolean attention mask to SDPA-compatible float mask.
+
+        SDPA expects additive mask where -inf blocks attention.
+        Our convention: True = blocked, False = allowed.
+
+        :param attn_mask: Boolean mask [N, N], [B, N, N], or [B, H, N, N]
+        :param dtype: Target dtype for the mask
+        :param device: Target device for the mask
+        :return: Float mask suitable for SDPA, or None
+        """
+        if attn_mask is None:
+            return None
+
+        # Convert bool mask to float: True -> -inf, False -> 0
+        if attn_mask.dtype == torch.bool:
+            mask = torch.zeros_like(attn_mask, dtype=dtype, device=device)
+            mask = mask.masked_fill(attn_mask, float("-inf"))
+        else:
+            mask = attn_mask.to(dtype=dtype, device=device)
+
+        # Expand dimensions for broadcasting: need [B, H, N, N] for SDPA
+        # [N, N] -> [1, 1, N, N]
+        # [B, N, N] -> [B, 1, N, N]
+        # [B, H, N, N] -> unchanged
+        while mask.dim() < 4:
+            mask = mask.unsqueeze(0 if mask.dim() == 2 else 1)
+
+        return mask
+
 
 class CrossAttention(nn.Module):
     """Multi-head cross-attention with efficient SDPA backend.
 
     Queries attend to key-value pairs from a separate context sequence.
+    Supports attention masking to block specific query-key interactions.
+
     :param dim: Query dimension
     :param context_dim: Context dimension (defaults to dim)
     :param num_heads: Number of attention heads
     :param qkv_bias: Add bias to projections
     :param attn_drop: Attention dropout rate
     :param proj_drop: Output projection dropout rate
+
+    Example::
+
+        cross_attn = CrossAttention(dim=768, context_dim=1024, num_heads=12)
+
+        # Standard cross-attention
+        out = cross_attn(queries, context)  # [B, N, 768]
+
+        # Masked cross-attention: block certain query-context pairs
+        # mask[i, j] = True means query i cannot attend to context j
+        mask = torch.zeros(N, M, dtype=torch.bool)
+        mask[:, :10] = True  # block attention to first 10 context tokens
+        out = cross_attn(queries, context, attn_mask=mask)
     """
 
     def __init__(
@@ -329,23 +416,36 @@ class CrossAttention(nn.Module):
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+
         self.q = nn.Linear(dim, dim, bias=qkv_bias)
         self.kv = nn.Linear(context_dim, dim * 2, bias=qkv_bias)
         self.attn_drop = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Forward pass.
 
         :param x: Query tensor [B, N, D]
         :param context: Key-value tensor [B, M, context_dim]
+        :param attn_mask: Cross-attention mask. Can be one of:
+            - [N, M]: Same mask for all batches and heads
+            - [B, N, M]: Per-batch mask, broadcast over heads
+            - [B, H, N, M]: Full per-batch, per-head mask
+            Mask values: True = blocked (cannot attend), False = allowed.
         :return: Output tensor [B, N, D]
         """
         B, N, C = x.shape
         M = context.shape[1]
+
         # Query projection: [B, N, D] -> [B, H, N, head_dim]
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+
         # KV projection: [B, M, D] -> [B, H, M, head_dim] x2
         kv = (
             self.kv(context)
@@ -353,18 +453,59 @@ class CrossAttention(nn.Module):
             .permute(2, 0, 3, 1, 4)
         )
         k, v = kv.unbind(0)
+
+        # Convert mask to SDPA format if provided
+        attn_mask_sdpa = self._prepare_attn_mask(attn_mask, q.dtype, q.device)
+
         # Efficient attention
         x = F.scaled_dot_product_attention(
             q,
             k,
             v,
+            attn_mask=attn_mask_sdpa,
             dropout_p=self.attn_drop if self.training else 0.0,
         )
+
         # Reshape back
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+    def _prepare_attn_mask(
+        self,
+        attn_mask: Optional[torch.Tensor],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
+        """Convert boolean attention mask to SDPA-compatible float mask.
+
+        SDPA expects additive mask where -inf blocks attention.
+        Our convention: True = blocked, False = allowed.
+
+        :param attn_mask: Boolean mask [N, M], [B, N, M], or [B, H, N, M]
+        :param dtype: Target dtype for the mask
+        :param device: Target device for the mask
+        :return: Float mask suitable for SDPA, or None
+        """
+        if attn_mask is None:
+            return None
+
+        # Convert bool mask to float: True -> -inf, False -> 0
+        if attn_mask.dtype == torch.bool:
+            mask = torch.zeros_like(attn_mask, dtype=dtype, device=device)
+            mask = mask.masked_fill(attn_mask, float("-inf"))
+        else:
+            mask = attn_mask.to(dtype=dtype, device=device)
+
+        # Expand dimensions for broadcasting: need [B, H, N, M] for SDPA
+        # [N, M] -> [1, 1, N, M]
+        # [B, N, M] -> [B, 1, N, M]
+        # [B, H, N, M] -> unchanged
+        while mask.dim() < 4:
+            mask = mask.unsqueeze(0 if mask.dim() == 2 else 1)
+
+        return mask
 
 
 # =============================================================================
@@ -379,18 +520,27 @@ class TransformerBlock(nn.Module):
     """Unified transformer block with optional AdaLN-Zero conditioning.
 
     Supports three attention configurations:
+
     **Mode 1: Pure Cross-Attention** (`self_attn=False, cross_attn=True`)
         - Queries attend to context but not to each other
         - Use case: Lightweight decoder
+
     **Mode 2: Decoder-Style** (`self_attn=True, cross_attn=True`)
         - Self-attention on queries, then cross-attention to context
         - Use case: Standard decoder (IJEPA predictor, etc.)
+
     **Mode 3: Joint Attention** (`self_attn=True, cross_attn=False`)
         - All tokens attend to all tokens (caller concatenates context + queries)
         - Use case: Full bidirectional flow (DiT, high masking ratio)
+
     **Conditioning:**
         - `use_adaln=True`: AdaLN-Zero modulation (scale, shift, gate per operation)
         - `use_adaln=False`: Standard pre-norm transformer
+
+    **Attention Masking:**
+        - Pass `attn_mask` to block attention patterns (e.g., leave-one-out)
+        - Mask format: `True` = blocked, `False` = allowed
+
     :param dim: Hidden dimension
     :param num_heads: Number of attention heads
     :param mlp_ratio: MLP hidden dim = dim * mlp_ratio
@@ -420,8 +570,10 @@ class TransformerBlock(nn.Module):
         self.use_self_attn = self_attn
         self.use_cross_attn = cross_attn
         self.use_adaln = use_adaln
+
         if not self_attn and not cross_attn:
             raise ValueError("At least one of self_attn or cross_attn must be True")
+
         # Self-attention
         if self_attn:
             self.norm1 = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
@@ -429,6 +581,7 @@ class TransformerBlock(nn.Module):
                 dim, num_heads=num_heads, attn_drop=attn_drop, proj_drop=proj_drop
             )
             self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+
         # Cross-attention
         if cross_attn:
             self.norm2_q = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
@@ -437,6 +590,7 @@ class TransformerBlock(nn.Module):
                 dim, num_heads=num_heads, attn_drop=attn_drop, proj_drop=proj_drop
             )
             self.drop_path2 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+
         # MLP
         self.norm3 = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
         self.mlp = Mlp(
@@ -446,6 +600,7 @@ class TransformerBlock(nn.Module):
             drop=proj_drop,
         )
         self.drop_path3 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+
         # AdaLN modulation MLP
         if use_adaln:
             # 3 params (shift, scale, gate) per operation
@@ -459,56 +614,140 @@ class TransformerBlock(nn.Module):
             nn.init.zeros_(self.adaLN_mlp[1].weight)
             nn.init.zeros_(self.adaLN_mlp[1].bias)
 
+    def _apply_self_attn(
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        shift: Optional[torch.Tensor] = None,
+        scale: Optional[torch.Tensor] = None,
+        gate: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Apply self-attention with optional AdaLN modulation and attention mask.
+
+        :param x: Input tensor [B, N, D]
+        :param attn_mask: Attention mask [N, N] or [B, N, N]. True = blocked.
+        :param shift: AdaLN shift [B, 1, D]
+        :param scale: AdaLN scale [B, 1, D]
+        :param gate: AdaLN gate [B, 1, D]
+        :return: Output tensor [B, N, D]
+        """
+        if self.use_adaln:
+            normed = modulate(self.norm1(x), shift, scale)
+            attn_out = self.attn(normed, attn_mask=attn_mask)
+            return x + gate * self.drop_path1(attn_out)
+        else:
+            attn_out = self.attn(self.norm1(x), attn_mask=attn_mask)
+            return x + self.drop_path1(attn_out)
+
+    def _apply_cross_attn(
+        self,
+        x: torch.Tensor,
+        context: torch.Tensor,
+        cross_attn_mask: Optional[torch.Tensor] = None,
+        shift: Optional[torch.Tensor] = None,
+        scale: Optional[torch.Tensor] = None,
+        gate: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Apply cross-attention with optional AdaLN modulation and attention mask.
+
+        :param x: Query tensor [B, N, D]
+        :param context: Key-value tensor [B, M, D]
+        :param cross_attn_mask: Cross-attention mask [N, M] or [B, N, M]. True = blocked.
+        :param shift: AdaLN shift [B, 1, D]
+        :param scale: AdaLN scale [B, 1, D]
+        :param gate: AdaLN gate [B, 1, D]
+        :return: Output tensor [B, N, D]
+        """
+        if self.use_adaln:
+            q = modulate(self.norm2_q(x), shift, scale)
+            kv = self.norm2_kv(context)
+            cross_out = self.cross_attn(q, kv, attn_mask=cross_attn_mask)
+            return x + gate * self.drop_path2(cross_out)
+        else:
+            q = self.norm2_q(x)
+            kv = self.norm2_kv(context)
+            cross_out = self.cross_attn(q, kv, attn_mask=cross_attn_mask)
+            return x + self.drop_path2(cross_out)
+
+    def _apply_mlp(
+        self,
+        x: torch.Tensor,
+        shift: Optional[torch.Tensor] = None,
+        scale: Optional[torch.Tensor] = None,
+        gate: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Apply MLP with optional AdaLN modulation.
+
+        :param x: Input tensor [B, N, D]
+        :param shift: AdaLN shift [B, 1, D]
+        :param scale: AdaLN scale [B, 1, D]
+        :param gate: AdaLN gate [B, 1, D]
+        :return: Output tensor [B, N, D]
+        """
+        if self.use_adaln:
+            normed = modulate(self.norm3(x), shift, scale)
+            return x + gate * self.drop_path3(self.mlp(normed))
+        else:
+            return x + self.drop_path3(self.mlp(self.norm3(x)))
+
     def forward(
         self,
         x: torch.Tensor,
         context: Optional[torch.Tensor] = None,
         cond: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
+        cross_attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass.
 
         :param x: Input tensor [B, N, D]
         :param context: Context for cross-attention [B, M, D] (required if cross_attn=True)
         :param cond: Conditioning tensor [B, D] (required if use_adaln=True)
+        :param attn_mask: Self-attention mask [N, N] or [B, N, N].
+            True = blocked (cannot attend), False = allowed.
+            Use `torch.eye(N, dtype=torch.bool)` for leave-one-out prediction.
+        :param cross_attn_mask: Cross-attention mask [N, M] or [B, N, M].
+            True = blocked, False = allowed.
         :return: Output tensor [B, N, D]
         """
         if self.use_cross_attn and context is None:
             raise ValueError("context required when cross_attn=True")
         if self.use_adaln and cond is None:
             raise ValueError("cond required when use_adaln=True")
+
         if self.use_adaln:
             # Get modulation parameters: [B, num_mods * D] -> list of [B, 1, D]
             mods = self.adaLN_mlp(cond).chunk(self.num_mods, dim=-1)
             mods = [m.unsqueeze(1) for m in mods]
             i = 0
+
             # Self-attention with AdaLN
             if self.use_self_attn:
                 shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
                 i += 3
-                x = x + gate * self.drop_path1(
-                    self.attn(modulate(self.norm1(x), shift, scale))
-                )
+                x = self._apply_self_attn(x, attn_mask, shift, scale, gate)
+
             # Cross-attention with AdaLN
             if self.use_cross_attn:
                 shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
                 i += 3
-                q = modulate(self.norm2_q(x), shift, scale)
-                kv = self.norm2_kv(context)
-                x = x + gate * self.drop_path2(self.cross_attn(q, kv))
+                x = self._apply_cross_attn(
+                    x, context, cross_attn_mask, shift, scale, gate
+                )
+
             # MLP with AdaLN
             shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
-            x = x + gate * self.drop_path3(
-                self.mlp(modulate(self.norm3(x), shift, scale))
-            )
+            x = self._apply_mlp(x, shift, scale, gate)
         else:
             # Standard pre-norm transformer (no conditioning)
             if self.use_self_attn:
-                x = x + self.drop_path1(self.attn(self.norm1(x)))
+                x = self._apply_self_attn(x, attn_mask)
+
             if self.use_cross_attn:
-                x = x + self.drop_path2(
-                    self.cross_attn(self.norm2_q(x), self.norm2_kv(context))
-                )
-            x = x + self.drop_path3(self.mlp(self.norm3(x)))
+                x = self._apply_cross_attn(x, context, cross_attn_mask)
+
+            x = self._apply_mlp(x)
+
         return x
 
 
@@ -520,6 +759,9 @@ class FlexibleTransformer(nn.Module):
     - **IJEPA predictor**: `self_attn=True, cross_attn=True, use_adaln=False`
     - **DiT / Flow**: `self_attn=True, cross_attn=True/False, use_adaln=True`
     - **MaskGIT**: `self_attn=True, cross_attn=False, use_adaln=True, add_mask_token=True`
+    - **Lightweight predictor**: `self_attn=True, cross_attn=False, use_adaln=False, num_registers>0`
+    - **Leave-one-out prediction**: `self_attn=True, cross_attn=False` with diagonal `attn_mask`
+
     :param input_dim: Input embedding dimension (from encoder)
     :param hidden_dim: Internal transformer dimension
     :param output_dim: Output dimension
@@ -536,11 +778,18 @@ class FlexibleTransformer(nn.Module):
     :param attn_drop: Attention dropout rate
     :param proj_drop: Projection dropout rate
     :param zero_init_output: Zero-initialize output projection
-    :param num_prefix_tokens: Number of prefix tokens (e.g., CLS token)
+    :param num_prefix_tokens: Number of prefix tokens (e.g., CLS token) expected in input.
+        These are tokens whose content comes from the encoder but need special
+        positional embeddings.
+    :param num_registers: Number of learnable register tokens to prepend internally.
+        Unlike prefix tokens, registers are fully learnable (both content and position)
+        and are prepended automatically—callers don't include them in input.
     :param add_mask_token: Enable learnable [MASK] token for masked prediction.
         When enabled, use `context_mask` and/or `query_mask` in forward() to
         replace tokens at specified positions with the [MASK] token.
+
     Example::
+
         # MAE decoder
         decoder = FlexibleTransformer(
             768,
@@ -553,6 +802,7 @@ class FlexibleTransformer(nn.Module):
             use_adaln=False,
         )
         out = decoder(context, queries, context_idx, query_idx)
+
         # IJEPA predictor
         predictor = FlexibleTransformer(
             768,
@@ -565,6 +815,7 @@ class FlexibleTransformer(nn.Module):
             use_adaln=False,
         )
         out = predictor(context, queries, context_idx, query_idx)
+
         # DiT-style flow matching
         flow = FlexibleTransformer(
             768,
@@ -577,6 +828,7 @@ class FlexibleTransformer(nn.Module):
             use_adaln=True,
         )
         out = flow(context, queries, context_idx, query_idx, t=timesteps)
+
         # MaskGIT-style: variable number of masks per sample
         maskgit = FlexibleTransformer(
             768,
@@ -589,39 +841,61 @@ class FlexibleTransformer(nn.Module):
             use_adaln=True,
             add_mask_token=True,
         )
-        # Each sample can have different number of masked positions
-        # context_mask[b, i] = True means replace context[b, i] with [MASK]
-        context_mask = torch.rand(B, num_patches) < mask_ratio  # Variable per sample!
+        context_mask = torch.rand(B, num_patches) < mask_ratio
         out = maskgit(
-            context=all_patches,  # [B, 196, D]
-            queries=all_patches[:, :0],  # [B, 0, D] empty
-            context_idx=torch.arange(196).expand(B, -1),  # [B, 196]
+            context=all_patches,
+            queries=all_patches[:, :0],
+            context_idx=torch.arange(196).expand(B, -1),
             query_idx=torch.empty(B, 0, dtype=torch.long),
-            context_mask=context_mask,  # [B, 196] bool, variable True count
+            context_mask=context_mask,
             t=timesteps,
             return_all=True,
-        )  # Returns [B, 196, output_dim]
-        # BERT-style MLM: mask random tokens in sequence
-        bert = FlexibleTransformer(
+        )
+
+        # Leave-one-out prediction: each token predicted from all others
+        predictor = FlexibleTransformer(
             768,
+            384,
             768,
-            768,
-            512,
-            depth=12,
+            196,
+            depth=4,
             self_attn=True,
             cross_attn=False,
             use_adaln=False,
-            add_mask_token=True,
         )
-        # Random 15% masking, different positions per sample
-        context_mask = torch.rand(B, seq_len) < 0.15
-        out = bert(
-            context=token_embeddings,
-            queries=token_embeddings[:, :0],
-            context_idx=position_ids,
+        # Diagonal mask: each token cannot attend to itself
+        T = x.shape[1]
+        attn_mask = torch.eye(T, dtype=torch.bool, device=x.device)
+        out = predictor(
+            context=x,
+            queries=x[:, :0],  # empty queries
+            context_idx=torch.arange(T).expand(B, -1),
             query_idx=torch.empty(B, 0, dtype=torch.long),
-            context_mask=context_mask,
+            attn_mask=attn_mask,  # [T, T] bool, True = blocked
             return_all=True,
+        )  # out[:, t] is predicted from x[:, ≠t]
+
+        # Lightweight predictor with register tokens
+        predictor = FlexibleTransformer(
+            768,
+            384,
+            768,
+            196,
+            depth=4,
+            num_heads=6,
+            self_attn=True,
+            cross_attn=False,
+            use_adaln=False,
+            num_registers=4,
+            num_prefix_tokens=0,
+        )
+        out, registers = predictor(
+            context=encoder_output,
+            queries=encoder_output[:, :0],
+            context_idx=ids_keep,
+            query_idx=torch.empty(B, 0, dtype=torch.long),
+            return_all=True,
+            return_registers=True,
         )
     """
 
@@ -644,6 +918,7 @@ class FlexibleTransformer(nn.Module):
         proj_drop: float = 0.0,
         zero_init_output: bool = True,
         num_prefix_tokens: int = 1,
+        num_registers: int = 0,
         add_mask_token: bool = False,
     ):
         super().__init__()
@@ -651,18 +926,23 @@ class FlexibleTransformer(nn.Module):
             raise ValueError(
                 f"hidden_dim ({hidden_dim}) must be divisible by num_heads ({num_heads})"
             )
+
         self.hidden_dim = hidden_dim
         self.num_prefix_tokens = num_prefix_tokens
+        self.num_registers = num_registers
         self.use_cross_attn = cross_attn
         self.use_adaln = use_adaln
         self.add_mask_token = add_mask_token
+
         # Input/output projections
         self.context_proj = nn.Linear(input_dim, hidden_dim)
         self.query_proj = nn.Linear(input_dim, hidden_dim)
         self.output_proj = nn.Linear(hidden_dim, output_dim)
+
         if zero_init_output:
             nn.init.zeros_(self.output_proj.weight)
             nn.init.zeros_(self.output_proj.bias)
+
         # Positional embeddings
         if pos_embed_type == "sincos_2d":
             if grid_size is None:
@@ -681,16 +961,30 @@ class FlexibleTransformer(nn.Module):
         else:  # learned
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_dim))
             trunc_normal_(self.pos_embed, std=0.02)
-        # Prefix token positional embeddings
+
+        # Prefix token positional embeddings (content comes from input)
         if num_prefix_tokens > 0:
             self.prefix_pos_embed = nn.Parameter(
                 torch.zeros(1, num_prefix_tokens, hidden_dim)
             )
             nn.init.normal_(self.prefix_pos_embed, std=0.02)
+
+        # Learnable register tokens (both content and position are learned)
+        if num_registers > 0:
+            self.register_tokens = nn.Parameter(
+                torch.zeros(1, num_registers, hidden_dim)
+            )
+            self.register_pos_embed = nn.Parameter(
+                torch.zeros(1, num_registers, hidden_dim)
+            )
+            nn.init.normal_(self.register_tokens, std=0.02)
+            nn.init.normal_(self.register_pos_embed, std=0.02)
+
         # Learnable mask token (shared for context and query masking)
         if add_mask_token:
             self.mask_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
             nn.init.normal_(self.mask_token, std=0.02)
+
         # Time embedding MLP (only needed for AdaLN)
         if use_adaln:
             self.time_mlp = nn.Sequential(
@@ -698,6 +992,7 @@ class FlexibleTransformer(nn.Module):
                 nn.GELU(),
                 nn.Linear(hidden_dim * 4, hidden_dim),
             )
+
         # Transformer blocks with linearly increasing drop path
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
         self.blocks = nn.ModuleList(
@@ -719,8 +1014,14 @@ class FlexibleTransformer(nn.Module):
         self.final_norm = nn.LayerNorm(hidden_dim)
 
     def _gather_pos(self, idx: torch.Tensor, num_prefix: int = 0) -> torch.Tensor:
-        """Gather positional embeddings for given indices."""
+        """Gather positional embeddings for given indices.
+
+        :param idx: Token indices [B, N] where values index into pos_embed
+        :param num_prefix: Number of prefix tokens at the start of idx
+        :return: Positional embeddings [B, N, hidden_dim]
+        """
         B = idx.shape[0]
+
         if num_prefix > 0:
             prefix_pos = self.prefix_pos_embed.expand(B, -1, -1)
             patch_idx = idx[:, num_prefix:]
@@ -734,18 +1035,74 @@ class FlexibleTransformer(nn.Module):
             idx = idx.unsqueeze(-1).expand(-1, -1, self.hidden_dim)
             return torch.gather(self.pos_embed.expand(B, -1, -1), 1, idx)
 
+    def _get_registers(self, batch_size: int) -> torch.Tensor:
+        """Get register tokens with positional embeddings.
+
+        :param batch_size: Batch size B
+        :return: Register tokens [B, num_registers, hidden_dim]
+        """
+        return (self.register_tokens + self.register_pos_embed).expand(
+            batch_size, -1, -1
+        )
+
+    def _expand_attn_mask(
+        self,
+        attn_mask: torch.Tensor,
+        n_registers: int,
+        n_context: int,
+        n_queries: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Expand attention mask to account for registers and queries.
+
+        The input attn_mask is for the original context tokens. This function
+        expands it to cover [registers, context, queries] for joint attention.
+
+        :param attn_mask: Original mask [T, T] or [B, T, T] for context tokens.
+            True = blocked, False = allowed.
+        :param n_registers: Number of register tokens
+        :param n_context: Number of context tokens (after projection, before registers)
+        :param n_queries: Number of query tokens
+        :param device: Target device
+        :return: Expanded mask [T_total, T_total] or [B, T_total, T_total]
+        """
+        has_batch = attn_mask.dim() == 3
+        T_total = n_registers + n_context + n_queries
+
+        if has_batch:
+            B = attn_mask.shape[0]
+            expanded = torch.zeros(B, T_total, T_total, dtype=torch.bool, device=device)
+        else:
+            expanded = torch.zeros(T_total, T_total, dtype=torch.bool, device=device)
+
+        # Place original mask in the context region
+        ctx_start = n_registers
+        ctx_end = n_registers + n_context
+
+        if has_batch:
+            expanded[:, ctx_start:ctx_end, ctx_start:ctx_end] = attn_mask
+        else:
+            expanded[ctx_start:ctx_end, ctx_start:ctx_end] = attn_mask
+
+        # Registers and queries can attend to everything (no additional masking)
+        # If you want queries to also have leave-one-out, extend the mask accordingly
+
+        return expanded
+
     def forward(
         self,
         context: torch.Tensor,
-        queries: torch.Tensor,
-        context_idx: torch.Tensor,
-        query_idx: torch.Tensor,
+        queries: torch.Tensor = None,
+        context_idx: torch.Tensor = None,
+        query_idx: torch.Tensor = None,
         t: Optional[torch.Tensor] = None,
         num_prefix: Optional[int] = None,
         return_all: bool = False,
+        return_registers: bool = False,
         context_mask: Optional[torch.Tensor] = None,
         query_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Forward pass.
 
         :param context: Context token embeddings [B, N_ctx, input_dim]
@@ -758,17 +1115,43 @@ class FlexibleTransformer(nn.Module):
             return all tokens unshuffled to original position order.
             Output shape: [B, N_ctx + N_qry, output_dim].
             Ignored for cross-attention modes.
+        :param return_registers: If True and num_registers > 0, also return
+            register token outputs as a second tensor. Returns tuple of
+            (main_output, register_output) where register_output is
+            [B, num_registers, output_dim].
         :param context_mask: Boolean mask indicating which context tokens to replace
             with [MASK] token [B, N_ctx]. True = replace with mask. Each sample can
             have a different number of True values. Requires add_mask_token=True.
         :param query_mask: Boolean mask indicating which query tokens to replace
             with [MASK] token [B, N_qry]. True = replace with mask. Each sample can
             have a different number of True values. Requires add_mask_token=True.
+        :param attn_mask: Attention mask for self-attention [T, T] or [B, T, T].
+            True = blocked (cannot attend), False = allowed.
+            For leave-one-out prediction, use `torch.eye(T, dtype=torch.bool)`.
+            Only applies to joint attention mode (cross_attn=False).
+            The mask is automatically expanded to account for registers.
         :return: Output embeddings. Shape depends on mode:
             - cross_attn=True: [B, N_qry, output_dim]
             - cross_attn=False, return_all=False: [B, N_qry, output_dim]
-            - cross_attn=False, return_all=True: [B, N_ctx + N_qry, output_dim].
+            - cross_attn=False, return_all=True: [B, N_ctx + N_qry, output_dim]
+            If return_registers=True, returns tuple (output, registers) where
+            registers is [B, num_registers, output_dim].
         """
+        B, N_ctx, _ = context.shape
+        device = context.device
+
+        # Default: empty queries
+        if queries is None:
+            queries = context.new_empty(B, 0, context.shape[-1])
+
+        N_qry = queries.shape[1]
+
+        # Default: sequential indices
+        if context_idx is None:
+            context_idx = torch.arange(N_ctx, device=device).expand(B, -1)
+        if query_idx is None:
+            query_idx = torch.arange(N_qry, device=device).expand(B, -1)
+
         # Validate mask token usage
         if context_mask is not None or query_mask is not None:
             if not self.add_mask_token:
@@ -776,190 +1159,113 @@ class FlexibleTransformer(nn.Module):
                     "context_mask or query_mask provided but "
                     "add_mask_token=False at initialization"
                 )
+
         if num_prefix is None:
             num_prefix = self.num_prefix_tokens
+
+        B = context.shape[0]
+        n_registers = self.num_registers
+
         # Project context and optionally replace masked positions with [MASK] token
         context = self.context_proj(context)
         if context_mask is not None:
             mask_tokens = self.mask_token.expand_as(context)
             context = torch.where(context_mask.unsqueeze(-1), mask_tokens, context)
         context = context + self._gather_pos(context_idx, num_prefix)
+
         # Project queries and optionally replace masked positions with [MASK] token
         queries = self.query_proj(queries)
         if query_mask is not None:
             mask_tokens = self.mask_token.expand_as(queries)
             queries = torch.where(query_mask.unsqueeze(-1), mask_tokens, queries)
         queries = queries + self._gather_pos(query_idx)
+
+        n_context_orig = context.shape[1]  # before adding registers
+        n_queries = queries.shape[1]
+
+        # Prepend learnable register tokens to context
+        if n_registers > 0:
+            registers = self._get_registers(B)
+            context = torch.cat([registers, context], dim=1)
+
         # Time conditioning (only for AdaLN mode)
         cond = None
         if self.use_adaln:
             if t is None:
                 raise ValueError("Timestep t required when use_adaln=True")
             cond = self.time_mlp(get_timestep_embed(t, self.hidden_dim))
-        n_context = context.shape[1]
-        n_queries = queries.shape[1]
+
+        n_context = context.shape[1]  # includes registers
+
         if self.use_cross_attn:
-            # Cross-attention mode: queries attend to context
+            # Cross-attention mode: queries attend to context (including registers)
+            # attn_mask not typically used here, but could be passed for cross-attn masking
             for block in self.blocks:
-                queries = block(queries, context=context, cond=cond)
-            return self.output_proj(self.final_norm(queries))
+                queries = block(
+                    queries, context=context, cond=cond, attn_mask=attn_mask
+                )
+            out = self.output_proj(self.final_norm(queries))
+
+            if return_registers and n_registers > 0:
+                reg_out = self.output_proj(self.final_norm(registers))
+                return out, reg_out
+
+            return out
+
         # Joint attention mode
         x = torch.cat([context, queries], dim=1)
+
+        # Expand attention mask to cover [registers, context, queries]
+        expanded_attn_mask = None
+        if attn_mask is not None:
+            expanded_attn_mask = self._expand_attn_mask(
+                attn_mask, n_registers, n_context_orig, n_queries, x.device
+            )
+
         for block in self.blocks:
-            x = block(x, cond=cond)
+            x = block(x, cond=cond, attn_mask=expanded_attn_mask)
         x = self.final_norm(x)
+
+        # Extract register outputs if needed
+        reg_out = None
+        if return_registers and n_registers > 0:
+            reg_out = self.output_proj(x[:, :n_registers])
+
         if return_all:
-            # Unshuffle to original positions
-            B = context_idx.shape[0]
-            T = n_context + n_queries
+            # Unshuffle to original positions (excluding registers)
+            T = n_context_orig + n_queries
             out = torch.empty(B, T, self.hidden_dim, device=x.device, dtype=x.dtype)
+
+            # Context part (skip registers)
             out.scatter_(
                 dim=1,
                 index=context_idx.unsqueeze(-1).expand(-1, -1, self.hidden_dim),
-                src=x[:, :n_context],
+                src=x[:, n_registers:n_context],
             )
-            out.scatter_(
-                dim=1,
-                index=query_idx.unsqueeze(-1).expand(-1, -1, self.hidden_dim),
-                src=x[:, n_context:],
-            )
-            return self.output_proj(out)
+            # Query part
+            if n_queries > 0:
+                out.scatter_(
+                    dim=1,
+                    index=query_idx.unsqueeze(-1).expand(-1, -1, self.hidden_dim),
+                    src=x[:, n_context:],
+                )
+            out = self.output_proj(out)
+
+            if return_registers and n_registers > 0:
+                return out, reg_out
+            return out
+
         # Return only query outputs
         if n_queries == 0:
-            B = context.shape[0]
-            return torch.empty(
+            out = torch.empty(
                 B, 0, self.output_proj.out_features, device=x.device, dtype=x.dtype
             )
-        return self.output_proj(x[:, -n_queries:])
+        else:
+            out = self.output_proj(x[:, -n_queries:])
 
-
-class TransformerPredictor(nn.Module):
-    """Lightweight transformer predictor using TransformerBlock.
-
-    A flexible predictor module commonly used in masked image modeling (e.g., MAE,
-    I-JEPA). Processes context tokens and optionally includes learnable register/query
-    tokens for aggregation.
-    :param input_dim: Dimension of input context tokens
-    :param hidden_dim: Internal dimension of transformer layers
-    :param output_dim: Dimension of output tokens
-    :param depth: Number of transformer layers
-    :param num_heads: Number of attention heads
-    :param num_registers: Number of learnable register/query tokens to prepend
-    :param mlp_ratio: MLP hidden dimension multiplier
-    :param drop_path_rate: Stochastic depth rate
-    :param pos_embed_type: Type of positional embedding (None, 'sincos_1d', 'sincos_2d', 'learned')
-    :param max_seq_len: Maximum sequence length (required if pos_embed_type='learned')
-    """
-
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        output_dim: int,
-        depth: int,
-        num_heads: int = 6,
-        num_registers: int = 0,
-        mlp_ratio: float = 4.0,
-        drop_path_rate: float = 0.0,
-        pos_embed_type: Literal["sincos_1d", "sincos_2d", "learned"] | None = None,
-        max_seq_len: int | None = None,
-    ):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.num_registers = num_registers
-        self.pos_embed_type = pos_embed_type
-        # Projections
-        self.input_proj = nn.Linear(input_dim, hidden_dim)
-        self.output_proj = nn.Linear(hidden_dim, output_dim)
-        # Register tokens
-        if num_registers > 0:
-            self.register_tokens = nn.Parameter(
-                torch.zeros(1, num_registers, hidden_dim)
-            )
-            self.register_pos_embed = nn.Parameter(
-                torch.zeros(1, num_registers, hidden_dim)
-            )
-            nn.init.normal_(self.register_tokens, std=0.02)
-            nn.init.normal_(self.register_pos_embed, std=0.02)
-        # Learned positional embeddings (sincos computed on-the-fly)
-        if pos_embed_type == "learned":
-            assert max_seq_len is not None, "max_seq_len required for learned pos_embed"
-            self.pos_embed = nn.Parameter(torch.zeros(1, max_seq_len, hidden_dim))
-            nn.init.normal_(self.pos_embed, std=0.02)
-        # Transformer blocks
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
-        self.blocks = nn.ModuleList(
-            [
-                TransformerBlock(
-                    dim=hidden_dim,
-                    num_heads=num_heads,
-                    mlp_ratio=mlp_ratio,
-                    self_attn=True,
-                    cross_attn=False,
-                    use_adaln=False,
-                    drop_path=dpr[i],
-                )
-                for i in range(depth)
-            ]
-        )
-        self.norm = nn.LayerNorm(hidden_dim)
-
-    def _get_pos_embed(
-        self,
-        ids_keep: torch.Tensor,
-        grid_size: tuple[int, int] | None,
-    ) -> torch.Tensor:
-        """Gather or generate positional embeddings."""
-        B, N = ids_keep.shape
-        device, dtype = ids_keep.device, self.input_proj.weight.dtype
-        if self.pos_embed_type == "learned":
-            return torch.gather(
-                self.pos_embed.expand(B, -1, -1),
-                dim=1,
-                index=ids_keep.unsqueeze(-1).expand(-1, -1, self.hidden_dim),
-            )
-        # Generate sincos on-the-fly
-        if self.pos_embed_type == "sincos_1d":
-            max_pos = int(ids_keep.max().item()) + 1
-            pe = get_1d_sincos_pos_embed(self.hidden_dim, max_pos)
-        else:  # sincos_2d
-            pe = get_2d_sincos_pos_embed(self.hidden_dim, grid_size)
-        pe = pe.to(device=device, dtype=dtype).unsqueeze(0).expand(B, -1, -1)
-        return torch.gather(
-            pe, 1, ids_keep.unsqueeze(-1).expand(-1, -1, self.hidden_dim)
-        )
-
-    def forward(
-        self,
-        context: torch.Tensor,
-        pos_embed: torch.Tensor | None = None,
-        ids_keep: torch.Tensor | None = None,
-        grid_size: tuple[int, int] | None = None,
-    ) -> torch.Tensor:
-        """Forward pass.
-
-        :param context: Context tokens [B, N, input_dim]
-        :param pos_embed: External positional embeddings [B, N, input_dim] (when pos_embed_type=None)
-        :param ids_keep: Indices of kept positions [B, N] (when pos_embed_type is not None)
-        :param grid_size: Grid size (H, W) for sincos_2d
-        :return: Output tokens [B, num_registers + N, output_dim]
-        """
-        B = context.shape[0]
-        # Project to hidden dim
-        x = self.input_proj(context)
-        # Add positional embeddings
-        if self.pos_embed_type is not None:
-            x = x + self._get_pos_embed(ids_keep, grid_size)
-        elif pos_embed is not None:
-            x = x + self.input_proj(pos_embed)
-        # Prepend registers
-        if self.num_registers > 0:
-            registers = self.register_tokens.expand(B, -1, -1) + self.register_pos_embed
-            x = torch.cat([registers, x], dim=1)
-        # Transformer blocks
-        for block in self.blocks:
-            x = block(x)
-        return self.output_proj(self.norm(x))
+        if return_registers and n_registers > 0:
+            return out, reg_out
+        return out
 
 
 class MAEDecoder(nn.Module):

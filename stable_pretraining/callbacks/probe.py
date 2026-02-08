@@ -99,6 +99,7 @@ class OnlineProbe(TrainableCallback):
             gradient_clip_val=gradient_clip_val,
             gradient_clip_algorithm=gradient_clip_algorithm,
         )
+
         logging.info(f"Initialized {self.name}")
         logging.info(f"  - Input: {input}")
         logging.info(f"  - Target: {target}")

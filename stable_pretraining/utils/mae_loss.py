@@ -375,14 +375,7 @@ class MAELoss(nn.Module):
         :param imgs: Images of shape (N, C, H, W)
         :return: Patches of shape (N, T, P) where T = num_patches, P = pixels_per_patch
         """
-        p = self.patch_size
-        N, C, H, W = imgs.shape
-
-        # (N, C, H, W) -> (N, C, H//p, p, W//p, p)
-        x = imgs.unfold(2, p, p).unfold(3, p, p)
-        # (N, C, nH, nW, p, p) -> (N, nH, nW, p, p, C) -> (N, T, P)
-        x = x.permute(0, 2, 3, 4, 5, 1).reshape(N, -1, p * p * C)
-        return x
+        return patchify(imgs, (imgs.size(1), self.patch_size, self.patch_size))
 
     def forward(
         self,
