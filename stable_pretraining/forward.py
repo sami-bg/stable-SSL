@@ -38,7 +38,9 @@ def _get_views_list(batch: dict):
         return None
 
 
-def _get_views_by_prefix(batch: dict, global_prefix: str = "global", local_prefix: str = "local"):
+def _get_views_by_prefix(
+    batch: dict, global_prefix: str = "global", local_prefix: str = "local"
+):
     """Separate views by key prefix into global and local views.
 
     Args:
@@ -618,7 +620,9 @@ def dino_forward(self, batch, stage):
     out = {}
 
     # Use prefix-based view separation for DINO's global/local distinction
-    global_views, local_views, all_views = _get_views_by_prefix(batch, global_prefix="global", local_prefix="local")
+    global_views, local_views, all_views = _get_views_by_prefix(
+        batch, global_prefix="global", local_prefix="local"
+    )
 
     if all_views is not None:
         # Multi-view training
@@ -802,7 +806,9 @@ def dinov2_forward(self, batch, stage):
     out = {}
 
     # Use prefix-based view separation for DINOv2's global/local distinction
-    global_views, local_views, all_views = _get_views_by_prefix(batch, global_prefix="global", local_prefix="local")
+    global_views, local_views, all_views = _get_views_by_prefix(
+        batch, global_prefix="global", local_prefix="local"
+    )
 
     if all_views is not None:
         # Multi-view training
