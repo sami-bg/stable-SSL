@@ -561,29 +561,39 @@ def dino_forward(self, batch, stage):
     """
     out = {}
 
-    # Check if batch is dict of named views
-    if isinstance(batch, dict) and "image" not in batch:
-        # Dict of named views - separate by "global" or "local" in key
-        global_views = []
-        local_views = []
+    views = _get_views_list(batch)
+    if views is not None:
+        # Multi-view training
+        # Check if views is dict of named views
+        if isinstance(views, dict):
+            # Dict of named views - separate by "global" or "local" in key
+            global_views = []
+            local_views = []
 
-        for key, view in batch.items():
-            if "global" in key:
-                global_views.append(view)
-            elif "local" in key:
-                local_views.append(view)
+            for key, view in views.items():
+                if "global" in key:
+                    global_views.append(view)
+                elif "local" in key:
+                    local_views.append(view)
 
-        n_global = len(global_views)
-        n_local = len(local_views)
-        all_views = global_views + local_views
+            if len(global_views) == 0:
+                raise ValueError(
+                    "DINO requires global views. When using dict of named views, "
+                    "ensure keys contain 'global' (e.g., 'global_1', 'global_2'). "
+                    f"Got keys: {list(views.keys())}"
+                )
 
-    elif isinstance(batch, list):
-        # List of views - assume first 2 are global
-        all_views = batch
-        n_global = min(2, len(all_views))
-        n_local = len(all_views) - n_global
-        global_views = all_views[:n_global]
-        local_views = all_views[n_global:] if n_local > 0 else []
+            n_global = len(global_views)
+            n_local = len(local_views)
+            all_views = global_views + local_views
+
+        else:
+            # List of views - assume first 2 are global
+            all_views = views
+            n_global = min(2, len(all_views))
+            n_local = len(all_views) - n_global
+            global_views = all_views[:n_global]
+            local_views = all_views[n_global:] if n_local > 0 else []
 
     else:
         # Single view validation
@@ -762,29 +772,39 @@ def dinov2_forward(self, batch, stage):
     """
     out = {}
 
-    # Check if batch is dict of named views
-    if isinstance(batch, dict) and "image" not in batch:
-        # Dict of named views - separate by "global" or "local" in key
-        global_views = []
-        local_views = []
+    views = _get_views_list(batch)
+    if views is not None:
+        # Multi-view training
+        # Check if views is dict of named views
+        if isinstance(views, dict):
+            # Dict of named views - separate by "global" or "local" in key
+            global_views = []
+            local_views = []
 
-        for key, view in batch.items():
-            if "global" in key:
-                global_views.append(view)
-            elif "local" in key:
-                local_views.append(view)
+            for key, view in views.items():
+                if "global" in key:
+                    global_views.append(view)
+                elif "local" in key:
+                    local_views.append(view)
 
-        n_global = len(global_views)
-        n_local = len(local_views)
-        all_views = global_views + local_views
+            if len(global_views) == 0:
+                raise ValueError(
+                    "DINOv2 requires global views. When using dict of named views, "
+                    "ensure keys contain 'global' (e.g., 'global_1', 'global_2'). "
+                    f"Got keys: {list(views.keys())}"
+                )
 
-    elif isinstance(batch, list):
-        # List of views - assume first 2 are global
-        all_views = batch
-        n_global = min(2, len(all_views))
-        n_local = len(all_views) - n_global
-        global_views = all_views[:n_global]
-        local_views = all_views[n_global:] if n_local > 0 else []
+            n_global = len(global_views)
+            n_local = len(local_views)
+            all_views = global_views + local_views
+
+        else:
+            # List of views - assume first 2 are global
+            all_views = views
+            n_global = min(2, len(all_views))
+            n_local = len(all_views) - n_global
+            global_views = all_views[:n_global]
+            local_views = all_views[n_global:] if n_local > 0 else []
 
     else:
         # Single view validation
