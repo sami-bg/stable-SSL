@@ -17,7 +17,6 @@ def _create_dummy_pil_image(size=(224, 224)):
 
 
 def _simclr_transforms():
-    """SimCLR transforms from benchmarks/imagenet100/simclr-resnet50.py"""
     return transforms.MultiViewTransform(
         [
             transforms.Compose(
@@ -48,7 +47,6 @@ def _simclr_transforms():
 
 
 def _dino_transforms():
-    """DINO transforms from benchmarks/imagenet100/dino-resnet18.py"""
     return transforms.MultiViewTransform(
         {
             "global_1": transforms.Compose(
