@@ -844,22 +844,22 @@ class MultiViewTransform(v2.Transform):
             Each dict contains NEW tensors, not references to the original.
 
     Example:
-        # List input - returns dict with key "views" mapping to a list of views
-        transform = MultiViewTransform([
-            strong_augmentation,  # Creates first view with strong aug
-            weak_augmentation,    # Creates second view with weak aug
-        ])
-        # Input: {"image": img, "label": 0}
-        # Output: {"views": [{"image": img_strong, "label": 0}, {"image": img_weak, "label": 0}]}
+    # List input - returns dict with key "views" mapping to a list of views
+    transform = MultiViewTransform([
+        strong_augmentation,  # Creates first view with strong aug
+        weak_augmentation,    # Creates second view with weak aug
+    ])
+    # Input: {"image": img, "label": 0}
+    # Output: {"views": [{"image": img_strong, "label": 0}, {"image": img_weak, "label": 0}]}
 
-        # Dict input - returns dict of named views
-        transform = MultiViewTransform({
-            "student": strong_augmentation,
-            "teacher": weak_augmentation,
-        })
-        # Input: {"image": img, "label": 0}
-        # Output: {"student": {"image": img_strong, "label": 0},
-        #          "teacher": {"image": img_weak, "label": 0}}
+    # Dict input - returns dict of named views
+    transform = MultiViewTransform({
+        "student": strong_augmentation,
+        "teacher": weak_augmentation,
+    })
+    # Input: {"image": img, "label": 0}
+    # Output: {"student": {"image": img_strong, "label": 0},
+    #          "teacher": {"image": img_weak, "label": 0}}
     """
 
     def __init__(self, transforms):
