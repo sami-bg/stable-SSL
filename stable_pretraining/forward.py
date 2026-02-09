@@ -38,6 +38,62 @@ def _get_views_list(batch: dict):
         return None
 
 
+def _get_views_by_prefix(batch: dict, global_prefix: str = "global", local_prefix: str = "local"):
+    """Separate views by key prefix into global and local views.
+
+    Args:
+        batch: Input batch, either:
+            - {"views": {"global_1": ..., "local_1": ...}}
+            - {"global_1": ..., "local_1": ...} (direct dict)
+            - {"image": ...} (single view, returns (None, None))
+        global_prefix: Prefix for global view keys (default: "global")
+        local_prefix: Prefix for local view keys (default: "local")
+
+    Returns:
+        Tuple of (global_views_list, local_views_list, all_views_list), or (None, None, None) for single view.
+
+    Raises:
+        ValueError: If views are in list format or if no keys with global_prefix are found
+    """
+    # Get views dict
+    if "views" in batch:
+        views_data = batch["views"]
+        if isinstance(views_data, list):
+            raise ValueError(
+                f"Expected dict of named views with '{global_prefix}' and '{local_prefix}' key prefixes, "
+                f"but got a list of {len(views_data)} views. "
+                "Please use MultiViewTransform with a dict of named views "
+                f"(e.g., {{'{global_prefix}_1': ..., '{global_prefix}_2': ..., '{local_prefix}_1': ...}})."
+            )
+        views_dict = views_data
+    elif "image" not in batch:
+        # Direct dict of named views
+        views_dict = batch
+    else:
+        # Single view
+        return None, None, None
+
+    # Separate views by prefix
+    global_views = []
+    local_views = []
+
+    for key, view in views_dict.items():
+        if key.startswith(global_prefix):
+            global_views.append(view)
+        elif key.startswith(local_prefix):
+            local_views.append(view)
+
+    # Validate that global views exist
+    if len(global_views) == 0:
+        raise ValueError(
+            f"No views with '{global_prefix}' prefix found in keys: {list(views_dict.keys())}. "
+            f"Please ensure keys contain '{global_prefix}' (e.g., '{global_prefix}_1', '{global_prefix}_2')."
+        )
+
+    all_views = global_views + local_views
+    return global_views, local_views, all_views
+
+
 def supervised_forward(self, batch, stage):
     """Forward function for standard supervised training.
 
@@ -561,40 +617,13 @@ def dino_forward(self, batch, stage):
     """
     out = {}
 
-    views = _get_views_list(batch)
-    if views is not None:
+    # Use prefix-based view separation for DINO's global/local distinction
+    global_views, local_views, all_views = _get_views_by_prefix(batch, global_prefix="global", local_prefix="local")
+
+    if all_views is not None:
         # Multi-view training
-        # Check if views is dict of named views
-        if isinstance(views, dict):
-            # Dict of named views - separate by "global" or "local" in key
-            global_views = []
-            local_views = []
-
-            for key, view in views.items():
-                if "global" in key:
-                    global_views.append(view)
-                elif "local" in key:
-                    local_views.append(view)
-
-            if len(global_views) == 0:
-                raise ValueError(
-                    "DINO requires global views. When using dict of named views, "
-                    "ensure keys contain 'global' (e.g., 'global_1', 'global_2'). "
-                    f"Got keys: {list(views.keys())}"
-                )
-
-            n_global = len(global_views)
-            n_local = len(local_views)
-            all_views = global_views + local_views
-
-        else:
-            # List of views - assume first 2 are global
-            all_views = views
-            n_global = min(2, len(all_views))
-            n_local = len(all_views) - n_global
-            global_views = all_views[:n_global]
-            local_views = all_views[n_global:] if n_local > 0 else []
-
+        n_global = len(global_views)
+        n_local = len(local_views)
     else:
         # Single view validation
         images = batch["image"]
@@ -772,40 +801,13 @@ def dinov2_forward(self, batch, stage):
     """
     out = {}
 
-    views = _get_views_list(batch)
-    if views is not None:
+    # Use prefix-based view separation for DINOv2's global/local distinction
+    global_views, local_views, all_views = _get_views_by_prefix(batch, global_prefix="global", local_prefix="local")
+
+    if all_views is not None:
         # Multi-view training
-        # Check if views is dict of named views
-        if isinstance(views, dict):
-            # Dict of named views - separate by "global" or "local" in key
-            global_views = []
-            local_views = []
-
-            for key, view in views.items():
-                if "global" in key:
-                    global_views.append(view)
-                elif "local" in key:
-                    local_views.append(view)
-
-            if len(global_views) == 0:
-                raise ValueError(
-                    "DINOv2 requires global views. When using dict of named views, "
-                    "ensure keys contain 'global' (e.g., 'global_1', 'global_2'). "
-                    f"Got keys: {list(views.keys())}"
-                )
-
-            n_global = len(global_views)
-            n_local = len(local_views)
-            all_views = global_views + local_views
-
-        else:
-            # List of views - assume first 2 are global
-            all_views = views
-            n_global = min(2, len(all_views))
-            n_local = len(all_views) - n_global
-            global_views = all_views[:n_global]
-            local_views = all_views[n_global:] if n_local > 0 else []
-
+        n_global = len(global_views)
+        n_local = len(local_views)
     else:
         # Single view validation
         images = batch["image"]

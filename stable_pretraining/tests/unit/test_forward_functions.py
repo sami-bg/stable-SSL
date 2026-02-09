@@ -372,17 +372,10 @@ class TestForwardFunctionsWithBenchmarkTransforms:
 
     def test_dino_forward_raises_on_missing_global_keys(self):
         """Test that DINO raises error when dict lacks 'global' in keys."""
-        # Manually create a batch without 'global' keys
-        # This dict has no 'views' key and no 'image' key, so _get_views_list
-        # will return list(batch.values()) which is a list of dicts
-        batch = {
-            "view1": {"image": torch.randn(1, 3, 224, 224)},
-            "view2": {"image": torch.randn(1, 3, 224, 224)},
-        }
-
         module = Mock()
         module.training = True
 
+        # Test: Dict views without 'global' in keys
         batch_with_dict_views = {
             "views": {
                 "view1": {"image": torch.randn(1, 3, 224, 224)},
@@ -390,8 +383,41 @@ class TestForwardFunctionsWithBenchmarkTransforms:
             }
         }
 
-        with pytest.raises(ValueError, match="DINO requires global views"):
+        with pytest.raises(ValueError):
             forward_module.dino_forward(module, batch_with_dict_views, "train")
+
+    def test_dino_forward_raises_on_list_views(self):
+        """Test that DINO raises error when given list of views (implicit assumption removed)."""
+        module = Mock()
+        module.training = True
+
+        # Test: List of views (should raise error requiring explicit dict format)
+        batch_with_list_views = {
+            "views": [
+                {"image": torch.randn(1, 3, 224, 224)},
+                {"image": torch.randn(1, 3, 224, 224)},
+                {"image": torch.randn(1, 3, 96, 96)},
+                {"image": torch.randn(1, 3, 96, 96)},
+            ]
+        }
+
+        with pytest.raises(ValueError):
+            forward_module.dino_forward(module, batch_with_list_views, "train")
+
+    def test_dinov2_forward_raises_on_list_views(self):
+        """Test that DINOv2 raises error when given list of views."""
+        module = Mock()
+        module.training = True
+
+        batch_with_list_views = {
+            "views": [
+                {"image": torch.randn(1, 3, 224, 224)},
+                {"image": torch.randn(1, 3, 224, 224)},
+            ]
+        }
+
+        with pytest.raises(ValueError):
+            forward_module.dinov2_forward(module, batch_with_list_views, "train")
 
     def test_supervised_forward(self):
         """Test supervised_forward with validation transform."""
