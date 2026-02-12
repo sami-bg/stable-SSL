@@ -317,6 +317,7 @@ class TestOnlineKNNNumClasses:
 
     def test_missing_classes_without_fix_would_fail(self):
         """Dataset has 8 classes but the queue only cached samples from 6.
+
         Without num_classes, the predictions tensor has 6 columns,
         but the metric expects 8 — causing a shape mismatch.
         """
