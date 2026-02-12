@@ -255,7 +255,7 @@ class TestProbingUnit:
 
 @pytest.mark.unit
 class TestOnlineKNNNumClasses:
-    """Test num_classes handling in OnlineKNN (issue #373)."""
+    """Test num_classes handling in OnlineKNN."""
 
     def test_explicit_num_classes(self):
         """Test that explicit num_classes is used over label inference."""
@@ -275,7 +275,9 @@ class TestOnlineKNNNumClasses:
         cached_labels = torch.randint(0, 6, (50,))
         features = torch.randn(4, 32)
 
-        predictions = knn._compute_knn_predictions(features, cached_features, cached_labels)
+        predictions = knn._compute_knn_predictions(
+            features, cached_features, cached_labels
+        )
         # Should have 10 columns (explicit), not 6 (inferred from max label)
         assert predictions.shape == (4, 10)
 
@@ -314,9 +316,7 @@ class TestOnlineKNNNumClasses:
         assert inferred == 8
 
     def test_missing_classes_without_fix_would_fail(self):
-        """Demonstrate the exact scenario from issue #373.
-
-        Dataset has 8 classes but the queue only cached samples from 6.
+        """Dataset has 8 classes but the queue only cached samples from 6.
         Without num_classes, the predictions tensor has 6 columns,
         but the metric expects 8 — causing a shape mismatch.
         """
@@ -326,7 +326,9 @@ class TestOnlineKNNNumClasses:
             input="embedding",
             target="label",
             queue_length=100,
-            metrics={"accuracy": torchmetrics.classification.MulticlassAccuracy(num_classes)},
+            metrics={
+                "accuracy": torchmetrics.classification.MulticlassAccuracy(num_classes)
+            },
             input_dim=32,
             k=3,
         )
@@ -344,7 +346,9 @@ class TestOnlineKNNNumClasses:
         features = torch.randn(4, 32)
         targets = torch.tensor([0, 3, 5, 7])
 
-        predictions = knn._compute_knn_predictions(features, cached_features, cached_labels)
+        predictions = knn._compute_knn_predictions(
+            features, cached_features, cached_labels
+        )
         assert predictions.shape == (4, num_classes)
 
         # This would crash without the fix: metric expects 8 cols, would get 6
@@ -373,5 +377,7 @@ class TestOnlineKNNNumClasses:
         cached_labels = torch.tensor([0, 1, 2, 3, 4] * 4)
         features = torch.randn(2, 32)
 
-        predictions = knn._compute_knn_predictions(features, cached_features, cached_labels)
+        predictions = knn._compute_knn_predictions(
+            features, cached_features, cached_labels
+        )
         assert predictions.shape == (2, 5)  # max label is 4, so 5 classes
