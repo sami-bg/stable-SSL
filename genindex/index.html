@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; stable-pretraining 0.1.dev1+g9b0b2e131 documentation</title>
+    <title>Index &#8212; stable-pretraining 0.1.dev1+g99c0d978e documentation</title>
   
   
   
@@ -39,7 +39,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
   <script src="../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
 
-    <script src="../_static/documentation_options.js?v=027cdc71"></script>
+    <script src="../_static/documentation_options.js?v=18d212a7"></script>
     <script src="../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
@@ -135,7 +135,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g9b0b2e131 documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+g99c0d978e documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -892,8 +892,6 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerBlock.forward">(stable_pretraining.backbone.vit.TransformerBlock method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerPredictor.forward">(stable_pretraining.backbone.vit.TransformerPredictor method)</a>
-</li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.UniformTemporalSubsample.forward">(stable_pretraining.data.transforms.UniformTemporalSubsample method)</a>
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.losses.BarlowTwinsLoss/#stable_pretraining.losses.BarlowTwinsLoss.forward">(stable_pretraining.losses.BarlowTwinsLoss method)</a>, <a href="../stable_pretraining.losses/#stable_pretraining.losses.BarlowTwinsLoss.forward">[1]</a>
@@ -1266,6 +1264,8 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.pos_embed.interpolate_pos_embed">interpolate_pos_embed() (in module stable_pretraining.backbone.pos_embed)</a>
+</li>
+      <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.utils.is_bias_or_norm_param">is_bias_or_norm_param() (in module stable_pretraining.optim.utils)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.config.is_dist">is_dist() (in module stable_pretraining.utils.config)</a>
 </li>
@@ -1851,10 +1851,6 @@ document.write(`
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.SklearnCheckpoint/#stable_pretraining.callbacks.SklearnCheckpoint.on_save_checkpoint">(stable_pretraining.callbacks.SklearnCheckpoint method)</a>
 </li>
-        <li><a href="../stable_pretraining/#stable_pretraining.Module.on_save_checkpoint">(stable_pretraining.Module method)</a>
-</li>
-        <li><a href="../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.on_save_checkpoint">(stable_pretraining.module.Module method)</a>, <a href="../stable_pretraining/#stable_pretraining.module.Module.on_save_checkpoint">[1]</a>
-</li>
         <li><a href="../stable_pretraining/#stable_pretraining.SklearnCheckpoint.on_save_checkpoint">(stable_pretraining.SklearnCheckpoint method)</a>
 </li>
       </ul></li>
@@ -1886,14 +1882,14 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentCallback.on_train_batch_end">(stable_pretraining.TeacherStudentCallback method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.on_train_batch_start">on_train_batch_start() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce.on_train_batch_start">(stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce method)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_train_end">on_train_end() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback.on_train_epoch_end">on_train_epoch_end() (stable_pretraining.callbacks.cleanup.CleanUpCallback method)</a>
@@ -2384,6 +2380,8 @@ document.write(`
         <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.DINOv1Loss.softmax_center_teacher">(stable_pretraining.losses.DINOv1Loss method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.utils.split_params_for_weight_decay">split_params_for_weight_decay() (in module stable_pretraining.optim.utils)</a>
+</li>
       <li>
     stable_pretraining
 
@@ -2594,6 +2592,8 @@ document.write(`
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.teacher_student">module</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     stable_pretraining.callbacks.trainer_info
 
@@ -2601,8 +2601,6 @@ document.write(`
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.trainer_info">module</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     stable_pretraining.callbacks.unused_parameters
 
@@ -3128,8 +3126,6 @@ document.write(`
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Transform">Transform (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerBlock">TransformerBlock (class in stable_pretraining.backbone.vit)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.TransformerPredictor">TransformerPredictor (class in stable_pretraining.backbone.vit)</a>
 </li>
   </ul></td>
 </tr></table>
