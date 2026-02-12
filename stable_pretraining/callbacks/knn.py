@@ -201,10 +201,6 @@ class OnlineKNN(Callback):
             batch_size, num_classes, device=features.device, dtype=torch.float32
         )
 
-        if cached_features.device != features.device:
-            cached_features = cached_features.to(features.device)
-            cached_labels = cached_labels.to(features.device)
-
         k_actual = min(self.k, cached_features.size(0))
 
         if cached_features.dtype != features.dtype:
