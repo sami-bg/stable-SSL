@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
-import pytest
 from omegaconf import OmegaConf
 
 from stable_pretraining.callbacks.wandb_lifecycle import WandbCallback, WandbCheckpoint
@@ -90,21 +89,27 @@ class TestConfigFlattening:
         mock_wandb.config.update = capture_update
 
         hydra_cfg = {
-            "trainer": OmegaConf.create({
-                "max_epochs": 100,
-                "accelerator": "gpu",
-            }),
-            "module": OmegaConf.create({
-                "backbone": {"type": "resnet", "depth": 18},
-                "loss": {"name": "cross_entropy"},
-            }),
+            "trainer": OmegaConf.create(
+                {
+                    "max_epochs": 100,
+                    "accelerator": "gpu",
+                }
+            ),
+            "module": OmegaConf.create(
+                {
+                    "backbone": {"type": "resnet", "depth": 18},
+                    "loss": {"name": "cross_entropy"},
+                }
+            ),
         }
         callback = WandbCallback(hydra_config=hydra_cfg)
         callback._sync_config_online()
 
         # Every value should be a scalar (no nested dicts or lists)
         for k, v in captured.items():
-            assert not isinstance(v, (dict, list)), f"Key '{k}' has non-scalar value: {v}"
+            assert not isinstance(v, (dict, list)), (
+                f"Key '{k}' has non-scalar value: {v}"
+            )
             assert "." in k or k in ("trainer.max_epochs", "trainer.accelerator"), (
                 f"Key '{k}' should be dot-separated"
             )
@@ -123,10 +128,12 @@ class TestConfigFlattening:
         mock_wandb.config.update = lambda d: captured.update(d)
 
         hydra_cfg = {
-            "module": OmegaConf.create({
-                "layers": [64, 128, 256],
-                "name": "test",
-            }),
+            "module": OmegaConf.create(
+                {
+                    "layers": [64, 128, 256],
+                    "name": "test",
+                }
+            ),
         }
         callback = WandbCallback(hydra_config=hydra_cfg)
         callback._sync_config_online()

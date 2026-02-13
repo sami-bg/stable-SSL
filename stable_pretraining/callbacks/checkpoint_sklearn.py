@@ -227,5 +227,3 @@ class StrictCheckpointCallback(Callback):
             f"📊 Checkpoint loading coverage: {loaded_percentage:.2f}% ({len(matched_keys)}/{total_model_params})"
         )
         logger.info("=" * 80)
-
-

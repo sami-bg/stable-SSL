@@ -19,7 +19,7 @@ else:
 class WandbCallback(Callback):
     """Manage the wandb run lifecycle: init, config sync, and teardown.
 
-    This callback consolidates wandb-specific logic. 
+    This callback consolidates wandb-specific logic.
     It handles the following concerns:
 
     1. **Run initialization** -- On ``setup()``, triggers ``wandb.init()``
@@ -58,11 +58,13 @@ class WandbCallback(Callback):
             from stable_pretraining.callbacks import WandbCallback
 
             # With Hydra config (typical Manager usage -- injected automatically):
-            callback = WandbCallback(hydra_config={
-                "trainer": trainer_cfg,
-                "module": module_cfg,
-                "data": data_cfg,
-            })
+            callback = WandbCallback(
+                hydra_config={
+                    "trainer": trainer_cfg,
+                    "module": module_cfg,
+                    "data": data_cfg,
+                }
+            )
             trainer = Trainer(callbacks=[callback], logger=WandbLogger(...))
             trainer.fit(model, datamodule=dm)
             # wandb.finish() is called automatically in teardown
@@ -116,7 +118,9 @@ class WandbCallback(Callback):
             self._config_synced = True
 
     @rank_zero_only
-    def teardown(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
+    def teardown(
+        self, trainer: Trainer, pl_module: LightningModule, stage: str
+    ) -> None:
         """Dump offline data and close the wandb run.
 
         Called at the end of fit, validate, test, or predict.  Writes
@@ -149,7 +153,6 @@ class WandbCallback(Callback):
             f"{type(exception).__name__}: {exception}"
         )
         self._dump_wandb_data()
-
 
     def _sync_config(self, exp) -> None:
         """Upload Hydra config to wandb, handling offline resume."""
@@ -231,11 +234,9 @@ class WandbCallback(Callback):
         if WANDB_AVAILABLE and wandb.run:
             wandb.config.update(config)
 
-
     @staticmethod
     def _dump_wandb_data() -> None:
         """Write summary and config JSON files for offline runs."""
-
         if not WANDB_AVAILABLE or wandb.run is None or not wandb.run.offline:
             return
 
@@ -245,7 +246,9 @@ class WandbCallback(Callback):
         summary_path = run_dir / "wandb-summary.json"
         if not summary_path.is_file():
             summary_dict = wandb.run.summary._as_dict()
-            logging.info(f"WandbCallback: summary: {json.dumps(summary_dict, indent=2)}")
+            logging.info(
+                f"WandbCallback: summary: {json.dumps(summary_dict, indent=2)}"
+            )
             with open(summary_path, "w") as f:
                 json.dump(summary_dict, f)
             logging.info(f"WandbCallback: saved summary at {summary_path}")
@@ -290,11 +293,9 @@ class WandbCallback(Callback):
             return None
 
         assert runs[-1] == current_dir, (
-            f"Expected current dir {current_dir} to be the last run, "
-            f"but got {runs[-1]}"
+            f"Expected current dir {current_dir} to be the last run, but got {runs[-1]}"
         )
         return runs[-2]
-
 
     @staticmethod
     def _is_wandb(trainer: Trainer) -> bool:
