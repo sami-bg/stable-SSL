@@ -54,6 +54,7 @@ from .visualization import format_df_to_latex
 from . import flops, solver
 from .stats import mean_std, mean_var
 from .mae_loss import MAELoss, unpatchify, patchify
+from .online_topk import StreamingTopKEigen
 
 __all__ = [
     "detach_tensors",
@@ -117,4 +118,5 @@ __all__ = [
     "patchify",
     "unpatchify",
     "solver",
+    "StreamingTopKEigen",
 ]
