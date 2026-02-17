@@ -46,6 +46,7 @@ from stable_pretraining.backbone import (
     MaskedEncoder,
     TeacherStudentWrapper,
 )
+from stable_pretraining import Module
 
 
 @dataclass
@@ -66,7 +67,7 @@ class IJEPAOutput:
     num_context: int
 
 
-class IJEPA(nn.Module):
+class IJEPA(Module):
     """I-JEPA: Image-based Joint-Embedding Predictive Architecture.
 
     Architecture:
