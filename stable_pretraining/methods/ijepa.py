@@ -54,6 +54,7 @@ class IJEPAOutput:
     """Output from IJEPA forward pass.
 
     :ivar loss: Prediction loss (0 in eval mode)
+    :ivar embedding: Patch embeddings [B, N, D] for downstream use
     :ivar predictions: Predicted representations [B, N_tgt, D] (or context in eval)
     :ivar targets: Target representations [B, N_tgt, D] (or context in eval)
     :ivar num_targets: Number of target patches (0 in eval)
@@ -61,6 +62,7 @@ class IJEPAOutput:
     """
 
     loss: torch.Tensor
+    embedding: torch.Tensor
     predictions: torch.Tensor
     targets: torch.Tensor
     num_targets: int
@@ -154,8 +156,9 @@ class IJEPA(Module):
         base_encoder = MaskedEncoder(encoder_name, masking=None, pretrained=pretrained)
         self.encoder = TeacherStudentWrapper(
             base_encoder,
-            ema_decay_start=ema_decay_start,
-            ema_decay_end=ema_decay_end,
+            warm_init=True,
+            base_ema_coefficient=ema_decay_start,
+            final_ema_coefficient=ema_decay_end,
         )
 
         embed_dim = base_encoder.embed_dim
@@ -221,7 +224,9 @@ class IJEPA(Module):
         x = encoder.vit.blocks(x)
         return encoder.vit.norm(x)
 
-    def forward(self, images: torch.Tensor) -> IJEPAOutput:
+    def forward(
+        self, images: torch.Tensor, embedding_source: str = "teacher"
+    ) -> IJEPAOutput:
         """Forward pass.
 
         In training mode:
@@ -233,10 +238,19 @@ class IJEPA(Module):
         In eval mode:
             - No masking, all patches treated as context
             - Returns encoded features with zero loss
+            - Always uses student encoder
 
         :param images: Input images [B, C, H, W]
+        :param embedding_source: Which encoder to use for the embedding output.
+            ``"teacher"`` (default) or ``"student"``. Only affects training mode;
+            eval mode always uses student.
         :return: :class:`IJEPAOutput` with loss and representations
         """
+        if embedding_source not in ("teacher", "student"):
+            raise ValueError(
+                f"embedding_source must be 'teacher' or 'student', got '{embedding_source}'"
+            )
+
         B = images.shape[0]
         grid_h, grid_w = self.encoder.student._get_grid_size(images)
         patches = self.encoder.student.patch_embed(images)
@@ -255,6 +269,19 @@ class IJEPA(Module):
                     patches, mask_out.target_idx, grid_h, grid_w, self.encoder.teacher
                 )
 
+            # Full encoding for downstream use
+            all_idx = torch.arange(
+                grid_h * grid_w, device=images.device
+            ).unsqueeze(0).expand(B, -1)
+            embed_encoder = (
+                self.encoder.teacher if embedding_source == "teacher"
+                else self.encoder.student
+            )
+            with torch.no_grad():
+                embedding = self._encode(
+                    patches, all_idx, grid_h, grid_w, embed_encoder
+                )
+
             # Predict target representations via cross-attention
             N_tgt = mask_out.target_idx.shape[1]
             queries = self.target_query.expand(B, N_tgt, -1)
@@ -265,7 +292,7 @@ class IJEPA(Module):
                 query_idx=mask_out.target_idx,
             )
 
-            loss = F.smooth_l1_loss(predictions, targets, beta=2.0)
+            loss = F.smooth_l1_loss(predictions, targets, beta=1.0)
         else:
             # Eval: encode all patches through student
             context = self._encode(
@@ -273,10 +300,12 @@ class IJEPA(Module):
             )
             predictions = context
             targets = context
+            embedding = context
             loss = torch.tensor(0.0, device=images.device)
 
         return IJEPAOutput(
             loss=loss,
+            embedding=embedding,
             predictions=predictions,
             targets=targets,
             num_targets=mask_out.target_idx.shape[1],
