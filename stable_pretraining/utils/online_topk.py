@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from typing import Optional, Tuple
 
 
@@ -11,6 +12,10 @@ class StreamingTopKEigen(nn.Module):
     tuning - learning rates and update schedules are derived automatically
     from theoretical considerations.
 
+    **DDP Support**: When used with DistributedDataParallel, this module
+    automatically aggregates statistics across all processes using efficient
+    all-reduce operations. No data gathering to a single GPU is performed.
+
     Key Features:
     -------------
     - **No hyperparameters**: Learning rates adapt based on sample count and
@@ -18,6 +23,7 @@ class StreamingTopKEigen(nn.Module):
     - **Memory efficient**: O(dk) storage, no need to store covariance matrix.
     - **Numerically stable**: QR orthogonalization + Welford's algorithm.
     - **Fast**: Single-pass update per batch, optimized for GPU.
+    - **DDP-aware**: Automatically synchronizes across processes when distributed.
 
     Mathematical Background:
     ------------------------
@@ -59,22 +65,16 @@ class StreamingTopKEigen(nn.Module):
     >>> print(f"Top eigenvalue: {estimator.eigenvalues[0]:.4f}")
     >>> print(f"Variance explained: {estimator.explained_variance_ratio.sum():.2%}")
 
-    Integration with Neural Networks:
-    ---------------------------------
-    >>> class AutoEncoder(nn.Module):
-    ...     def __init__(self, dim, latent_dim):
-    ...         super().__init__()
-    ...         self.encoder = nn.Linear(dim, latent_dim)
-    ...         self.decoder = nn.Linear(latent_dim, dim)
-    ...         # Track principal components of encoder output
-    ...         self.pca = StreamingTopKEigen(latent_dim, k=8)
-    ...
-    ...     def forward(self, x):
-    ...         z = self.encoder(x)
-    ...         # Update PCA estimates (no grad needed)
-    ...         with torch.no_grad():
-    ...             self.pca(z)
-    ...         return self.decoder(z)
+    DDP Usage:
+    ----------
+    >>> # Works automatically with DDP - no changes needed!
+    >>> model = MyModel()
+    >>> model.pca = StreamingTopKEigen(dim=256, k=16)
+    >>> model = DDP(model, device_ids=[local_rank])
+    >>>
+    >>> for batch in dataloader:
+    ...     # Statistics are automatically aggregated across all GPUs
+    ...     eigenvalues, eigenvectors = model.module.pca(features)
 
     Parameters
     ----------
@@ -87,6 +87,9 @@ class StreamingTopKEigen(nn.Module):
     dtype : torch.dtype, optional
         Data type for computations. Default is float32.
         Use float64 for higher precision if needed.
+    sync_distributed : bool, optional
+        Whether to synchronize across processes in distributed training.
+        Default is True. Set to False if you want per-GPU estimates.
 
     Attributes:
     ----------
@@ -112,6 +115,7 @@ class StreamingTopKEigen(nn.Module):
       does not participate in gradient computation.
     - For very small batches (< k samples), consider accumulating batches
       before calling forward for better initialization.
+    - In DDP mode, all processes will have identical state after each update.
 
     See Also:
     --------
@@ -129,6 +133,7 @@ class StreamingTopKEigen(nn.Module):
         k: int,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32,
+        sync_distributed: bool = True,
     ) -> None:
         """Initialize the streaming eigenvector estimator.
 
@@ -142,6 +147,8 @@ class StreamingTopKEigen(nn.Module):
             Computation device (cpu/cuda).
         dtype : torch.dtype, optional
             Tensor dtype, default float32.
+        sync_distributed : bool, optional
+            Whether to sync across distributed processes. Default True.
         """
         super().__init__()
 
@@ -158,20 +165,19 @@ class StreamingTopKEigen(nn.Module):
 
         self.dim = dim
         self.k = k
+        self.sync_distributed = sync_distributed
 
         # ---------------------------------------------------------------------
         # State buffers (will be saved with state_dict, moved with .to())
         # ---------------------------------------------------------------------
 
         # Eigenvector matrix: columns are eigenvectors, shape (dim, k)
-        # Initialized properly on first forward pass
         self.register_buffer("V", torch.empty(dim, k, device=device, dtype=dtype))
 
         # Running mean estimate, shape (dim,)
         self.register_buffer("mean", torch.zeros(dim, device=device, dtype=dtype))
 
         # Eigenvalue estimates (variance along each principal direction)
-        # Initialized to 1.0 to avoid division by zero before first update
         self.register_buffer("eigenvalues", torch.ones(k, device=device, dtype=dtype))
 
         # Total sample count (as float for smooth division)
@@ -181,53 +187,146 @@ class StreamingTopKEigen(nn.Module):
         self.register_buffer("initialized", torch.tensor(False, device=device))
 
         # Total variance estimate (trace of covariance matrix)
-        # Used for learning rate scaling to achieve scale invariance
         self.register_buffer(
             "total_variance", torch.tensor(1.0, device=device, dtype=dtype)
         )
 
     # =========================================================================
-    # Initialization from First Batch
+    # Distributed Utilities
+    # =========================================================================
+
+    def _is_distributed(self) -> bool:
+        """Check if we should use distributed operations."""
+        return self.sync_distributed and dist.is_available() and dist.is_initialized()
+
+    @torch.no_grad()
+    def _all_reduce_sum(self, tensor: torch.Tensor) -> torch.Tensor:
+        """All-reduce tensor with SUM operation across processes.
+
+        This is the core primitive for distributed aggregation.
+        Each process contributes its local tensor, and all processes
+        receive the sum.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            Local tensor to aggregate.
+
+        Returns:
+        -------
+        torch.Tensor
+            Sum across all processes (in-place modification of input).
+        """
+        if self._is_distributed():
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        return tensor
+
+    # =========================================================================
+    # Initialization from First Batch (DDP-aware)
     # =========================================================================
 
     @torch.no_grad()
     def _init_from_batch(self, x: torch.Tensor) -> None:
-        """Initialize eigenvector estimates from the first batch using SVD.
+        """Initialize eigenvector estimates from the first batch.
 
-        Fixed to properly handle batch_size < k case.
+        In distributed mode, aggregates statistics across all processes
+        before computing eigendecomposition. Uses covariance estimation
+        rather than gathering raw data for memory efficiency.
+
+        Strategy for DDP:
+        1. Aggregate mean across processes via all-reduce
+        2. Aggregate scatter matrix (X^T X) across processes via all-reduce
+        3. Compute covariance from aggregated statistics
+        4. Eigendecompose covariance to get initial eigenvectors
+
+        This avoids gathering O(n*d) data to a single GPU, instead
+        only communicating O(d^2) covariance statistics.
         """
-        batch_size = x.shape[0]
+        local_batch_size = x.shape[0]
 
-        # Step 1: Compute batch mean
-        self.mean.copy_(x.mean(dim=0))
-        x_centered = x - self.mean
+        # ---------------------------------------------------------------------
+        # Step 1: Compute global batch size and mean
+        # ---------------------------------------------------------------------
+        local_sum = x.sum(dim=0)  # (dim,)
+        local_count = torch.tensor(
+            float(local_batch_size), device=x.device, dtype=x.dtype
+        )
 
-        # Step 2: Estimate total variance
-        self.total_variance.copy_(x_centered.var() * self.dim + 1e-8)
+        # Aggregate across processes
+        if self._is_distributed():
+            self._all_reduce_sum(local_sum)
+            self._all_reduce_sum(local_count)
 
-        # Step 3: Truncated SVD
-        U, S, Vh = torch.linalg.svd(x_centered, full_matrices=False)
+        global_batch_size = int(local_count.item())
+        global_mean = local_sum / local_count
 
-        # Number of valid components from SVD
-        # SVD of (n, d) matrix gives at most min(n, d) singular values
-        k_available = min(self.k, len(S))
+        # Set mean
+        self.mean.copy_(global_mean)
 
-        # Only use non-zero singular values
-        valid_mask = S > 1e-10
-        k_valid = min(k_available, valid_mask.sum().item())
+        # Center local data with global mean
+        x_centered = x - global_mean
+
+        # ---------------------------------------------------------------------
+        # Step 2: Compute global covariance via scatter matrix
+        # ---------------------------------------------------------------------
+        # Local scatter matrix: X^T X (unnormalized covariance contribution)
+        local_scatter = x_centered.T @ x_centered  # (dim, dim)
+
+        # Local sum of squared norms for total variance
+        local_sq_norm_sum = (x_centered**2).sum()
+
+        # Aggregate across processes
+        if self._is_distributed():
+            self._all_reduce_sum(local_scatter)
+            self._all_reduce_sum(local_sq_norm_sum)
+
+        # Global covariance estimate
+        global_cov = local_scatter / local_count
+
+        # Global total variance: trace(Cov) = E[||x - μ||²]
+        self.total_variance.copy_(local_sq_norm_sum / local_count + 1e-8)
+
+        # ---------------------------------------------------------------------
+        # Step 3: Eigendecomposition of covariance
+        # ---------------------------------------------------------------------
+        try:
+            eigenvalues, eigenvectors = torch.linalg.eigh(global_cov)
+            # Reverse to get descending order (eigh returns ascending)
+            eigenvalues = eigenvalues.flip(0)
+            eigenvectors = eigenvectors.flip(1)
+        except RuntimeError:
+            # Fallback to SVD if eigh fails
+            U, S, Vh = torch.linalg.svd(global_cov, full_matrices=False)
+            eigenvalues = S
+            eigenvectors = U
+
+        # Take top-k
+        k_valid = min(self.k, len(eigenvalues))
+
+        # Filter out near-zero eigenvalues
+        valid_mask = eigenvalues[:k_valid] > 1e-10
+        k_valid = valid_mask.sum().item()
 
         if k_valid > 0:
-            self.V[:, :k_valid] = Vh[:k_valid].T
-            self.eigenvalues[:k_valid] = (S[:k_valid] ** 2) / batch_size
+            self.V[:, :k_valid] = eigenvectors[:, :k_valid]
+            self.eigenvalues[:k_valid] = eigenvalues[:k_valid].clamp(min=1e-10)
 
+        # ---------------------------------------------------------------------
         # Step 4: Handle remaining components (if k_valid < k)
+        # ---------------------------------------------------------------------
         if k_valid < self.k:
             remaining_count = self.k - k_valid
 
-            # Generate random orthonormal vectors for remaining components
-            # Use QR on random matrix for numerical stability
+            # Use deterministic seed for consistency across ranks
+            generator = torch.Generator(device=x.device)
+            generator.manual_seed(42 + global_batch_size)
+
             random_vecs = torch.randn(
-                self.dim, remaining_count, device=x.device, dtype=x.dtype
+                self.dim,
+                remaining_count,
+                device=x.device,
+                dtype=x.dtype,
+                generator=generator,
             )
 
             if k_valid > 0:
@@ -238,20 +337,16 @@ class StreamingTopKEigen(nn.Module):
             # QR decomposition to get orthonormal vectors
             Q, R = torch.linalg.qr(random_vecs)
 
-            # Ensure we have the right number of columns
-            # (QR might return fewer if random_vecs was rank-deficient)
             n_from_qr = min(Q.shape[1], remaining_count)
             self.V[:, k_valid : k_valid + n_from_qr] = Q[:, :n_from_qr]
 
-            # If still not enough (extremely rare), fill with random unit vectors
-            if k_valid + n_from_qr < self.k:
-                for i in range(k_valid + n_from_qr, self.k):
-                    v = torch.randn(self.dim, device=x.device, dtype=x.dtype)
-                    # Orthogonalize against all previous
-                    v = v - self.V[:, :i] @ (self.V[:, :i].T @ v)
-                    norm = v.norm()
-                    self.V[:, i] = v / norm if norm > 1e-8 else torch.randn_like(v)
-                    self.V[:, i] /= self.V[:, i].norm()
+            # Handle edge case
+            for i in range(k_valid + n_from_qr, self.k):
+                v = torch.randn(self.dim, device=x.device, dtype=x.dtype)
+                v = v - self.V[:, :i] @ (self.V[:, :i].T @ v)
+                norm = v.norm()
+                self.V[:, i] = v / norm if norm > 1e-8 else torch.randn_like(v)
+                self.V[:, i] /= self.V[:, i].norm()
 
             # Set eigenvalues for remaining components
             if k_valid > 0:
@@ -260,7 +355,8 @@ class StreamingTopKEigen(nn.Module):
                 min_eigenvalue = self.total_variance / self.dim
             self.eigenvalues[k_valid:] = min_eigenvalue
 
-        self.n_samples.fill_(float(batch_size))
+        # Update sample count and flag
+        self.n_samples.fill_(float(global_batch_size))
         self.initialized.fill_(True)
 
     # =========================================================================
@@ -279,62 +375,30 @@ class StreamingTopKEigen(nn.Module):
         - base_lr = 1/√n decays with sample count
         - total_variance / λ_i provides natural gradient scaling
 
-        Theoretical Motivation:
-        -----------------------
-
-        1. **1/√n decay**: This is the optimal rate for streaming estimation.
-           - Too slow (1/n): High bias, slow adaptation
-           - Too fast (constant): High variance, no convergence
-           - Just right (1/√n): Optimal bias-variance tradeoff
-
-        2. **Per-component scaling by 1/λ_i**: This is "natural gradient" or
-           "Newton-like" scaling. Components with smaller eigenvalues need
-           larger learning rates because:
-           - The gradient magnitude is proportional to λ_i
-           - Without scaling, small eigenvalue components converge slowly
-           - This equalizes convergence rates across all components
-
-        3. **Normalization by total_variance**: Makes the algorithm invariant
-           to the overall scale of the data.
-
         Returns:
         -------
         torch.Tensor
             Learning rates for each component, shape (k,).
         """
-        # Base learning rate: decays as 1/√n
-        # The +1 prevents division by zero and smooths early updates
         base_lr = 1.0 / torch.sqrt(self.n_samples + 1.0)
 
-        # Per-component scaling by inverse eigenvalue
-        # Clamp eigenvalues to avoid division by very small numbers
-        # Minimum is set relative to total variance for scale invariance
         min_eigenvalue = self.total_variance * 1e-6
         lambda_safe = self.eigenvalues.clamp(min=min_eigenvalue)
 
-        # Natural gradient scaling: larger lr for smaller eigenvalues
-        # Normalized by total variance for scale invariance
         lr_per_component = base_lr * (self.total_variance / lambda_safe)
 
-        # Clamp to reasonable range to prevent instability
-        # - Min 0.001: Ensures some update even for dominant components
-        # - Max 1.0: Prevents overshooting
         return lr_per_component.clamp(min=0.001, max=1.0)
 
     # =========================================================================
-    # Running Mean Update
+    # Running Mean Update (DDP-aware)
     # =========================================================================
 
     @torch.no_grad()
-    def _update_mean(self, x: torch.Tensor) -> torch.Tensor:
+    def _update_mean(self, x: torch.Tensor) -> Tuple[torch.Tensor, int]:
         """Update running mean estimate and return centered data.
 
-        Uses Welford's algorithm for numerically stable incremental mean:
-
-            μ_new = (n_old × μ_old + n_batch × μ_batch) / n_total
-
-        This is mathematically equivalent to computing the mean of all data
-        seen so far, but doesn't require storing the data.
+        In distributed mode, aggregates across all processes to compute
+        the true global mean.
 
         Parameters
         ----------
@@ -343,164 +407,131 @@ class StreamingTopKEigen(nn.Module):
 
         Returns:
         -------
-        torch.Tensor
-            Centered data (x - updated_mean), shape (batch_size, dim).
+        Tuple[torch.Tensor, int]
+            - Centered data (x - updated_mean), shape (batch_size, dim).
+            - Global batch size across all processes.
         """
-        batch_size = x.shape[0]
-        n_total = self.n_samples + batch_size
+        local_batch_size = x.shape[0]
+
+        # Compute local statistics
+        local_sum = x.sum(dim=0)
+        local_count = torch.tensor(
+            float(local_batch_size), device=x.device, dtype=x.dtype
+        )
+
+        # Aggregate across processes
+        if self._is_distributed():
+            self._all_reduce_sum(local_sum)
+            self._all_reduce_sum(local_count)
+
+        global_batch_size = int(local_count.item())
+        batch_mean = local_sum / local_count
+
+        n_total = self.n_samples + global_batch_size
 
         # Incremental mean update (Welford's algorithm)
-        # μ_new = (n_old/n_total) × μ_old + (n_new/n_total) × μ_batch
-        batch_mean = x.mean(dim=0)
-
-        self.mean.mul_(self.n_samples / n_total)  # Scale old mean
-        self.mean.add_(batch_mean, alpha=batch_size / n_total)  # Add batch contribution
+        self.mean.mul_(self.n_samples / n_total)
+        self.mean.add_(batch_mean, alpha=global_batch_size / n_total)
 
         # Return centered data using the NEW mean
-        # (This is important for unbiased covariance estimation)
-        return x - self.mean
+        return x - self.mean, global_batch_size
 
     # =========================================================================
-    # Core Update: Sanger's Rule
+    # Core Update: Sanger's Rule (DDP-aware)
     # =========================================================================
 
     @torch.no_grad()
-    def _sanger_update(self, x_centered: torch.Tensor) -> None:
+    def _sanger_update(self, x_centered: torch.Tensor, global_batch_size: int) -> None:
         """Perform one step of Sanger's rule (Generalized Hebbian Algorithm).
 
-        Sanger's rule is an extension of Oja's rule for extracting multiple
-        principal components simultaneously. It uses "deflation" to ensure
-        that each component captures variance orthogonal to previous ones.
+        In distributed mode, aggregates gradient statistics across all
+        processes before applying the update.
 
-        Update Rule:
-        ------------
-        For each component i:
-
-            Δvᵢ = ηᵢ × E[x̃ × yᵢ - yᵢ × Σⱼ≤ᵢ(yⱼ × vⱼ)]
-
-        where:
-        - x̃ = centered data
-        - yᵢ = vᵢᵀx̃ = projection onto component i
-        - The sum Σⱼ≤ᵢ provides deflation (removes contribution of earlier components)
-
-        In matrix form, this becomes:
-
-            ΔV = diag(η) × (E[x̃ yᵀ] - V × tril(E[y yᵀ]))
-
-        where tril() extracts the lower triangular part (including diagonal).
-
-        The Algorithm Step-by-Step:
-        ---------------------------
-        1. Compute projections y = Vᵀx̃
-        2. Compute gradient term: E[x̃ yᵀ]
-        3. Compute deflation term: V × tril(E[y yᵀ])
-        4. Apply per-component learning rates
-        5. Update V
-        6. Re-orthogonalize using QR decomposition
-        7. Update eigenvalue estimates
+        Distributed Aggregation Strategy:
+        ---------------------------------
+        Instead of gathering raw data (O(n*d) communication), we aggregate:
+        - Hebbian term: sum of x̃ yᵀ across processes (O(d*k))
+        - Projection covariance: sum of y yᵀ across processes (O(k²))
+        - Eigenvalue statistics: sum of y² across processes (O(k))
+        - Total variance: sum of ||x̃||² across processes (O(1))
 
         Parameters
         ----------
         x_centered : torch.Tensor
-            Centered input data, shape (batch_size, dim).
-
-        Notes:
-        -----
-        The QR orthogonalization step is crucial for numerical stability.
-        Without it, the eigenvectors would slowly drift from orthogonality
-        due to floating-point errors, eventually collapsing.
+            Centered input data, shape (local_batch_size, dim).
+        global_batch_size : int
+            Total batch size across all processes.
         """
-        batch_size = x_centered.shape[0]
-
-        # Get adaptive learning rates (one per component)
-        lr = self._compute_adaptive_lr()  # shape: (k,)
+        # Get adaptive learning rates
+        lr = self._compute_adaptive_lr()
 
         # ---------------------------------------------------------------------
-        # Step 1: Compute projections
+        # Step 1: Compute local projections
         # ---------------------------------------------------------------------
-        # y = Vᵀx̃, shape: (batch_size, k)
-        # Each column yᵢ contains the projection of all samples onto eigenvector vᵢ
-        proj = x_centered @ self.V
+        proj = x_centered @ self.V  # (local_batch_size, k)
 
         # ---------------------------------------------------------------------
-        # Step 2: Compute Hebbian term (what we want to move toward)
+        # Step 2: Compute local statistics (unnormalized - sums, not means)
         # ---------------------------------------------------------------------
-        # E[x̃ yᵀ] = (1/n) X̃ᵀ Y, shape: (dim, k)
-        # This is the correlation between input dimensions and projections
-        # Points the update in the direction that maximizes variance
-        hebbian_term = x_centered.T @ proj / batch_size
+        local_hebbian_sum = x_centered.T @ proj  # (dim, k)
+        local_proj_cov_sum = proj.T @ proj  # (k, k)
+        local_eigenvalue_sum = (proj**2).sum(dim=0)  # (k,)
+        local_total_var_sum = (x_centered**2).sum()  # scalar
 
         # ---------------------------------------------------------------------
-        # Step 3: Compute deflation term (what we want to move away from)
+        # Step 3: Aggregate across processes (if distributed)
         # ---------------------------------------------------------------------
-        # E[y yᵀ] = (1/n) Yᵀ Y, shape: (k, k)
-        # This is the covariance of the projections
-        proj_cov = proj.T @ proj / batch_size
+        if self._is_distributed():
+            self._all_reduce_sum(local_hebbian_sum)
+            self._all_reduce_sum(local_proj_cov_sum)
+            self._all_reduce_sum(local_eigenvalue_sum)
+            self._all_reduce_sum(local_total_var_sum)
 
-        # Extract lower triangular (including diagonal)
-        # The diagonal handles self-normalization
-        # Below-diagonal handles deflation from earlier components
+        # ---------------------------------------------------------------------
+        # Step 4: Normalize by global batch size to get expectations
+        # ---------------------------------------------------------------------
+        hebbian_term = local_hebbian_sum / global_batch_size
+        proj_cov = local_proj_cov_sum / global_batch_size
+        batch_eigenvalues = local_eigenvalue_sum / global_batch_size
+        batch_total_var = local_total_var_sum / global_batch_size
+
+        # ---------------------------------------------------------------------
+        # Step 5: Compute deflation term
+        # ---------------------------------------------------------------------
         lower_tri = torch.tril(proj_cov)
-
-        # Deflation term: V @ lower_tri, shape: (dim, k)
         deflation_term = self.V @ lower_tri
 
         # ---------------------------------------------------------------------
-        # Step 4: Compute gradient and apply update
+        # Step 6: Compute gradient and apply update
         # ---------------------------------------------------------------------
-        # Gradient = Hebbian - Deflation
         gradient = hebbian_term - deflation_term
-
-        # Apply per-component learning rate
-        # lr has shape (k,), we broadcast over dim
         scaled_gradient = gradient * lr.unsqueeze(0)
-
-        # Update eigenvector estimates
         self.V.add_(scaled_gradient)
 
         # ---------------------------------------------------------------------
-        # Step 5: Re-orthogonalize using QR decomposition
+        # Step 7: Re-orthogonalize using QR decomposition
         # ---------------------------------------------------------------------
-        # QR decomposition: V = Q @ R where Q is orthonormal
-        # This is more stable than Gram-Schmidt and very fast on GPU
         Q, R = torch.linalg.qr(self.V)
-
-        # Ensure consistent sign convention
-        # We want the diagonal of R to be positive (standard convention)
-        # This prevents sign flips between updates
         signs = torch.diag(R).sign()
-        signs[signs == 0] = 1  # Handle exact zeros (rare)
-
-        # Apply sign correction to Q
+        signs[signs == 0] = 1
         self.V.copy_(Q * signs.unsqueeze(0))
 
         # ---------------------------------------------------------------------
-        # Step 6: Update eigenvalue estimates
+        # Step 8: Update eigenvalue estimates
         # ---------------------------------------------------------------------
-        # Eigenvalue = E[yᵢ²] = variance along eigenvector i
-        # We use exponential moving average for smooth estimates
-
-        # Adaptive decay rate (faster updates early, slower later)
         eigenvalue_lr = 2.0 / torch.sqrt(self.n_samples + 1.0)
-        eigenvalue_lr = eigenvalue_lr.clamp(max=0.5)  # Cap at 0.5 for stability
-
-        # New eigenvalue estimates from this batch
-        batch_eigenvalues = (proj**2).mean(dim=0)
-
-        # EMA update: λ_new = (1 - lr) × λ_old + lr × λ_batch
+        eigenvalue_lr = eigenvalue_lr.clamp(max=0.5)
         self.eigenvalues.lerp_(batch_eigenvalues, eigenvalue_lr)
 
         # ---------------------------------------------------------------------
-        # Step 7: Update total variance estimate
+        # Step 9: Update total variance estimate
         # ---------------------------------------------------------------------
-        # Total variance = trace(Cov) = E[‖x̃‖²]
-        batch_total_var = (x_centered**2).mean() * self.dim
         self.total_variance.lerp_(batch_total_var, eigenvalue_lr)
 
         # ---------------------------------------------------------------------
-        # Step 8: Update sample count
+        # Step 10: Update sample count (with global count!)
         # ---------------------------------------------------------------------
-        self.n_samples.add_(batch_size)
+        self.n_samples.add_(global_batch_size)
 
     # =========================================================================
     # Main Forward Method
@@ -510,39 +541,17 @@ class StreamingTopKEigen(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Update eigenvector estimates with a new batch of data.
 
-        This is the main entry point. Call this on each mini-batch during
-        training. The method automatically handles:
-        - Initialization on first call (using exact SVD)
-        - Incremental updates on subsequent calls (using Sanger's rule)
-
         Parameters
         ----------
         x : torch.Tensor
             Input batch of shape (batch_size, dim).
-            Should be on the same device as the module.
 
         Returns:
         -------
         eigenvalues : torch.Tensor
             Current eigenvalue estimates, shape (k,).
-            Sorted in descending order (largest first).
         eigenvectors : torch.Tensor
             Current eigenvector estimates, shape (dim, k).
-            Columns are eigenvectors, corresponding to eigenvalues.
-            Vectors are orthonormal: Vᵀ V = I.
-
-        Examples:
-        --------
-        >>> estimator = StreamingTopKEigen(dim=256, k=8)
-        >>> for batch in dataloader:
-        ...     eigenvalues, eigenvectors = estimator(batch)
-        ...     print(f"Top eigenvalue: {eigenvalues[0]:.4f}")
-
-        Notes:
-        -----
-        - Returns clones to prevent accidental modification of internal state
-        - The returned tensors are on the same device as the input
-        - Updates are performed in-place on internal buffers
         """
         # Input validation
         if x.dim() != 2:
@@ -556,14 +565,11 @@ class StreamingTopKEigen(nn.Module):
 
         # Dispatch to initialization or update
         if not self.initialized:
-            # First batch: initialize with exact SVD
             self._init_from_batch(x)
         else:
-            # Subsequent batches: incremental update
-            x_centered = self._update_mean(x)
-            self._sanger_update(x_centered)
+            x_centered, global_batch_size = self._update_mean(x)
+            self._sanger_update(x_centered, global_batch_size)
 
-        # Return copies of current estimates
         return self.eigenvalues.clone(), self.V.clone()
 
     # =========================================================================
@@ -571,85 +577,22 @@ class StreamingTopKEigen(nn.Module):
     # =========================================================================
 
     def project(self, x: torch.Tensor) -> torch.Tensor:
-        """Project data onto the estimated principal subspace.
-
-        Computes z = (x - μ) @ V, projecting from d dimensions to k dimensions.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input data, shape (batch_size, dim) or (dim,).
-
-        Returns:
-        -------
-        torch.Tensor
-            Projected data, shape (batch_size, k) or (k,).
-
-        Examples:
-        --------
-        >>> z = estimator.project(x)  # (batch_size, dim) -> (batch_size, k)
-        >>> # For downstream model
-        >>> output = classifier(z)
-        """
+        """Project data onto the estimated principal subspace."""
         return (x - self.mean) @ self.V
 
     def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
-        """Project and reconstruct data (PCA denoising/compression).
-
-        Computes x̂ = V @ Vᵀ @ (x - μ) + μ, which projects to the k-dimensional
-        principal subspace and back. This removes components outside the
-        top-k subspace (denoising) or compresses the representation.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input data, shape (batch_size, dim) or (dim,).
-
-        Returns:
-        -------
-        torch.Tensor
-            Reconstructed data, same shape as input.
-
-        Examples:
-        --------
-        >>> x_denoised = estimator.reconstruct(x)
-        >>> reconstruction_error = (x - x_denoised).pow(2).mean()
-        """
-        z = self.project(x)  # Project to k dimensions
-        return z @ self.V.T + self.mean  # Reconstruct to d dimensions
+        """Project and reconstruct data (PCA denoising/compression)."""
+        z = self.project(x)
+        return z @ self.V.T + self.mean
 
     @property
     def explained_variance_ratio(self) -> torch.Tensor:
-        """Fraction of total variance explained by each component.
-
-        Returns:
-        -------
-        torch.Tensor
-            Explained variance ratio for each component, shape (k,).
-            Sums to less than 1.0 (remaining variance is in other components).
-
-        Examples:
-        --------
-        >>> print(f"Total explained: {estimator.explained_variance_ratio.sum():.1%}")
-        >>> print(f"Top component: {estimator.explained_variance_ratio[0]:.1%}")
-        """
+        """Fraction of total variance explained by each component."""
         return self.eigenvalues / (self.total_variance + 1e-8)
 
     @property
     def cumulative_explained_variance_ratio(self) -> torch.Tensor:
-        """Cumulative explained variance ratio.
-
-        Returns:
-        -------
-        torch.Tensor
-            Cumulative sum of explained variance ratios, shape (k,).
-
-        Examples:
-        --------
-        >>> # How many components for 95% variance?
-        >>> cumvar = estimator.cumulative_explained_variance_ratio
-        >>> n_components_95 = (cumvar < 0.95).sum() + 1
-        """
+        """Cumulative explained variance ratio."""
         return self.explained_variance_ratio.cumsum(dim=0)
 
     def __repr__(self) -> str:
