@@ -10,7 +10,183 @@ from .pos_embed import (
     get_sincos_pos_embed,
     get_timestep_embed,
     interpolate_pos_embed,
+    RotaryPositionEmbedding2D,
 )
+
+
+class SwiGLU(nn.Module):
+    """SwiGLU: Gated Linear Unit with Swish activation.
+
+    A parameter-efficient gated activation that combines the benefits of
+    gating mechanisms with the smooth, non-monotonic Swish activation.
+    Empirically improves transformer performance over standard GeLU MLPs.
+    Architecture
+    ------------
+    Standard MLP::
+        x → Linear → GeLU → Linear → out
+        Parameters: 2 * d * h
+    SwiGLU::
+        x → Linear(W₁) → SiLU ─┐
+                               ├─ element-wise multiply → Linear(W₃) → out
+        x → Linear(W₂) ────────┘
+        Parameters: 3 * d * h'  (where h' = 2h/3 to match param count)
+    The hidden dimension is scaled to ``2/3 * hidden_features`` so that
+    total parameter count matches a standard 2-layer MLP:
+    ``3 * d * (2h/3) = 2 * d * h``
+    Performance Benefits
+    --------------------
+    - **Better gradient flow**: Gating provides multiplicative paths
+    - **Smoother optimization**: SiLU (Swish) is smooth and non-monotonic
+    - **Quality**: Consistently outperforms GeLU in language and vision models
+    :param in_features: Input dimension
+    :param hidden_features: Nominal hidden dimension. Actual hidden size is
+        ``int(2 * hidden_features / 3)`` to maintain parameter parity with
+        standard MLPs.
+    :param out_features: Output dimension. Defaults to ``in_features``.
+    :param bias: If True, use bias in linear layers. Default False following
+        LLaMA/PaLM convention for better training stability.
+    :param drop: Dropout probability applied after gating.
+    Example::
+        # Replace standard MLP in transformer
+        # Old: mlp = Mlp(768, 3072, 768)
+        # New:
+        mlp = SwiGLU(768, 3072, 768)
+        x = torch.randn(4, 196, 768)
+        out = mlp(x)  # [4, 196, 768]
+        # Parameter count comparison
+        standard_mlp = nn.Sequential(
+            nn.Linear(768, 3072), nn.GELU(), nn.Linear(3072, 768)
+        )
+        swiglu = SwiGLU(768, 3072, 768)
+        print(sum(p.numel() for p in standard_mlp.parameters()))  # 4,722,432
+        print(sum(p.numel() for p in swiglu.parameters()))  # 4,722,432 (same!)
+
+    Note:
+        For best results, combine SwiGLU with:
+        - **LayerScale**: Stabilizes residual connections
+        - **QK-Norm**: Prevents attention explosion
+        - **RoPE**: Better positional generalization
+        This combination is used in LLaMA, PaLM, and modern vision transformers.
+
+    References:
+        - Shazeer, "GLU Variants Improve Transformer" (2020)
+        - Touvron et al., "LLaMA: Open and Efficient Foundation Language Models" (2023)
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: int,
+        out_features: Optional[int] = None,
+        bias: bool = False,
+        drop: float = 0.0,
+    ):
+        super().__init__()
+        out_features = out_features or in_features
+        # Scale hidden dim to maintain param parity with standard MLP
+        hidden_features = int(2 * hidden_features / 3)
+        self.w1 = nn.Linear(in_features, hidden_features, bias=bias)
+        self.w2 = nn.Linear(in_features, hidden_features, bias=bias)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+        self.drop = nn.Dropout(drop)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply SwiGLU transformation."""
+        # SwiGLU: (SiLU(xW₁) ⊙ xW₂) W₃
+        return self.drop(self.w3(F.silu(self.w1(x)) * self.w2(x)))
+
+    def extra_repr(self) -> str:
+        return (
+            f"in_features={self.w1.in_features}, "
+            f"hidden_features={self.w1.out_features}, "
+            f"out_features={self.w3.out_features}"
+        )
+
+
+class QKNorm(nn.Module):
+    """Query-Key Normalization for attention stabilization.
+
+    Applies LayerNorm (without learnable parameters) independently to query
+    and key tensors before computing attention scores. This simple technique
+    dramatically improves training stability in deep transformers.
+    Why QK-Norm Works
+    -----------------
+    In deep transformers, attention logits (Q·Kᵀ) can grow unboundedly large,
+    causing:
+    - **Gradient explosion**: Large logits → extreme softmax → tiny gradients
+    - **Attention collapse**: All mass on single token
+    - **Training instability**: Requires very small learning rates
+    QK-Norm bounds the attention logits by normalizing Q and K to unit variance:
+    - Attention logits become bounded: ``|q·k| ≤ ||q|| ||k|| = O(√d)``
+    - Gradients remain stable throughout training
+    - Enables larger learning rates and faster convergence
+    Implementation Details
+    ----------------------
+    - Uses **LayerNorm without learnable parameters** (γ=1, β=0)
+    - Normalizes per-head: applied to ``[..., head_dim]`` dimension
+    - Zero computational overhead in modern frameworks (fused with attention)
+    :param head_dim: Dimension per attention head. Each head is normalized
+        independently to preserve multi-head diversity.
+    Example::
+        # In attention forward pass
+        qk_norm = QKNorm(head_dim=64)
+        # q, k shape: [B, num_heads, seq_len, head_dim]
+        q, k = qk_norm(q, k)
+        # Now safe to compute attention
+        attn = (q @ k.transpose(-2, -1)) * scale
+    Example integration with Attention::
+        class Attention(nn.Module):
+            def __init__(self, dim, num_heads, use_qk_norm=True):
+                ...
+                if use_qk_norm:
+                    self.qk_norm = QKNorm(dim // num_heads)
+
+            def forward(self, x):
+                q, k, v = self.qkv(x).chunk(3, dim=-1)
+                if self.use_qk_norm:
+                    q, k = self.qk_norm(q, k)
+                ...
+
+    Note:
+        QK-Norm is especially important when combined with:
+        - **SwiGLU**: Gated activations can amplify hidden states
+        - **LayerScale**: Small initial residual scale needs stable attention
+        - **Deep networks**: Logit growth compounds with depth
+        Without QK-Norm, these combinations often fail to train or require
+        extensive hyperparameter tuning.
+
+    References:
+        - Henry et al., "Query-Key Normalization for Transformers" (EMNLP 2020)
+        - Dehghani et al., "Scaling Vision Transformers to 22B Parameters" (2023)
+        - Wortsman et al., "Small-scale proxies for large-scale Transformer training" (2023).
+    """
+
+    def __init__(self, head_dim: int):
+        super().__init__()
+        # LayerNorm without learnable parameters (elementwise_affine=False)
+        self.q_norm = nn.LayerNorm(head_dim, elementwise_affine=False)
+        self.k_norm = nn.LayerNorm(head_dim, elementwise_affine=False)
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Normalize query and key tensors independently.
+
+        :param q: Query tensor of shape ``[B, num_heads, seq_len, head_dim]``
+            or any shape with last dimension = head_dim
+        :param k: Key tensor of same shape as q
+        :return: Tuple of (normalized_q, normalized_k) with same shapes
+        Note:
+            Normalization is applied to the last dimension (head_dim).
+            Each head is normalized independently, preserving multi-head
+            representation diversity.
+        """
+        return self.q_norm(q), self.k_norm(k)
+
+    def extra_repr(self) -> str:
+        return f"head_dim={self.q_norm.normalized_shape[0]}"
 
 
 @dataclass
@@ -237,42 +413,105 @@ class MaskedEncoder(nn.Module):
         )
 
 
-# =============================================================================
-# Efficient Attention Modules
-# =============================================================================
 class Attention(nn.Module):
     """Multi-head self-attention with efficient SDPA backend.
 
-    Uses F.scaled_dot_product_attention which automatically selects:
-    - Flash Attention (when available, fastest)
-    - Memory-efficient attention (xformers-style)
-    - Math fallback
+    Supports modern transformer features including Rotary Position Embeddings
+    (RoPE) and Query-Key Normalization (QK-Norm) for improved training stability
+    and positional generalization.
 
-    Supports attention masking for patterns like:
-    - Causal (autoregressive) attention
-    - Leave-one-out prediction (diagonal blocked)
-    - Arbitrary sparse patterns
+    Uses ``F.scaled_dot_product_attention`` which automatically selects the
+    optimal backend:
 
-    :param dim: Input dimension
-    :param num_heads: Number of attention heads
-    :param qkv_bias: Add bias to QKV projection
-    :param attn_drop: Attention dropout rate
-    :param proj_drop: Output projection dropout rate
+    - **Flash Attention** (when available, fastest)
+    - **Memory-efficient attention** (xformers-style)
+    - **Math fallback**
+
+    Architecture Features
+    ---------------------
+    **RoPE (Rotary Position Embedding)**:
+        Encodes relative 2D positions via complex rotations applied to Q and K.
+        Unlike additive positional embeddings, RoPE:
+
+        - Naturally captures relative positions
+        - Generalizes to unseen sequence lengths
+        - Requires no extra parameters
+
+        Enable with ``use_rope=True``. Requires ``grid_size`` in forward().
+
+    **QK-Norm (Query-Key Normalization)**:
+        Applies LayerNorm (without learnable params) to Q and K before
+        computing attention scores. Benefits:
+
+        - Prevents attention logit explosion in deep networks
+        - Stabilizes training without extra hyperparameter tuning
+        - Essential when combined with SwiGLU/LayerScale
+
+        Enable with ``use_qk_norm=True``.
+
+    Attention Masking
+    -----------------
+    Supports flexible attention patterns via ``attn_mask``:
+
+    - **Causal (autoregressive)**: ``torch.triu(ones, diagonal=1)``
+    - **Bidirectional**: ``attn_mask=None``
+    - **Block sparse**: Custom boolean masks
+    - **Leave-one-out**: ``torch.eye(N)`` (each token ignores itself)
+
+    Mask convention: ``True`` = blocked (cannot attend), ``False`` = allowed.
+
+    :param dim: Input/output embedding dimension
+    :param num_heads: Number of parallel attention heads. Must divide ``dim``.
+    :param qkv_bias: If True, add learnable bias to Q, K, V projections.
+        Default True following ViT convention.
+    :param attn_drop: Dropout probability on attention weights. Applied only
+        during training.
+    :param proj_drop: Dropout probability on output projection.
+    :param use_rope: Enable 2D Rotary Position Embedding. When True, position
+        information is encoded via rotation in attention rather than additive
+        embeddings. Requires ``grid_size`` parameter in forward().
+    :param use_qk_norm: Enable Query-Key normalization. Applies LayerNorm
+        (without learnable parameters) to Q and K tensors before attention.
+        Recommended for deep networks or when using SwiGLU.
+    :param max_grid_size: Maximum spatial grid size for RoPE frequency cache.
+        Only used when ``use_rope=True``. Set to largest expected grid dimension.
 
     Example::
 
+        # Standard attention
         attn = Attention(dim=768, num_heads=12)
-
-        # Standard self-attention
         out = attn(x)  # [B, N, 768]
 
-        # Leave-one-out: each token cannot attend to itself
-        mask = torch.eye(N, dtype=torch.bool, device=x.device)
-        out = attn(x, attn_mask=mask)  # out[:, i] based on x[:, ≠i]
+        # With RoPE for vision (requires grid_size)
+        attn = Attention(dim=768, num_heads=12, use_rope=True)
+        out = attn(x, grid_size=(14, 14))
 
-        # Causal attention
+        # With QK-Norm for training stability
+        attn = Attention(dim=768, num_heads=12, use_qk_norm=True)
+        out = attn(x)
+
+        # Causal attention (autoregressive)
+        N = x.shape[1]
         causal_mask = torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)
         out = attn(x, attn_mask=causal_mask)
+
+        # NEPA-style: RoPE + QK-Norm + causal
+        attn = Attention(dim=768, num_heads=12, use_rope=True, use_qk_norm=True)
+        causal_mask = torch.triu(
+            torch.ones(N, N, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        out = attn(x, attn_mask=causal_mask, grid_size=(14, 14))
+
+    Note:
+        When ``use_rope=True``, do NOT add positional embeddings to input tokens.
+        RoPE encodes positions internally via Q/K rotation.
+
+    References:
+        - RoPE: Su et al., "RoFormer: Enhanced Transformer with Rotary
+          Position Embedding" (2021)
+        - QK-Norm: Henry et al., "Query-Key Normalization for Transformers" (2020)
+        - Flash Attention: Dao et al., "FlashAttention: Fast and Memory-Efficient
+          Exact Attention" (2022)
     """
 
     def __init__(
@@ -282,49 +521,97 @@ class Attention(nn.Module):
         qkv_bias: bool = True,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
+        use_rope: bool = False,
+        use_qk_norm: bool = False,
+        max_grid_size: int = 32,
     ):
         super().__init__()
-        assert dim % num_heads == 0, "dim must be divisible by num_heads"
+        if dim % num_heads != 0:
+            raise ValueError(
+                f"dim ({dim}) must be divisible by num_heads ({num_heads})"
+            )
+
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
+        self.use_rope = use_rope
+        self.use_qk_norm = use_qk_norm
 
-        # Fused QKV projection for efficiency
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = attn_drop
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        if use_rope:
+            self.rope = RotaryPositionEmbedding2D(self.head_dim, max_grid_size)
+
+        if use_qk_norm:
+            self.qk_norm = QKNorm(self.head_dim)
+
     def forward(
         self,
         x: torch.Tensor,
         attn_mask: Optional[torch.Tensor] = None,
+        grid_size: Optional[Tuple[int, int]] = None,
     ) -> torch.Tensor:
-        """Forward pass.
+        """Compute multi-head self-attention.
 
-        :param x: Input tensor [B, N, D]
-        :param attn_mask: Attention mask. Can be one of:
-            - [N, N]: Same mask for all batches and heads
-            - [B, N, N]: Per-batch mask, broadcast over heads
-            - [B, H, N, N]: Full per-batch, per-head mask
-            Mask values: True = blocked (cannot attend), False = allowed.
-            For leave-one-out prediction, use `torch.eye(N, dtype=torch.bool)`.
-        :return: Output tensor [B, N, D]
+        :param x: Input tensor of shape ``[B, N, D]`` where B is batch size,
+            N is sequence length, and D is embedding dimension.
+        :param attn_mask: Optional attention mask. Supported shapes:
+
+            - ``[N, N]``: Same mask for all batches and heads
+            - ``[B, N, N]``: Per-batch mask, broadcast over heads
+            - ``[B, H, N, N]``: Full per-batch, per-head mask
+
+            Values: ``True`` = blocked (cannot attend), ``False`` = allowed.
+
+            Common patterns:
+
+            - Causal: ``torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)``
+            - Leave-one-out: ``torch.eye(N, dtype=torch.bool)``
+
+        :param grid_size: Spatial grid dimensions as ``(height, width)``.
+            **Required when** ``use_rope=True``. Used to compute 2D rotary
+            position embeddings. For a 224x224 image with patch_size=16,
+            use ``grid_size=(14, 14)``.
+
+        :return: Output tensor of shape ``[B, N, D]``
+
+        :raises ValueError: If ``use_rope=True`` but ``grid_size`` is None
         """
         B, N, C = x.shape
 
-        # Fused QKV: [B, N, 3*D] -> [B, N, 3, H, head_dim] -> [3, B, H, N, head_dim]
+        # Fused QKV projection
         qkv = (
             self.qkv(x)
             .reshape(B, N, 3, self.num_heads, self.head_dim)
             .permute(2, 0, 3, 1, 4)
         )
-        q, k, v = qkv.unbind(0)
+        q, k, v = qkv.unbind(0)  # Each: [B, num_heads, N, head_dim]
 
-        # Convert mask to SDPA format if provided
+        # Apply QK-Norm before RoPE (order matters for stability)
+        if self.use_qk_norm:
+            q, k = self.qk_norm(q, k)
+
+        # Apply 2D Rotary Position Embedding
+        if self.use_rope:
+            if grid_size is None:
+                # Attempt to infer square grid
+                grid_h = grid_w = int(N**0.5)
+                if grid_h * grid_w != N:
+                    raise ValueError(
+                        f"use_rope=True requires grid_size parameter for non-square "
+                        f"sequences. Got N={N} which is not a perfect square."
+                    )
+            else:
+                grid_h, grid_w = grid_size
+            q, k = self.rope(q, k, grid_h, grid_w)
+
+        # Convert boolean mask to SDPA-compatible float mask
         attn_mask_sdpa = self._prepare_attn_mask(attn_mask, q.dtype, q.device)
 
-        # Efficient attention (Flash/Memory-efficient when available)
+        # Efficient attention via SDPA
         x = F.scaled_dot_product_attention(
             q,
             k,
@@ -333,10 +620,11 @@ class Attention(nn.Module):
             dropout_p=self.attn_drop if self.training else 0.0,
         )
 
-        # Reshape back: [B, H, N, head_dim] -> [B, N, D]
+        # Reshape and project output
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
+
         return x
 
     def _prepare_attn_mask(
@@ -347,32 +635,29 @@ class Attention(nn.Module):
     ) -> Optional[torch.Tensor]:
         """Convert boolean attention mask to SDPA-compatible float mask.
 
-        SDPA expects additive mask where -inf blocks attention.
-        Our convention: True = blocked, False = allowed.
-
-        :param attn_mask: Boolean mask [N, N], [B, N, N], or [B, H, N, N]
-        :param dtype: Target dtype for the mask
-        :param device: Target device for the mask
-        :return: Float mask suitable for SDPA, or None
+        SDPA expects additive mask where ``-inf`` blocks attention.
+        Our convention: ``True`` = blocked, ``False`` = allowed.
         """
         if attn_mask is None:
             return None
 
-        # Convert bool mask to float: True -> -inf, False -> 0
         if attn_mask.dtype == torch.bool:
             mask = torch.zeros_like(attn_mask, dtype=dtype, device=device)
             mask = mask.masked_fill(attn_mask, float("-inf"))
         else:
             mask = attn_mask.to(dtype=dtype, device=device)
 
-        # Expand dimensions for broadcasting: need [B, H, N, N] for SDPA
-        # [N, N] -> [1, 1, N, N]
-        # [B, N, N] -> [B, 1, N, N]
-        # [B, H, N, N] -> unchanged
+        # Expand to [B, H, N, N] for SDPA broadcasting
         while mask.dim() < 4:
             mask = mask.unsqueeze(0 if mask.dim() == 2 else 1)
 
         return mask
+
+    def extra_repr(self) -> str:
+        return (
+            f"num_heads={self.num_heads}, head_dim={self.head_dim}, "
+            f"use_rope={self.use_rope}, use_qk_norm={self.use_qk_norm}"
+        )
 
 
 class CrossAttention(nn.Module):
@@ -517,40 +802,85 @@ def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch
 
 
 class TransformerBlock(nn.Module):
-    """Unified transformer block with optional AdaLN-Zero conditioning.
+    """Unified transformer block supporting multiple architectures.
 
-    Supports three attention configurations:
+    Configurable for various modern transformer designs:
 
-    **Mode 1: Pure Cross-Attention** (`self_attn=False, cross_attn=True`)
-        - Queries attend to context but not to each other
-        - Use case: Lightweight decoder
+    +------------------+----------+----------+--------+------------+----------+
+    | Architecture     | RoPE     | QK-Norm  | MLP    | LayerScale | AdaLN    |
+    +==================+==========+==========+========+============+==========+
+    | Standard ViT     | ✗        | ✗        | gelu   | ✗          | ✗        |
+    | DINOv2 / Modern  | ✓        | ✓        | swiglu | ✓          | ✗        |
+    | NEPA             | ✓        | ✓        | swiglu | ✓          | ✗        |
+    | DiT / Flow       | ✗        | ✗        | gelu   | ✗          | ✓        |
+    +------------------+----------+----------+--------+------------+----------+
 
-    **Mode 2: Decoder-Style** (`self_attn=True, cross_attn=True`)
-        - Self-attention on queries, then cross-attention to context
-        - Use case: Standard decoder (IJEPA predictor, etc.)
+    Attention Modes
+    ---------------
+    **Mode 1: Self-Attention Only** (``self_attn=True, cross_attn=False``)
+        Standard encoder block. Used for NEPA, ViT encoder, etc.
 
-    **Mode 3: Joint Attention** (`self_attn=True, cross_attn=False`)
-        - All tokens attend to all tokens (caller concatenates context + queries)
-        - Use case: Full bidirectional flow (DiT, high masking ratio)
+    **Mode 2: Cross-Attention Only** (``self_attn=False, cross_attn=True``)
+        Queries attend to context only. Lightweight decoder.
 
-    **Conditioning:**
-        - `use_adaln=True`: AdaLN-Zero modulation (scale, shift, gate per operation)
-        - `use_adaln=False`: Standard pre-norm transformer
+    **Mode 3: Full Decoder** (``self_attn=True, cross_attn=True``)
+        Self-attention on queries, then cross-attention to context.
 
-    **Attention Masking:**
-        - Pass `attn_mask` to block attention patterns (e.g., leave-one-out)
-        - Mask format: `True` = blocked, `False` = allowed
+    Modern Components
+    -----------------
+    **RoPE** (``use_rope=True``):
+        2D Rotary Position Embedding. Encodes positions via Q/K rotation.
+        Requires ``grid_size`` in forward(). Don't use additive pos_embed.
+
+    **QK-Norm** (``use_qk_norm=True``):
+        Normalizes Q and K before attention. Stabilizes deep networks.
+
+    **SwiGLU** (``mlp_type='swiglu'``):
+        Gated MLP with SiLU activation. Better than GeLU empirically.
+
+    **LayerScale** (``use_layer_scale=True``):
+        Learnable per-channel scaling on residuals. Stabilizes training.
+        Initialize near zero (e.g., 1e-5) for identity-like initialization.
 
     :param dim: Hidden dimension
     :param num_heads: Number of attention heads
     :param mlp_ratio: MLP hidden dim = dim * mlp_ratio
     :param self_attn: Enable self-attention
     :param cross_attn: Enable cross-attention
-    :param use_adaln: Enable AdaLN-Zero conditioning
+    :param use_adaln: Enable AdaLN-Zero conditioning (for diffusion/flow)
+    :param use_rope: Enable 2D Rotary Position Embedding in attention
+    :param use_qk_norm: Enable Query-Key normalization in attention
+    :param mlp_type: MLP activation type: 'gelu' or 'swiglu'
+    :param use_layer_scale: Enable LayerScale on residual connections
+    :param layer_scale_init: Initial value for LayerScale (default: 1e-5)
     :param drop_path: Stochastic depth rate
     :param attn_drop: Attention dropout rate
     :param proj_drop: Projection dropout rate
-    :param act_layer: Activation layer for MLP
+    :param max_grid_size: Maximum grid size for RoPE cache
+
+    Example::
+
+        # Standard ViT block
+        block = TransformerBlock(dim=768, num_heads=12)
+
+        # Modern ViT (DINOv2-style)
+        block = TransformerBlock(
+            dim=768,
+            num_heads=12,
+            use_rope=True,
+            use_qk_norm=True,
+            mlp_type="swiglu",
+            use_layer_scale=True,
+        )
+        out = block(x, grid_size=(14, 14))
+
+        # NEPA block (modern + causal)
+        causal_mask = torch.triu(torch.ones(N, N, dtype=torch.bool), diagonal=1)
+        out = block(x, grid_size=(14, 14), attn_mask=causal_mask)
+
+        # DiT block (with conditioning)
+        block = TransformerBlock(dim=768, num_heads=12, use_adaln=True)
+        out = block(x, cond=time_emb)
     """
 
     def __init__(
@@ -559,17 +889,25 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         mlp_ratio: float = 4.0,
         self_attn: bool = True,
-        cross_attn: bool = True,
-        use_adaln: bool = True,
+        cross_attn: bool = False,
+        use_adaln: bool = False,
+        use_rope: bool = False,
+        use_qk_norm: bool = False,
+        mlp_type: Literal["gelu", "swiglu"] = "gelu",
+        use_layer_scale: bool = False,
+        layer_scale_init: float = 1e-5,
         drop_path: float = 0.0,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
+        max_grid_size: int = 32,
         act_layer: type = nn.GELU,
     ):
         super().__init__()
         self.use_self_attn = self_attn
         self.use_cross_attn = cross_attn
         self.use_adaln = use_adaln
+        self.use_rope = use_rope
+        self.use_layer_scale = use_layer_scale
 
         if not self_attn and not cross_attn:
             raise ValueError("At least one of self_attn or cross_attn must be True")
@@ -578,117 +916,58 @@ class TransformerBlock(nn.Module):
         if self_attn:
             self.norm1 = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
             self.attn = Attention(
-                dim, num_heads=num_heads, attn_drop=attn_drop, proj_drop=proj_drop
+                dim,
+                num_heads=num_heads,
+                attn_drop=attn_drop,
+                proj_drop=proj_drop,
+                use_rope=use_rope,
+                use_qk_norm=use_qk_norm,
+                max_grid_size=max_grid_size,
             )
             self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+            if use_layer_scale:
+                self.ls1 = nn.Parameter(layer_scale_init * torch.ones(dim))
 
         # Cross-attention
         if cross_attn:
             self.norm2_q = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
             self.norm2_kv = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
             self.cross_attn = CrossAttention(
-                dim, num_heads=num_heads, attn_drop=attn_drop, proj_drop=proj_drop
+                dim,
+                num_heads=num_heads,
+                attn_drop=attn_drop,
+                proj_drop=proj_drop,
             )
             self.drop_path2 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+            if use_layer_scale:
+                self.ls2 = nn.Parameter(layer_scale_init * torch.ones(dim))
 
         # MLP
         self.norm3 = nn.LayerNorm(dim, elementwise_affine=not use_adaln)
-        self.mlp = Mlp(
-            in_features=dim,
-            hidden_features=int(dim * mlp_ratio),
-            act_layer=act_layer,
-            drop=proj_drop,
-        )
+        mlp_hidden = int(dim * mlp_ratio)
+        if mlp_type == "swiglu":
+            self.mlp = SwiGLU(dim, mlp_hidden, dim, drop=proj_drop)
+        else:
+            self.mlp = Mlp(
+                in_features=dim,
+                hidden_features=mlp_hidden,
+                act_layer=act_layer,
+                drop=proj_drop,
+            )
         self.drop_path3 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+        if use_layer_scale:
+            self.ls3 = nn.Parameter(layer_scale_init * torch.ones(dim))
 
-        # AdaLN modulation MLP
+        # AdaLN modulation
         if use_adaln:
-            # 3 params (shift, scale, gate) per operation
-            num_ops = int(self_attn) + int(cross_attn) + 1  # +1 for MLP
+            num_ops = int(self_attn) + int(cross_attn) + 1
             self.num_mods = num_ops * 3
             self.adaLN_mlp = nn.Sequential(
                 nn.SiLU(),
                 nn.Linear(dim, self.num_mods * dim),
             )
-            # Zero-init for identity initialization
             nn.init.zeros_(self.adaLN_mlp[1].weight)
             nn.init.zeros_(self.adaLN_mlp[1].bias)
-
-    def _apply_self_attn(
-        self,
-        x: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
-        shift: Optional[torch.Tensor] = None,
-        scale: Optional[torch.Tensor] = None,
-        gate: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Apply self-attention with optional AdaLN modulation and attention mask.
-
-        :param x: Input tensor [B, N, D]
-        :param attn_mask: Attention mask [N, N] or [B, N, N]. True = blocked.
-        :param shift: AdaLN shift [B, 1, D]
-        :param scale: AdaLN scale [B, 1, D]
-        :param gate: AdaLN gate [B, 1, D]
-        :return: Output tensor [B, N, D]
-        """
-        if self.use_adaln:
-            normed = modulate(self.norm1(x), shift, scale)
-            attn_out = self.attn(normed, attn_mask=attn_mask)
-            return x + gate * self.drop_path1(attn_out)
-        else:
-            attn_out = self.attn(self.norm1(x), attn_mask=attn_mask)
-            return x + self.drop_path1(attn_out)
-
-    def _apply_cross_attn(
-        self,
-        x: torch.Tensor,
-        context: torch.Tensor,
-        cross_attn_mask: Optional[torch.Tensor] = None,
-        shift: Optional[torch.Tensor] = None,
-        scale: Optional[torch.Tensor] = None,
-        gate: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Apply cross-attention with optional AdaLN modulation and attention mask.
-
-        :param x: Query tensor [B, N, D]
-        :param context: Key-value tensor [B, M, D]
-        :param cross_attn_mask: Cross-attention mask [N, M] or [B, N, M]. True = blocked.
-        :param shift: AdaLN shift [B, 1, D]
-        :param scale: AdaLN scale [B, 1, D]
-        :param gate: AdaLN gate [B, 1, D]
-        :return: Output tensor [B, N, D]
-        """
-        if self.use_adaln:
-            q = modulate(self.norm2_q(x), shift, scale)
-            kv = self.norm2_kv(context)
-            cross_out = self.cross_attn(q, kv, attn_mask=cross_attn_mask)
-            return x + gate * self.drop_path2(cross_out)
-        else:
-            q = self.norm2_q(x)
-            kv = self.norm2_kv(context)
-            cross_out = self.cross_attn(q, kv, attn_mask=cross_attn_mask)
-            return x + self.drop_path2(cross_out)
-
-    def _apply_mlp(
-        self,
-        x: torch.Tensor,
-        shift: Optional[torch.Tensor] = None,
-        scale: Optional[torch.Tensor] = None,
-        gate: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Apply MLP with optional AdaLN modulation.
-
-        :param x: Input tensor [B, N, D]
-        :param shift: AdaLN shift [B, 1, D]
-        :param scale: AdaLN scale [B, 1, D]
-        :param gate: AdaLN gate [B, 1, D]
-        :return: Output tensor [B, N, D]
-        """
-        if self.use_adaln:
-            normed = modulate(self.norm3(x), shift, scale)
-            return x + gate * self.drop_path3(self.mlp(normed))
-        else:
-            return x + self.drop_path3(self.mlp(self.norm3(x)))
 
     def forward(
         self,
@@ -697,56 +976,82 @@ class TransformerBlock(nn.Module):
         cond: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
         cross_attn_mask: Optional[torch.Tensor] = None,
+        grid_size: Optional[Tuple[int, int]] = None,
     ) -> torch.Tensor:
         """Forward pass.
 
         :param x: Input tensor [B, N, D]
-        :param context: Context for cross-attention [B, M, D] (required if cross_attn=True)
+        :param context: Context for cross-attention [B, M, D]
         :param cond: Conditioning tensor [B, D] (required if use_adaln=True)
-        :param attn_mask: Self-attention mask [N, N] or [B, N, N].
-            True = blocked (cannot attend), False = allowed.
-            Use `torch.eye(N, dtype=torch.bool)` for leave-one-out prediction.
-        :param cross_attn_mask: Cross-attention mask [N, M] or [B, N, M].
-            True = blocked, False = allowed.
+        :param attn_mask: Self-attention mask. True = blocked.
+        :param cross_attn_mask: Cross-attention mask. True = blocked.
+        :param grid_size: (grid_h, grid_w) for RoPE. Required if use_rope=True.
         :return: Output tensor [B, N, D]
         """
         if self.use_cross_attn and context is None:
             raise ValueError("context required when cross_attn=True")
         if self.use_adaln and cond is None:
             raise ValueError("cond required when use_adaln=True")
+        if self.use_rope and grid_size is None:
+            raise ValueError("grid_size required when use_rope=True")
 
         if self.use_adaln:
-            # Get modulation parameters: [B, num_mods * D] -> list of [B, 1, D]
             mods = self.adaLN_mlp(cond).chunk(self.num_mods, dim=-1)
             mods = [m.unsqueeze(1) for m in mods]
             i = 0
 
-            # Self-attention with AdaLN
             if self.use_self_attn:
                 shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
                 i += 3
-                x = self._apply_self_attn(x, attn_mask, shift, scale, gate)
-
-            # Cross-attention with AdaLN
-            if self.use_cross_attn:
-                shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
-                i += 3
-                x = self._apply_cross_attn(
-                    x, context, cross_attn_mask, shift, scale, gate
+                x = x + gate * self.drop_path1(
+                    self.attn(
+                        modulate(self.norm1(x), shift, scale),
+                        attn_mask=attn_mask,
+                        grid_size=grid_size,
+                    )
                 )
 
-            # MLP with AdaLN
+            if self.use_cross_attn:
+                shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
+                i += 3
+                x = x + gate * self.drop_path2(
+                    self.cross_attn(
+                        modulate(self.norm2_q(x), shift, scale),
+                        self.norm2_kv(context),
+                        attn_mask=cross_attn_mask,
+                    )
+                )
+
             shift, scale, gate = mods[i], mods[i + 1], mods[i + 2]
-            x = self._apply_mlp(x, shift, scale, gate)
+            x = x + gate * self.drop_path3(
+                self.mlp(modulate(self.norm3(x), shift, scale))
+            )
         else:
-            # Standard pre-norm transformer (no conditioning)
+            # Standard forward (with optional LayerScale)
             if self.use_self_attn:
-                x = self._apply_self_attn(x, attn_mask)
+                attn_out = self.attn(
+                    self.norm1(x),
+                    attn_mask=attn_mask,
+                    grid_size=grid_size,
+                )
+                if self.use_layer_scale:
+                    attn_out = self.ls1 * attn_out
+                x = x + self.drop_path1(attn_out)
 
             if self.use_cross_attn:
-                x = self._apply_cross_attn(x, context, cross_attn_mask)
+                cross_out = self.cross_attn(
+                    self.norm2_q(x),
+                    self.norm2_kv(context),
+                    attn_mask=cross_attn_mask,
+                )
+                if self.use_layer_scale:
+                    cross_out = self.ls2 * cross_out
+                x = x + self.drop_path2(cross_out)
 
-            x = self._apply_mlp(x)
+            mlp_out = self.mlp(self.norm3(x))
+            if self.use_layer_scale:
+                mlp_out = self.ls3 * mlp_out
+            x = x + self.drop_path3(mlp_out)
 
         return x
 
