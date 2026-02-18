@@ -40,26 +40,17 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils import get_data_dir
 
 
-# =============================================================================
-# Linear Probe Hyperparameters (I-JEPA paper Table 8)
-# =============================================================================
-
 IMAGE_SIZE = 224
 PATCH_SIZE = 16
 EMBED_DIM = 768  # ViT-Base
 NUM_CLASSES = 10  # ImageNette
-PROBE_EPOCHS = 100  # Paper: 100 epochs for linear eval
+PROBE_EPOCHS = 100
 BATCH_SIZE = 256
 NUM_GPUS = torch.cuda.device_count() or 1
 LR = 0.01
 
 
 DEFAULT_CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
-
-
-# =============================================================================
-# Data
-# =============================================================================
 
 
 def get_data():
@@ -118,11 +109,6 @@ def get_data():
     return spt.data.DataModule(train=train_loader, val=val_loader)
 
 
-# =============================================================================
-# Checkpoint Loading
-# =============================================================================
-
-
 def load_ijepa_from_checkpoint(ckpt_path: str) -> IJEPA:
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
@@ -154,11 +140,6 @@ def extract_epoch_from_path(ckpt_path: str) -> int:
         if part.isdigit():
             return int(part)
     return -1
-
-
-# =============================================================================
-# Linear Probe Training
-# =============================================================================
 
 
 def train_linear_probe(
@@ -240,11 +221,6 @@ def train_linear_probe(
         logger.experiment.finish()
 
     return result
-
-
-# =============================================================================
-# Main
-# =============================================================================
 
 
 def main():
