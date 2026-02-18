@@ -36,6 +36,7 @@ Example::
 from dataclasses import dataclass
 from typing import Tuple
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -192,6 +193,7 @@ class IJEPA(Module):
         )
 
         self.embed_dim = embed_dim
+        self._fix_init_weight()
 
     def _encode(
         self,
@@ -259,28 +261,37 @@ class IJEPA(Module):
         mask_out = self.masking(patches, grid_h, grid_w)
 
         if self.training:
-            # Encode context (student) and targets (teacher, no grad)
+            # Context: student sees only context patches (correct — matches Meta's masked encoder)
             context = self._encode(
                 patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
             )
 
             with torch.no_grad():
-                targets = self._encode(
-                    patches, mask_out.target_idx, grid_h, grid_w, self.encoder.teacher
+                # Teacher: full forward with ALL patches visible, then select targets
+                all_idx = torch.arange(
+                    grid_h * grid_w, device=images.device
+                ).unsqueeze(0).expand(B, -1)
+
+                teacher_full = self._encode(
+                    patches, all_idx, grid_h, grid_w, self.encoder.teacher
+                )  # teacher's vit.norm already applied
+                
+                # Extra layer_norm on top per ijepa repo 
+                teacher_full_normed = F.layer_norm(teacher_full, [teacher_full.size(-1)])
+                # Select target patches from the full encoding
+                D = teacher_full.size(-1)
+                targets = torch.gather(
+                    teacher_full_normed, 1,
+                    mask_out.target_idx.unsqueeze(-1).expand(-1, -1, D)
                 )
 
-            # Full encoding for downstream use
-            all_idx = torch.arange(
-                grid_h * grid_w, device=images.device
-            ).unsqueeze(0).expand(B, -1)
-            embed_encoder = (
-                self.encoder.teacher if embedding_source == "teacher"
-                else self.encoder.student
-            )
-            with torch.no_grad():
-                embedding = self._encode(
-                    patches, all_idx, grid_h, grid_w, embed_encoder
-                )
+                # Embedding: reuse teacher_full (unnormed, full sequence) for the probe
+                if embedding_source == "teacher":
+                    embedding = teacher_full
+                else:
+                    embedding = self._encode(
+                        patches, all_idx, grid_h, grid_w, self.encoder.student
+                    )
 
             # Predict target representations via cross-attention
             N_tgt = mask_out.target_idx.shape[1]
@@ -294,10 +305,11 @@ class IJEPA(Module):
 
             loss = F.smooth_l1_loss(predictions, targets, beta=1.0)
         else:
-            # Eval: encode all patches through student
-            context = self._encode(
-                patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
-            )
+            # Eval: encode all patches through teacher (consistent with training embedding)
+            with torch.no_grad():
+                context = self._encode(
+                    patches, mask_out.context_idx, grid_h, grid_w, self.encoder.teacher
+                )
             predictions = context
             targets = context
             embedding = context
@@ -311,3 +323,16 @@ class IJEPA(Module):
             num_targets=mask_out.target_idx.shape[1],
             num_context=mask_out.context_idx.shape[1],
         )
+
+    def _fix_init_weight(self):
+        """
+        Rescale attention proj and MLP output weights by depth, matching I-JEPA init
+        from the repo.
+        """
+        def rescale(param, layer_id):
+            param.div_(math.sqrt(2.0 * layer_id))
+
+        for encoder in (self.encoder.student, self.encoder.teacher):
+            for layer_id, block in enumerate(encoder.vit.blocks):
+                rescale(block.attn.proj.weight.data, layer_id + 1)
+                rescale(block.mlp.fc2.weight.data, layer_id + 1)

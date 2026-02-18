@@ -1,3 +1,4 @@
+#new-ijepa-vit-base.py
 """I-JEPA (Image-based Joint Embedding Predictive Architecture) on ImageNet-10.
 
 Trains a ViT-Base/16 encoder with an I-JEPA predictor on ImageNette (10-class
@@ -10,7 +11,6 @@ Paper: https://arxiv.org/abs/2301.08243
 
 Checkpoints are saved every `save_every_n_epochs` epochs for downstream probing.
 """
-
 import time
 import types
 import sys
@@ -133,16 +133,16 @@ val_dataset = _HFDataset(_builder.as_dataset(split="test"), val_transform)
 train_dataloader = torch.utils.data.DataLoader(
     dataset=train_dataset,
     batch_size=BATCH_SIZE,
-    num_workers=4,
+    num_workers=(num_workers := 4),
     drop_last=True,
-    persistent_workers=True,
+    persistent_workers=num_workers > 0,
     shuffle=True,
 )
 val_dataloader = torch.utils.data.DataLoader(
     dataset=val_dataset,
     batch_size=BATCH_SIZE,
-    num_workers=4,
-    persistent_workers=True,
+    num_workers=(num_workers := 4),
+    persistent_workers=num_workers > 0,
 )
 
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
@@ -232,7 +232,7 @@ lr_monitor = LearningRateMonitor(logging_interval="step")
 
 wandb_logger = WandbLogger(
     entity="stable-ssl",
-    project="imagenet10-ijepa",
+    project="imagenet10-mae-ijepa",
     name=f"new-ijepa-vitb-inet10-{time.time():.0f}",
     log_model=False,
 )
