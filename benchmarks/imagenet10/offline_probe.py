@@ -30,6 +30,8 @@ import torch.nn as nn
 import torchmetrics
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
+from stable_pretraining.methods import IJEPA
+
 
 import stable_pretraining as spt
 from stable_pretraining.data import transforms
@@ -49,9 +51,8 @@ NUM_CLASSES = 10       # ImageNette
 PROBE_EPOCHS = 100     # Paper: 100 epochs for linear eval
 BATCH_SIZE = 256
 NUM_GPUS = torch.cuda.device_count() or 1
-EFFECTIVE_BATCH = BATCH_SIZE * NUM_GPUS
-BASE_LR = 0.001        # Paper: lr tuned per dataset, 0.001 is standard for probing
-LR = BASE_LR * NUM_GPUS  # linear scaling with GPU count
+LR = 0.01
+
 
 DEFAULT_CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
 
@@ -120,53 +121,26 @@ def get_data():
 # Checkpoint Loading
 # =============================================================================
 
-def load_encoder_from_checkpoint(ckpt_path: str) -> nn.Module:
-    """Load the ViT-Base encoder from an I-JEPA checkpoint.
-
-    The checkpoint contains the full spt.Module state (backbone, predictor, etc).
-    We extract only the student encoder from the TeacherStudentWrapper backbone.
-    """
+def load_ijepa_from_checkpoint(ckpt_path: str) -> IJEPA:
     checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    state_dict = checkpoint["state_dict"]
-
-    # Create a fresh ViT-Base
-    backbone = spt.backbone.vit_hf(
-        size="base",
-        patch_size=PATCH_SIZE,
-        image_size=IMAGE_SIZE,
+    
+    module = IJEPA(
+        encoder_name="vit_base_patch16_224",
+        predictor_embed_dim=384,
+        predictor_depth=12,
         pretrained=False,
     )
+    module.load_state_dict(checkpoint["state_dict"], strict=False)
+    module.eval()
+    return module
 
-    # Extract student encoder weights from the checkpoint.
-    # In the checkpoint, the backbone is wrapped in TeacherStudentWrapper,
-    # so weights are stored under "backbone.student.*"
-    prefix = "backbone.student."
-    encoder_state = {}
-    for key, value in state_dict.items():
-        if key.startswith(prefix):
-            encoder_state[key[len(prefix):]] = value
 
-    if not encoder_state:
-        # Fallback: try "backbone.teacher." (teacher has same architecture)
-        prefix = "backbone.teacher."
-        for key, value in state_dict.items():
-            if key.startswith(prefix):
-                encoder_state[key[len(prefix):]] = value
-
-    if not encoder_state:
-        raise RuntimeError(
-            f"Could not find encoder weights in checkpoint {ckpt_path}. "
-            f"Available keys start with: {set(k.split('.')[0] for k in state_dict.keys())}"
-        )
-
-    missing, unexpected = backbone.load_state_dict(encoder_state, strict=False)
-    if missing:
-        print(f"  Warning: missing keys when loading encoder: {missing[:5]}...")
-    if unexpected:
-        print(f"  Warning: unexpected keys when loading encoder: {unexpected[:5]}...")
-
-    return backbone
-
+def frozen_embedding_forward(self, batch: Dict, stage: str):
+    self.backbone.eval()
+    with torch.no_grad():
+        output = self.backbone(batch["image"])
+    return {"embedding": output.embedding.mean(dim=1)}
+    
 
 def extract_epoch_from_path(ckpt_path: str) -> int:
     """Extract epoch number from checkpoint filename like 'ijepa-vitb-epoch=025.ckpt'."""
@@ -178,21 +152,6 @@ def extract_epoch_from_path(ckpt_path: str) -> int:
         if part.isdigit():
             return int(part)
     return -1
-
-
-# =============================================================================
-# Module Forward (frozen encoder → embeddings only)
-# =============================================================================
-
-def frozen_embedding_forward(self, batch: Dict, stage: str):
-    """Forward that extracts frozen embeddings for probe evaluation.
-
-    Like the multi-layer probe pattern: the forward only produces embeddings,
-    and OnlineProbe handles the classification head, loss, and metrics.
-    """
-    with torch.no_grad():
-        patches = self.backbone(batch["image"]).last_hidden_state[:, 1:, :]
-    return {"embedding": patches.mean(dim=1)}
 
 
 # =============================================================================
@@ -257,12 +216,11 @@ def train_linear_probe(
         logger=logger,
         devices=NUM_GPUS,
         accelerator="gpu",
-        strategy="ddp_find_unused_parameters_true" if NUM_GPUS > 1 else "auto",
+        strategy="auto",
         enable_checkpointing=False,
     )
 
-    manager = spt.Manager(trainer=trainer, module=module, data=data)
-    manager()
+    trainer.fit(module, datamodule=data)
 
     # Collect final validation metrics
     val_results = trainer.validate(module, datamodule=data, verbose=False)
@@ -343,7 +301,7 @@ def main():
         print(f"  Pretraining epoch: {epoch_num}")
         print(f"{'='*70}")
 
-        encoder = load_encoder_from_checkpoint(ckpt_path)
+        encoder = load_ijepa_from_checkpoint(ckpt_path)
         result = train_linear_probe(
             encoder=encoder,
             data=data,
