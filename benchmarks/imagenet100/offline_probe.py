@@ -1,19 +1,17 @@
-"""Linear probe evaluation for I-JEPA checkpoints on ImageNet-10.
+"""Offline linear probe evaluation for MAE/IJEPA checkpoints on ImageNet-100.
 
-Iterates over all I-JEPA pretraining checkpoints and trains a supervised
-linear classifier on top of the frozen encoder to completion.
+Iterates over pretraining checkpoints and trains a supervised linear classifier
+on top of the frozen encoder. Supports both MAE and IJEPA pretrained ViT-Base/16.
 
-Hyperparameters follow the I-JEPA paper (Assran et al., 2023) Table 8
-for linear evaluation on ImageNet.
+The model type is inferred automatically from the checkpoint filename or its
+parent directory name (must contain 'mae' or 'ijepa').
 
 Usage:
-    python benchmarks/imagenet10/linear-probe-inet10.py
-
-    # Override checkpoint directory:
-    python benchmarks/imagenet10/linear-probe-inet10.py --ckpt-dir /path/to/ckpts
+    python benchmarks/imagenet100/offline_probe.py --ckpt-dir checkpoints/mae-vitb
+    python benchmarks/imagenet100/offline_probe.py --ckpt-dir checkpoints/ijepa-vitb
 
     # Evaluate a single checkpoint:
-    python benchmarks/imagenet10/linear-probe-inet10.py --single /path/to/ckpt.ckpt
+    python benchmarks/imagenet100/offline_probe.py --single /path/to/mae-vitb-epoch=050.ckpt
 """
 
 import argparse
@@ -30,47 +28,33 @@ import torch.nn as nn
 import torchmetrics
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
-from stable_pretraining.methods import IJEPA
-
 
 import stable_pretraining as spt
 from stable_pretraining.data import transforms
+from stable_pretraining.methods.ijepa import IJEPA
+from stable_pretraining.methods.mae import MAE
 
 sys.path.append(str(Path(__file__).parent.parent))
 from utils import get_data_dir
 
 
-# =============================================================================
-# Linear Probe Hyperparameters (I-JEPA paper Table 8)
-# =============================================================================
-
 IMAGE_SIZE = 224
-PATCH_SIZE = 16
-EMBED_DIM = 768  # ViT-Base
-NUM_CLASSES = 10  # ImageNette
-PROBE_EPOCHS = 100  # Paper: 100 epochs for linear eval
+EMBED_DIM = 768  # ViT-Base hidden dimension
+NUM_CLASSES = 100  # ImageNet-100
+PROBE_EPOCHS = 100
 BATCH_SIZE = 256
-NUM_GPUS = torch.cuda.device_count() or 1
+# NUM_GPUS = torch.cuda.device_count() or 1
+NUM_GPUS = 1
 LR = 0.01
 
 
-DEFAULT_CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
-
-
-# =============================================================================
-# Data
-# =============================================================================
-
-
-def get_data():
-    """Create data module for linear probing with standard ImageNet transforms."""
+def get_data() -> spt.data.DataModule:
     train_transform = transforms.Compose(
         transforms.RGB(),
         transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.08, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.ToImage(**spt.data.static.ImageNet),
     )
-
     val_transform = transforms.Compose(
         transforms.RGB(),
         transforms.Resize((256, 256)),
@@ -78,32 +62,25 @@ def get_data():
         transforms.ToImage(**spt.data.static.ImageNet),
     )
 
-    data_dir = get_data_dir("imagenet10")
+    data_dir = get_data_dir("imagenet100")
 
-    from stable_datasets.images.imagenette import Imagenette
-
-    class _HFDataset(spt.data.Dataset):
-        """Per-sample transform wrapper for a pre-loaded HF dataset."""
-
-        def __init__(self, hf_dataset, transform):
-            super().__init__(transform)
-            self.dataset = hf_dataset
-
-        def __getitem__(self, idx):
-            return self.process_sample(self.dataset[idx])
-
-        def __len__(self):
-            return len(self.dataset)
-
-    _builder = Imagenette(config_name="imagenette", cache_dir=str(data_dir))
-    _builder.download_and_prepare()
-    train_dataset = _HFDataset(_builder.as_dataset(split="train"), train_transform)
-    val_dataset = _HFDataset(_builder.as_dataset(split="test"), val_transform)
+    train_dataset = spt.data.HFDataset(
+        "clane9/imagenet-100",
+        split="train",
+        cache_dir=str(data_dir),
+        transform=train_transform,
+    )
+    val_dataset = spt.data.HFDataset(
+        "clane9/imagenet-100",
+        split="validation",
+        cache_dir=str(data_dir),
+        transform=val_transform,
+    )
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=BATCH_SIZE,
-        num_workers=4,
+        num_workers=16,
         drop_last=True,
         persistent_workers=True,
         shuffle=True,
@@ -111,41 +88,73 @@ def get_data():
     val_loader = torch.utils.data.DataLoader(
         dataset=val_dataset,
         batch_size=BATCH_SIZE,
-        num_workers=4,
+        num_workers=16,
         persistent_workers=True,
     )
 
     return spt.data.DataModule(train=train_loader, val=val_loader)
 
 
-# =============================================================================
-# Checkpoint Loading
-# =============================================================================
-
-
-def load_ijepa_from_checkpoint(ckpt_path: str) -> IJEPA:
-    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-
+def load_ijepa_encoder(ckpt_path: str) -> nn.Module:
     module = IJEPA(
         encoder_name="vit_base_patch16_224",
         predictor_embed_dim=384,
         predictor_depth=12,
         pretrained=False,
     )
-    module.load_state_dict(checkpoint["state_dict"], strict=False)
-    module.eval()
-    return module
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    module.load_state_dict(ckpt["state_dict"], strict=False)
+    # encoder is a TeacherStudentWrapper; use the student (context encoder)
+    return module.encoder.student
 
 
-def frozen_embedding_forward(self, batch: Dict, stage: str):
+def load_mae_encoder(ckpt_path: str) -> nn.Module:
+    module = MAE(
+        encoder_name="vit_base_patch16_224",
+        decoder_embed_dim=512,
+        decoder_depth=8,
+        decoder_num_heads=16,
+        mask_ratio=0.75,
+        pretrained=False,
+    )
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    module.load_state_dict(ckpt["state_dict"], strict=False)
+    return module.encoder
+
+
+LOADERS = {
+    "ijepa": load_ijepa_encoder,
+    "mae": load_mae_encoder,
+}
+
+
+def infer_model_from_path(path: str) -> str:
+    """Infer 'mae' or 'ijepa' from a checkpoint path (filename, then parent dir)."""
+    for candidate in [Path(path).stem, Path(path).parent.name]:
+        lower = candidate.lower()
+        if "mae" in lower:
+            return "mae"
+        if "ijepa" in lower:
+            return "ijepa"
+    raise ValueError(
+        f"Cannot infer model type from '{path}'. "
+        "Checkpoint filename or parent directory must contain 'mae' or 'ijepa'."
+    )
+
+
+def frozen_embedding_forward(self, batch: Dict, _stage: str):
+    """Pool frozen MaskedEncoder features over patch tokens (skip CLS)."""
     self.backbone.eval()
-    with torch.no_grad():
-        output = self.backbone(batch["image"])
-    return {"embedding": output.embedding.mean(dim=1)}
+    features = self.backbone.forward_features(batch["image"])
+    embedding = features[:, self.backbone.num_prefix_tokens :].mean(dim=1)
+    return {
+        "embedding": embedding,
+        "label": batch["label"].long(),
+    }
 
 
 def extract_epoch_from_path(ckpt_path: str) -> int:
-    """Extract epoch number from checkpoint filename like 'ijepa-vitb-epoch=025.ckpt'."""
+    """Extract epoch number from checkpoint filename (e.g. mae-vitb-epoch=025.ckpt)."""
     name = Path(ckpt_path).stem
     for part in name.split("-"):
         if part.startswith("epoch="):
@@ -156,31 +165,23 @@ def extract_epoch_from_path(ckpt_path: str) -> int:
     return -1
 
 
-# =============================================================================
-# Linear Probe Training
-# =============================================================================
-
-
 def train_linear_probe(
     encoder: nn.Module,
     data: spt.data.DataModule,
     ckpt_path: str,
     epoch_num: int,
-    use_wandb: bool = True,
+    model_type: str,
+    use_wandb: bool,
 ) -> dict:
-    """Train a linear classifier on top of a frozen encoder."""
-    # Freeze encoder
     for param in encoder.parameters():
         param.requires_grad = False
 
-    # Module only produces embeddings — no optimizer needed
     module = spt.Module(
         backbone=encoder,
         forward=frozen_embedding_forward,
         optim=None,
     )
 
-    # OnlineProbe handles the linear head, loss, optimizer, and metrics
     linear_probe = spt.callbacks.OnlineProbe(
         module,
         name="linear_probe",
@@ -201,13 +202,11 @@ def train_linear_probe(
         },
     )
 
-    callbacks = [linear_probe, LearningRateMonitor(logging_interval="step")]
-
     if use_wandb:
         logger = WandbLogger(
             entity="stable-ssl",
-            project="imagenet10-ijepa-probe",
-            name=f"probe-epoch{epoch_num:03d}-{time.time():.0f}",
+            project="imagenet100-offline-probe",
+            name=f"{model_type}-probe-epoch{epoch_num:03d}-{time.time():.0f}",
             log_model=False,
         )
     else:
@@ -216,7 +215,7 @@ def train_linear_probe(
     trainer = pl.Trainer(
         max_epochs=PROBE_EPOCHS,
         num_sanity_val_steps=0,
-        callbacks=callbacks,
+        callbacks=[linear_probe, LearningRateMonitor(logging_interval="step")],
         precision="16-mixed",
         logger=logger,
         devices=NUM_GPUS,
@@ -226,13 +225,9 @@ def train_linear_probe(
     )
 
     trainer.fit(module, datamodule=data)
-
-    # Collect final validation metrics
     val_results = trainer.validate(module, datamodule=data, verbose=False)
-    result = {
-        "pretrain_epoch": epoch_num,
-        "checkpoint": str(ckpt_path),
-    }
+
+    result = {"pretrain_epoch": epoch_num, "checkpoint": str(ckpt_path)}
     if val_results:
         result.update(val_results[0])
 
@@ -242,20 +237,15 @@ def train_linear_probe(
     return result
 
 
-# =============================================================================
-# Main
-# =============================================================================
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Linear probe evaluation of I-JEPA checkpoints on ImageNet-10"
+        description="Offline linear probe for MAE/IJEPA checkpoints on ImageNet-100"
     )
     parser.add_argument(
         "--ckpt-dir",
         type=str,
-        default=DEFAULT_CKPT_DIR,
-        help="Directory containing I-JEPA pretraining checkpoints",
+        default=None,
+        help="Directory of checkpoints to evaluate (filenames must contain 'mae' or 'ijepa')",
     )
     parser.add_argument(
         "--single",
@@ -276,25 +266,26 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.single and not args.ckpt_dir:
+        parser.error("Provide --ckpt-dir or --single.")
+
     use_wandb = not args.no_wandb
 
-    # Discover checkpoints
     if args.single:
         ckpt_paths = [args.single]
+        ckpt_dir = Path(args.single).parent
     else:
         ckpt_dir = Path(args.ckpt_dir)
         if not ckpt_dir.exists():
             print(f"Error: checkpoint directory {ckpt_dir} does not exist.")
-            print("Run ijepa-vitb.py first to generate pretraining checkpoints.")
             sys.exit(1)
         ckpt_paths = sorted(glob(str(ckpt_dir / "*.ckpt")))
-        # Exclude 'last.ckpt' if a versioned one at the same epoch exists
         ckpt_paths = [p for p in ckpt_paths if "last" not in Path(p).stem]
         if not ckpt_paths:
             ckpt_paths = sorted(glob(str(ckpt_dir / "*.ckpt")))
 
     if not ckpt_paths:
-        print(f"No checkpoints found in {args.ckpt_dir}")
+        print(f"No checkpoints found in {ckpt_dir}")
         sys.exit(1)
 
     print(f"Found {len(ckpt_paths)} checkpoint(s) to evaluate:")
@@ -302,52 +293,54 @@ def main():
         print(f"  {p}")
     print()
 
-    # Create data (shared across all probes)
     data = get_data()
 
-    # Evaluate each checkpoint
     all_results = []
     for i, ckpt_path in enumerate(ckpt_paths):
+        model_type = infer_model_from_path(ckpt_path)
         epoch_num = extract_epoch_from_path(ckpt_path)
         print(f"\n{'=' * 70}")
-        print(f"[{i + 1}/{len(ckpt_paths)}] Probing checkpoint: {Path(ckpt_path).name}")
-        print(f"  Pretraining epoch: {epoch_num}")
+        print(
+            f"[{i + 1}/{len(ckpt_paths)}] {Path(ckpt_path).name}  (model={model_type}, epoch={epoch_num})"
+        )
         print(f"{'=' * 70}")
 
-        encoder = load_ijepa_from_checkpoint(ckpt_path)
+        encoder = LOADERS[model_type](ckpt_path)
+        encoder.eval()
+
         result = train_linear_probe(
             encoder=encoder,
             data=data,
             ckpt_path=ckpt_path,
             epoch_num=epoch_num,
+            model_type=model_type,
             use_wandb=use_wandb,
         )
+        result["model"] = model_type
         all_results.append(result)
         print(f"  Result: {result}")
 
-    # Save results
-    output_path = args.output or str(Path(args.ckpt_dir) / "probe_results.json")
+    output_path = args.output or str(ckpt_dir / "probe_results.json")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     print(f"\nAll results saved to: {output_path}")
 
-    # Print summary table
     print(f"\n{'=' * 70}")
-    print("SUMMARY: Linear Probe Top-1 Accuracy by Pretraining Epoch")
+    print("SUMMARY — Linear Probe on ImageNet-100")
     print(f"{'=' * 70}")
-    print(f"{'Epoch':>8}  {'Top-1':>8}  {'Checkpoint'}")
-    print(f"{'-' * 8}  {'-' * 8}  {'-' * 40}")
+    print(f"{'Model':>8}  {'Epoch':>8}  {'Top-1':>8}  {'Top-5':>8}  {'Checkpoint'}")
+    print(f"{'-' * 8}  {'-' * 8}  {'-' * 8}  {'-' * 8}  {'-' * 40}")
     for r in all_results:
+        model = r.get("model", "?")
         epoch = r.get("pretrain_epoch", "?")
-        top1 = None
-        for key in r:
-            if "top1" in key.lower() or "accuracy" in key.lower():
-                top1 = r[key]
-                break
-        top1_str = f"{top1:.4f}" if top1 is not None else "N/A"
-        ckpt_name = Path(r.get("checkpoint", "")).name
-        print(f"{epoch:>8}  {top1_str:>8}  {ckpt_name}")
+        top1 = next((v for k, v in r.items() if "top1" in k), None)
+        top5 = next((v for k, v in r.items() if "top5" in k), None)
+        top1_s = f"{top1:.4f}" if top1 is not None else "N/A"
+        top5_s = f"{top5:.4f}" if top5 is not None else "N/A"
+        print(
+            f"{model:>8}  {epoch:>8}  {top1_s:>8}  {top5_s:>8}  {Path(r.get('checkpoint', '')).name}"
+        )
 
 
 if __name__ == "__main__":

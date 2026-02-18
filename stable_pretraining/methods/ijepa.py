@@ -268,21 +268,26 @@ class IJEPA(Module):
 
             with torch.no_grad():
                 # Teacher: full forward with ALL patches visible, then select targets
-                all_idx = torch.arange(
-                    grid_h * grid_w, device=images.device
-                ).unsqueeze(0).expand(B, -1)
+                all_idx = (
+                    torch.arange(grid_h * grid_w, device=images.device)
+                    .unsqueeze(0)
+                    .expand(B, -1)
+                )
 
                 teacher_full = self._encode(
                     patches, all_idx, grid_h, grid_w, self.encoder.teacher
                 )  # teacher's vit.norm already applied
-                
-                # Extra layer_norm on top per ijepa repo 
-                teacher_full_normed = F.layer_norm(teacher_full, [teacher_full.size(-1)])
+
+                # Extra layer_norm on top per ijepa repo
+                teacher_full_normed = F.layer_norm(
+                    teacher_full, [teacher_full.size(-1)]
+                )
                 # Select target patches from the full encoding
                 D = teacher_full.size(-1)
                 targets = torch.gather(
-                    teacher_full_normed, 1,
-                    mask_out.target_idx.unsqueeze(-1).expand(-1, -1, D)
+                    teacher_full_normed,
+                    1,
+                    mask_out.target_idx.unsqueeze(-1).expand(-1, -1, D),
                 )
 
                 # Embedding: reuse teacher_full (unnormed, full sequence) for the probe
@@ -325,10 +330,8 @@ class IJEPA(Module):
         )
 
     def _fix_init_weight(self):
-        """
-        Rescale attention proj and MLP output weights by depth, matching I-JEPA init
-        from the repo.
-        """
+        """Rescale attention proj and MLP output weights by depth, matching I-JEPA init from the repo."""
+
         def rescale(param, layer_id):
             param.div_(math.sqrt(2.0 * layer_id))
 

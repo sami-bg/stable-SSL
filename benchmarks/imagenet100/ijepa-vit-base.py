@@ -1,15 +1,3 @@
-"""I-JEPA (Image-based Joint Embedding Predictive Architecture) on ImageNet-10.
-
-Trains a ViT-Base/16 encoder with an I-JEPA predictor on ImageNette (10-class
-ImageNet subset). Hyperparameters follow the I-JEPA paper (Assran et al., 2023)
-Table 9 for ViT-Base, adapted for multi-GPU training on a smaller dataset.
-
-Uses stable_pretraining.methods.ijepa.IJEPA for model construction and forward.
-
-Paper: https://arxiv.org/abs/2301.08243
-
-Checkpoints are saved every `save_every_n_epochs` epochs for downstream probing.
-"""
 import time
 import types
 import sys
@@ -30,13 +18,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils import get_data_dir
 
 
-# =============================================================================
-# Hyperparameters (from I-JEPA paper Table 9 for ViT-Base)
-# =============================================================================
-
 IMAGE_SIZE = 224
 PATCH_SIZE = 16
-EMBED_DIM = 768                       # ViT-Base hidden dimension
+EMBED_DIM = 768  # ViT-Base hidden dimension
 
 # Predictor (paper: depth=12, width=384 for ViT-Base)
 PRED_DEPTH = 12
@@ -56,39 +40,32 @@ BETAS = (0.9, 0.95)
 BASE_EMA = 0.996
 FINAL_EMA = 1.0
 
-# Training
 MAX_EPOCHS = 300
 WARMUP_EPOCHS = 15
 NUM_CLASSES = 100  # ImageNet100
 
-# Checkpointing
 SAVE_EVERY_N_EPOCHS = 25
 CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
 
 
-# =============================================================================
-# I-JEPA Forward Wrapper
-# =============================================================================
-
 def ijepa_forward(self, batch, stage):
-    """Thin wrapper: unpacks batch dict, calls IJEPA.forward, returns probe-friendly dict."""
     output = IJEPA.forward(self, batch["image"])
     out = {
         "loss": output.loss,
-        "embedding": output.embedding.mean(dim=1).detach() if self.training else output.embedding.mean(dim=1),
+        "embedding": output.embedding.mean(dim=1).detach()
+        if self.training
+        else output.embedding.mean(dim=1),
     }
 
     if "label" in batch:
         out["label"] = batch["label"].long()
 
     if self.training:
-        self.log(f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True)
+        self.log(
+            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
+        )
     return out
 
-
-# =============================================================================
-# Data
-# =============================================================================
 
 # I-JEPA uses only random resized crop + horizontal flip (no color jitter)
 train_transform = transforms.Compose(
@@ -139,10 +116,6 @@ val_dataloader = torch.utils.data.DataLoader(
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
 
 
-# =============================================================================
-# Model (using stable_pretraining.methods.ijepa.IJEPA)
-# =============================================================================
-
 module = IJEPA(
     encoder_name="vit_base_patch16_224",
     predictor_embed_dim=PRED_DIM,
@@ -156,7 +129,6 @@ module = IJEPA(
     pretrained=False,
 )
 
-# Bind spt.Module-compatible forward and optimizer config
 module.forward = types.MethodType(ijepa_forward, module)
 module.optim = {
     "optimizer": {
@@ -171,10 +143,6 @@ module.optim = {
     "interval": "epoch",
 }
 
-
-# =============================================================================
-# Callbacks
-# =============================================================================
 
 teacher_student_callback = spt.callbacks.TeacherStudentCallback(
     update_frequency=1,
@@ -234,10 +202,6 @@ wandb_logger = WandbLogger(
     name=f"new-ijepa-vitb-inet100-{time.time():.0f}",
     log_model=False,
 )
-
-# =============================================================================
-# Trainer
-# =============================================================================
 
 trainer = pl.Trainer(
     max_epochs=MAX_EPOCHS,
