@@ -1,4 +1,3 @@
-#new-ijepa-vit-base.py
 """I-JEPA (Image-based Joint Embedding Predictive Architecture) on ImageNet-10.
 
 Trains a ViT-Base/16 encoder with an I-JEPA predictor on ImageNette (10-class
@@ -46,7 +45,7 @@ PRED_DIM = 384
 # Optimizer (paper: AdamW, lr=1.5e-4, wd=0.05, betas=(0.9, 0.95))
 # Paper uses batch_size=2048 with lr=1.5e-4. Scale linearly with effective batch.
 BASE_LR = 1.5e-4
-BATCH_SIZE = 2048
+BATCH_SIZE = 256
 NUM_GPUS = torch.cuda.device_count() or 1
 EFFECTIVE_BATCH = BATCH_SIZE * NUM_GPUS
 SCALED_LR = BASE_LR * (EFFECTIVE_BATCH / 2048)
@@ -60,7 +59,7 @@ FINAL_EMA = 1.0
 # Training
 MAX_EPOCHS = 300
 WARMUP_EPOCHS = 15
-NUM_CLASSES = 100  # ImageNette
+NUM_CLASSES = 100  # ImageNet100
 
 # Checkpointing
 SAVE_EVERY_N_EPOCHS = 25
@@ -212,6 +211,13 @@ knn_probe = spt.callbacks.OnlineKNN(
     k=20,
 )
 
+rankme = spt.callbacks.RankMe(
+    name="rankme",
+    target="embedding",
+    queue_length=1000,
+    target_shape=EMBED_DIM,
+)
+
 checkpoint_callback = ModelCheckpoint(
     dirpath=CKPT_DIR,
     filename="ijepa-vitb-{epoch:03d}",
@@ -240,6 +246,7 @@ trainer = pl.Trainer(
         teacher_student_callback,
         linear_probe,
         knn_probe,
+        rankme,
         checkpoint_callback,
         lr_monitor,
     ],
