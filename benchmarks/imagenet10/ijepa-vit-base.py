@@ -30,7 +30,7 @@ PRED_DIM = 384
 
 # Optimizer (paper: AdamW, lr=1.5e-4, wd=0.05, betas=(0.9, 0.95))
 # Paper uses batch_size=2048 with lr=1.5e-4. Scale linearly with effective batch.
-BASE_LR = 5e-4
+BASE_LR = 6e-4
 BATCH_SIZE = 64
 NUM_GPUS = torch.cuda.device_count() or 1
 EFFECTIVE_BATCH = BATCH_SIZE * NUM_GPUS
@@ -44,7 +44,7 @@ BASE_EMA = 0.996
 FINAL_EMA = 1.0
 
 MAX_EPOCHS = 600
-WARMUP_EPOCHS = 40
+WARMUP_EPOCHS = 300
 NUM_CLASSES = 10  # ImageNette
 
 SAVE_EVERY_N_EPOCHS = 300
@@ -53,44 +53,15 @@ CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
 PROBE_LR_SCALING = 200
 
 
-class ProbeWeightDelta(pl.Callback):
-    def __init__(self, auto_linear: AutoLinearClassifier, every_n_steps=50):
-        self.auto_linear = auto_linear
-        self.every_n_steps = every_n_steps
-        self.prev = None
-
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        if trainer.global_step % self.every_n_steps != 0:
-            return
-
-        # choose the first head
-        key = next(iter(self.auto_linear.fc.keys()))
-        linear = self.auto_linear.fc[key][-1]      # last layer is Linear
-        w = linear.weight.detach()
-
-        if self.prev is None:
-            delta = torch.tensor(0.0, device=w.device)
-        else:
-            delta = (w - self.prev).norm()
-
-        self.prev = w.clone()
-        pl_module.log(
-            "probe/w_delta",
-            delta,
-            on_step=True,
-            on_epoch=False,
-            rank_zero_only=True,
-        )
-
-
 def ijepa_forward(self, batch, stage):
-    """Thin wrapper: unpacks batch dict, calls IJEPA.forward, returns probe-friendly dict."""
     output = IJEPA.forward(self, batch["image"], embedding_source="student")
+    embedding = output.embedding.mean(dim=1)
+    if self.training:
+        embedding = embedding.detach()
+
     out = {
         "loss": output.loss,
-        "embedding": output.embedding.mean(dim=1).detach()
-        if self.training
-        else output.embedding.mean(dim=1),
+        "embedding": embedding,
     }
 
     if "label" in batch:
@@ -98,16 +69,20 @@ def ijepa_forward(self, batch, stage):
 
     if self.training:
         self.log(
-            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
+            f"{stage}/loss",
+            output.loss,
+            on_step=True,
+            on_epoch=True,
+            sync_dist=True
         )
+
     return out
 
 
-# I-JEPA uses only random resized crop + horizontal flip (no color jitter)
+# I-JEPA uses only random resized crop
 train_transform = transforms.Compose(
     transforms.RGB(),
     transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.3, 1.0)),
-    transforms.RandomHorizontalFlip(p=0.5),
     transforms.ToImage(**spt.data.static.ImageNet),
 )
 
@@ -183,7 +158,7 @@ module.optim = {
         "type": "LinearWarmupCosineAnnealing",
         "peak_step": WARMUP_EPOCHS / MAX_EPOCHS,
         "start_factor": 0.01,
-        "total_steps": len(train_dataloader) * MAX_EPOCHS,
+        "total_steps": (len(train_dataloader) // NUM_GPUS) * MAX_EPOCHS,
     },
     "interval": "step",
 }
@@ -263,7 +238,7 @@ lr_monitor = LearningRateMonitor(logging_interval="step")
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet10-mae-ijepa",
-    name=f"fix-predictor-init-teacher-patches-ijepa-vitb-inet10-{time.time():.0f}",
+    name=f"teacher-embed-ijepa-vitb-inet10-{time.time():.0f}",
     log_model=False,
     config={
         "image_size": IMAGE_SIZE,
@@ -300,7 +275,6 @@ trainer = pl.Trainer(
         rankme,
         checkpoint_callback,
         lr_monitor,
-        ProbeWeightDelta(auto_probe._probe_config.classifier),
     ],
     precision="16-mixed",
     logger=wandb_logger,

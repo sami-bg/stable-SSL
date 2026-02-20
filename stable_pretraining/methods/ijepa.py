@@ -186,10 +186,6 @@ class IJEPA(Module):
             zero_init_output=False,
         )
 
-        # Learnable query token for target positions
-        self.target_query = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        nn.init.trunc_normal_(self.target_query, std=0.02)
-
         # I-JEPA multi-block masking
         self.masking = IJEPAMasking(
             num_targets=num_targets,
@@ -219,15 +215,10 @@ class IJEPA(Module):
         :return: Encoded representations [B, K, D]
         """
         B, _, D = patches.shape
+        # patch -> posemb -> mask -> block -> norm
+        _, pos = encoder._get_pos_embed(grid_h, grid_w)
+        x = patches + pos.expand(B, -1, -1)
         x = torch.gather(patches, 1, indices.unsqueeze(-1).expand(-1, -1, D))
-
-        # Add positional embeddings
-        _, pos = self.encoder.student._get_pos_embed(grid_h, grid_w)
-        x = x + torch.gather(
-            pos.expand(B, -1, -1), 1, indices.unsqueeze(-1).expand(-1, -1, D)
-        )
-
-        # Forward through transformer
         x = encoder.vit.pos_drop(x)
         x = encoder.vit.blocks(x)
         return encoder.vit.norm(x)
@@ -305,14 +296,17 @@ class IJEPA(Module):
                         student_patches, all_idx, grid_h, grid_w, self.encoder.student
                     )
 
-            # Predict target representations via cross-attention
+            # Predict target representations via joint self-attention on [context + mask tokens]
             N_tgt = mask_out.target_idx.shape[1]
-            queries = self.target_query.expand(B, N_tgt, -1)
+            # Create dummy queries and just mask them all out
+            queries = torch.zeros(B, N_tgt, self.embed_dim, device=images.device, dtype=context.dtype)
+            query_mask = torch.ones(B, N_tgt, device=images.device, dtype=torch.bool)
             predictions = self.predictor(
                 context=context,
                 queries=queries,
                 context_idx=mask_out.context_idx,
                 query_idx=mask_out.target_idx,
+                query_mask=query_mask,
             )
 
             loss = F.smooth_l1_loss(predictions, targets, beta=1.0)
