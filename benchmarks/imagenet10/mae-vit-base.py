@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import WandbLogger
 import stable_pretraining as spt
 from stable_pretraining.backbone.probe import AutoLinearClassifier
 from stable_pretraining.data import transforms
-from stable_pretraining.methods.ijepa import IJEPA
+from stable_pretraining.methods.mae import MAE
 from stable_datasets.images.imagenette import Imagenette
 
 sys.path.append(str(Path(__file__).parent.parent))
@@ -22,42 +22,40 @@ from utils import get_data_dir
 
 IMAGE_SIZE = 224
 PATCH_SIZE = 16
-EMBED_DIM = 768  # ViT-Base hidden dimension
+EMBED_DIM = 768
 
-# Predictor (paper: depth=12, width=384 for ViT-Base)
-PRED_DEPTH = 12
-PRED_DIM = 384
+DECODER_DEPTH = 8
+DECODER_DIM = 512
+DECODER_HEADS = 16
 
-# Optimizer (paper: AdamW, lr=1.5e-4, wd=0.05, betas=(0.9, 0.95))
-# Paper uses batch_size=2048 with lr=1.5e-4. Scale linearly with effective batch.
-BASE_LR = 6e-4
+MASK_RATIO = 0.75
+BASE_LR = 5e-4
 BATCH_SIZE = 64
 NUM_GPUS = torch.cuda.device_count() or 1
-EFFECTIVE_BATCH = BATCH_SIZE * NUM_GPUS
-SCALED_LR = BASE_LR  # don't scale — just use it directly for inet10
 
 WEIGHT_DECAY = 0.05
 BETAS = (0.9, 0.95)
 
-# EMA schedule (paper: 0.996 → 1.0 cosine)
-BASE_EMA = 0.996
-FINAL_EMA = 1.0
-
+# Training
 MAX_EPOCHS = 600
 WARMUP_EPOCHS = 300
 NUM_CLASSES = 10  # ImageNette
 
+# Checkpointing
 SAVE_EVERY_N_EPOCHS = 300
-CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
+CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "mae-vitb")
 
 PROBE_LR_SCALING = 200
 
+def mae_forward(self, batch, stage):
+    images = batch["image"]
+    output = MAE.forward(self, images)
 
-def ijepa_forward(self, batch, stage):
-    output = IJEPA.forward(self, batch["image"], embedding_source="student")
-    embedding = output.embedding.mean(dim=1)
-    if self.training:
-        embedding = embedding.detach()
+    # Extract encoder features for online probing (no masking, stop gradients)
+    with torch.no_grad():
+        features = self.encoder.forward_features(images)
+    # Pool over patch tokens, skipping the CLS token at index 0
+    embedding = features[:, 1:].mean(dim=1).detach()
 
     out = {
         "loss": output.loss,
@@ -69,20 +67,16 @@ def ijepa_forward(self, batch, stage):
 
     if self.training:
         self.log(
-            f"{stage}/loss",
-            output.loss,
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True
+            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
         )
-
     return out
 
 
-# I-JEPA uses only random resized crop
+# MAE uses only random resized crop + horizontal flip (no color jitter)
 train_transform = transforms.Compose(
     transforms.RGB(),
-    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.3, 1.0)),
+    transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.2, 1.0)),
+    transforms.RandomHorizontalFlip(p=0.5),
     transforms.ToImage(**spt.data.static.ImageNet),
 )
 
@@ -97,8 +91,6 @@ data_dir = get_data_dir("imagenet10")
 
 
 class _HFDataset(spt.data.Dataset):
-    """Per-sample transform wrapper for a pre-loaded HF dataset."""
-
     def __init__(self, hf_dataset, transform):
         super().__init__(transform)
         self.dataset = hf_dataset
@@ -108,7 +100,6 @@ class _HFDataset(spt.data.Dataset):
 
     def __len__(self):
         return len(self.dataset)
-
 
 _builder = Imagenette(config_name="imagenette", cache_dir=str(data_dir))
 _builder.download_and_prepare()
@@ -133,24 +124,24 @@ val_dataloader = torch.utils.data.DataLoader(
 data = spt.data.DataModule(train=train_dataloader, val=val_dataloader)
 
 
-module = IJEPA(
+module = MAE(
     encoder_name="vit_base_patch16_224",
-    predictor_embed_dim=PRED_DIM,
-    predictor_depth=PRED_DEPTH,
-    num_targets=4,
-    target_scale=(0.15, 0.2),
-    target_aspect_ratio=(0.75, 1.5),
-    context_scale=(0.85, 1.0),
-    ema_decay_start=BASE_EMA,
-    ema_decay_end=FINAL_EMA,
+    decoder_embed_dim=DECODER_DIM,
+    decoder_depth=DECODER_DEPTH,
+    decoder_num_heads=DECODER_HEADS,
+    mask_ratio=MASK_RATIO,
+    block_size=1,       # random masking
+    norm_pix_loss=True, # normalize pixel targets per patch
+    loss_type="mse",
     pretrained=False,
 )
 
-module.forward = types.MethodType(ijepa_forward, module)
+# Bind spt.Module-compatible forward and optimizer config
+module.forward = types.MethodType(mae_forward, module)
 module.optim = {
     "optimizer": {
         "type": "AdamW",
-        "lr": SCALED_LR,
+        "lr": BASE_LR,
         "weight_decay": WEIGHT_DECAY,
         "betas": BETAS,
     },
@@ -164,10 +155,6 @@ module.optim = {
 }
 
 
-teacher_student_callback = spt.callbacks.TeacherStudentCallback(
-    update_frequency=1,
-    update_after_backward=True,
-)
 
 class AutoProbeWrapper(nn.Module):
     def __init__(self, classifier, input_key="embedding", target_key="label"):
@@ -221,13 +208,13 @@ knn_probe = spt.callbacks.OnlineKNN(
 rankme = spt.callbacks.RankMe(
     name="rankme",
     target="embedding",
-    queue_length=10000,
+    queue_length=1000,
     target_shape=EMBED_DIM,
 )
 
 checkpoint_callback = ModelCheckpoint(
     dirpath=CKPT_DIR,
-    filename="ijepa-vitb-{epoch:03d}",
+    filename="mae-vitb-{epoch:03d}",
     save_top_k=-1,
     every_n_epochs=SAVE_EVERY_N_EPOCHS,
     save_last=True,
@@ -238,38 +225,33 @@ lr_monitor = LearningRateMonitor(logging_interval="step")
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet10-mae-ijepa",
-    name=f"ijepa-vitb-inet10",
+    name=f"mae-vitb-inet10",
     log_model=False,
     config={
         "image_size": IMAGE_SIZE,
         "patch_size": PATCH_SIZE,
         "embed_dim": EMBED_DIM,
-        "pred_depth": PRED_DEPTH,
-        "pred_dim": PRED_DIM,
         "base_lr": BASE_LR,
-        "scaled_lr": SCALED_LR,
         "batch_size": BATCH_SIZE,
-        "effective_batch": EFFECTIVE_BATCH,
         "weight_decay": WEIGHT_DECAY,
         "betas": BETAS,
-        "base_ema": BASE_EMA,
-        "final_ema": FINAL_EMA,
         "max_epochs": MAX_EPOCHS,
         "warmup_epochs": WARMUP_EPOCHS,
         "num_classes": NUM_CLASSES,
         "probe_lr_scaling": PROBE_LR_SCALING,
         "num_gpus": NUM_GPUS,
         "encoder": "vit_base_patch16_224",
-        "method": "ijepa",
+        "method": "mae",
         "dataset": "imagenet10",
     },
+
 )
+
 
 trainer = pl.Trainer(
     max_epochs=MAX_EPOCHS,
     num_sanity_val_steps=0,
     callbacks=[
-        teacher_student_callback,
         auto_probe,
         knn_probe,
         rankme,
