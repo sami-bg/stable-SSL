@@ -179,8 +179,8 @@ class IJEPA(Module):
             depth=predictor_depth,
             num_heads=max(1, predictor_embed_dim // 64),
             self_attn=True,
-            cross_attn=False, # TODO set False soon.
-            add_mask_token=True, # TODO set True with False above. 
+            cross_attn=False,
+            add_mask_token=True,
             use_adaln=False, 
             num_prefix_tokens=0,
             zero_init_output=False,

@@ -1123,7 +1123,8 @@ class FlexibleTransformer(nn.Module):
             196,
             depth=6,
             self_attn=True,
-            cross_attn=True,
+            cross_attn=False,
+            add_mask_token=True,
             use_adaln=False,
         )
         out = predictor(context, queries, context_idx, query_idx)
