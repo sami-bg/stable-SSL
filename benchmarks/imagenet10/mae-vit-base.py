@@ -38,14 +38,14 @@ BETAS = (0.9, 0.95)
 
 # Training
 MAX_EPOCHS = 600
-WARMUP_EPOCHS = 300
+WARMUP_EPOCHS = 40
 NUM_CLASSES = 10  # ImageNette
 
 # Checkpointing
 SAVE_EVERY_N_EPOCHS = 300
 CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "mae-vitb")
 
-PROBE_LR_SCALING = 200
+PROBE_LR_SCALING = 100
 
 def mae_forward(self, batch, stage):
     images = batch["image"]
@@ -149,11 +149,11 @@ module.optim = {
         "type": "LinearWarmupCosineAnnealing",
         "peak_step": WARMUP_EPOCHS / MAX_EPOCHS,
         "start_factor": 0.01,
+        "end_lr": BASE_LR / 10,
         "total_steps": (len(train_dataloader) // NUM_GPUS) * MAX_EPOCHS,
     },
     "interval": "step",
 }
-
 
 
 class AutoProbeWrapper(nn.Module):
@@ -183,7 +183,7 @@ auto_probe = spt.callbacks.OnlineProbe(
             num_classes=NUM_CLASSES,
             pooling="mean",
             normalization=["bn"],
-            lr_scaling=[PROBE_LR_SCALING],
+            lr_scaling=[PROBE_LR_SCALING, PROBE_LR_SCALING // 2, PROBE_LR_SCALING // 4],
             weight_decay=[0.],
             dropout=[0],
             label_smoothing=[0],
