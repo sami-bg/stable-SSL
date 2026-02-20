@@ -28,7 +28,7 @@ PRED_DIM = 384
 
 # Optimizer (paper: AdamW, lr=1.5e-4, wd=0.05, betas=(0.9, 0.95))
 # Paper uses batch_size=2048 with lr=1.5e-4. Scale linearly with effective batch.
-BASE_LR = 1.5e-4
+BASE_LR = 5e-4
 BATCH_SIZE = 256
 NUM_GPUS = torch.cuda.device_count() or 1
 EFFECTIVE_BATCH = BATCH_SIZE * NUM_GPUS

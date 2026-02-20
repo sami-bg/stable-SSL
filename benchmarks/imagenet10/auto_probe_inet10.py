@@ -20,7 +20,6 @@ from pathlib import Path
 
 import lightning as pl
 import torch
-import torch.nn as nn
 from lightning.pytorch.callbacks import LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
@@ -39,9 +38,6 @@ EMBED_DIM = 768
 NUM_CLASSES = 10
 PROBE_EPOCHS = 100
 BATCH_SIZE = 256
-SWEEP_LRS = [1e-2, 1e-1, 3e-1]
-SWEEP_WDS = [0.0, 0.0005]
-
 DEFAULT_CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
 
 
@@ -82,7 +78,7 @@ def get_data():
     train_loader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=BATCH_SIZE,
-        num_workers=4,
+        num_workers=16,
         drop_last=True,
         persistent_workers=True,
         shuffle=True,
@@ -90,85 +86,68 @@ def get_data():
     val_loader = torch.utils.data.DataLoader(
         dataset=val_dataset,
         batch_size=BATCH_SIZE,
-        num_workers=4,
+        num_workers=16,
         persistent_workers=True,
     )
     return spt.data.DataModule(train=train_loader, val=val_loader)
 
 
-# Module
-class IJEPALinearProbe(spt.Module):
-    def __init__(self, ckpt_path: str):
-        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+def probe_forward(self, batch, stage):
+    with torch.no_grad():
+        output = IJEPA.forward(self.backbone, batch["image"])
+        embedding = output.embedding.mean(dim=1)  # avg pool patches, matches paper
 
-        backbone = IJEPA(
-            encoder_name="vit_base_patch16_224",
-            predictor_embed_dim=384,
-            predictor_depth=12,
-            pretrained=False,
-        )
-        missing, unexpected = backbone.load_state_dict(
-            checkpoint["state_dict"], strict=False
-        )
-        if missing:
-            raise RuntimeError(f"Missing keys loading checkpoint: {missing[:5]}")
-        backbone.eval()
-        for param in backbone.parameters():
-            param.requires_grad = False
+    labels = batch["label"].long()
+    total_loss = self.head(embedding, y=labels, pl_module=self)
+    return {"loss": total_loss}
 
-        # Sweep: 3 lrs x 2 wds x 1 norm = 6 probes in one run
-        head = AutoLinearClassifier(
-            name="probe",
-            embedding_dim=EMBED_DIM,
-            num_classes=NUM_CLASSES,
-            pooling="mean",
-            normalization=["none", "bn"],
-            lr_scaling=[1],
-            weight_decay=[0.0, 0.0005],
-            dropout=[0],
-            label_smoothing=[0],
-        )
 
-        super().__init__(
-            backbone=backbone,
-            head=head,
-            forward=self._probe_forward,
-            optim={
-                "optimizer": {
-                    "type": "SGD",  # swap to LARS if available in spt
-                    "lr": 1.0,      # base lr=1.0; lr_scaling in AutoLinearClassifier scales per-head
-                    "momentum": 0.9,
-                    "weight_decay": 0.0,
-                },
-                "scheduler": {
-                    "type": "StepLR",
-                    "step_size": 15,
-                    "gamma": 0.1,   # paper: divide by 10 every 15 epochs
-                },
-                "interval": "epoch",
+def load_backbone(ckpt_path):
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    backbone = IJEPA(
+        encoder_name="vit_base_patch16_224",
+        predictor_embed_dim=384,
+        predictor_depth=12,
+        pretrained=False,
+    )
+    missing, unexpected = backbone.load_state_dict(
+        checkpoint["state_dict"], strict=False
+    )
+    if missing:
+        raise RuntimeError(f"Missing keys loading checkpoint: {missing[:5]}")
+    backbone.eval()
+    for param in backbone.parameters():
+        param.requires_grad = False
+    return backbone
+
+
+def make_probe(ckpt_path):
+    backbone = load_backbone(ckpt_path)
+    head = AutoLinearClassifier(
+        name="probe",
+        embedding_dim=EMBED_DIM,
+        num_classes=NUM_CLASSES,
+        pooling="mean",
+        normalization=["none", "bn"],
+        lr_scaling=[0.005, 0.01, 0.02, 0.05],
+        weight_decay=[0.0, 0.0005],
+        dropout=[0],
+        label_smoothing=[0],
+    )
+    return spt.Module(
+        backbone=backbone,
+        head=head,
+        forward=probe_forward,
+        optim={
+            "optimizer": {
+                "type": "LARS",
+                "lr": 1.0,
+                "momentum": 0.9,
+                "weight_decay": 0.0,
             },
-        )
-        self.loss_fn = nn.CrossEntropyLoss()
-
-    def _probe_forward(self, batch, stage):
-        with torch.no_grad():
-            output = IJEPA.forward(self.backbone, batch["image"])
-            embedding = output.embedding.mean(dim=1)  # avg pool patches, matches paper
-
-        labels = batch["label"].long()
-        logits_dict = self.head(embedding)
-
-        total_loss = torch.tensor(0.0, device=embedding.device)
-        best_acc = torch.tensor(0.0, device=embedding.device)
-        for probe_name, logits in logits_dict.items():
-            loss = self.loss_fn(logits, labels)
-            total_loss = total_loss + loss
-            acc = (logits.argmax(dim=1) == labels).float().mean()
-            best_acc = torch.max(best_acc, acc)
-            self.log(f"{stage}/{probe_name}_top1", acc, on_epoch=True, on_step=False)
-
-        self.log(f"{stage}/best_top1", best_acc, on_epoch=True, on_step=False)
-        return {"loss": total_loss}
+            "scheduler": "CosineAnnealingLR",
+        },
+    )
 
 
 # Main
@@ -183,7 +162,7 @@ def extract_epoch(ckpt_path: str) -> int:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt-dir", type=str, default=DEFAULT_CKPT_DIR)
-    parser.add_argument("--single", type=str, default=None)
+    parser.add_argument("--single", type=str, default='/mnt/data/sami/stable-SSL/benchmarks/imagenet10/checkpoints/ijepa-vitb/last-v5.ckpt')
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
@@ -206,7 +185,7 @@ def main():
         epoch_num = extract_epoch(ckpt_path)
         print(f"\nProbing: {Path(ckpt_path).name} (epoch {epoch_num})")
 
-        probe = IJEPALinearProbe(ckpt_path=ckpt_path)
+        probe = make_probe(ckpt_path)
 
         logger = (
             WandbLogger(

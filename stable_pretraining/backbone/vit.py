@@ -241,6 +241,7 @@ class MaskedEncoder(nn.Module):
         img_size: Optional[Union[int, Tuple[int, int]]] = None,
         patch_size: Optional[Union[int, Tuple[int, int]]] = None,
         dynamic_img_size: bool = False,
+        norm_layer: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.dynamic_img_size = dynamic_img_size
@@ -261,6 +262,9 @@ class MaskedEncoder(nn.Module):
                         f"Warning: Changing patch_size to {patch_size} will reinitialize "
                         f"patch_embed weights. Pretrained weights won't fully apply."
                     )
+            if norm_layer is not None:
+                create_kwargs["norm_layer"] = norm_layer
+
             self.vit = timm.create_model(model_or_model_name, **create_kwargs)
         else:
             self.vit = model_or_model_name

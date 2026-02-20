@@ -154,7 +154,12 @@ class IJEPA(Module):
         super().__init__()
 
         # Encoder with EMA wrapper (enables TeacherStudentCallback)
-        base_encoder = MaskedEncoder(encoder_name, masking=None, pretrained=pretrained)
+        base_encoder = MaskedEncoder(
+            encoder_name,
+            masking=None,
+            pretrained=pretrained,
+            norm_layer=nn.LayerNorm # important that elementwise_affine=True (default param)
+        )
         self.encoder = TeacherStudentWrapper(
             base_encoder,
             warm_init=True,
@@ -174,10 +179,11 @@ class IJEPA(Module):
             depth=predictor_depth,
             num_heads=max(1, predictor_embed_dim // 64),
             self_attn=True,
-            cross_attn=True,
-            use_adaln=False,
+            cross_attn=False, # TODO set False soon.
+            add_mask_token=True, # TODO set True with False above. 
+            use_adaln=False, 
             num_prefix_tokens=0,
-            zero_init_output=True,
+            zero_init_output=False,
         )
 
         # Learnable query token for target positions
@@ -255,15 +261,16 @@ class IJEPA(Module):
 
         B = images.shape[0]
         grid_h, grid_w = self.encoder.student._get_grid_size(images)
-        patches = self.encoder.student.patch_embed(images)
+        student_patches = self.encoder.student.patch_embed(images)
+        teacher_patches = self.encoder.teacher.patch_embed(images)
 
         # Apply masking (returns all patches as context in eval mode)
-        mask_out = self.masking(patches, grid_h, grid_w)
+        mask_out = self.masking(student_patches, grid_h, grid_w)
 
         if self.training:
             # Context: student sees only context patches (correct — matches Meta's masked encoder)
             context = self._encode(
-                patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
+                student_patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
             )
 
             with torch.no_grad():
@@ -275,12 +282,12 @@ class IJEPA(Module):
                 )
 
                 teacher_full = self._encode(
-                    patches, all_idx, grid_h, grid_w, self.encoder.teacher
+                    teacher_patches, all_idx, grid_h, grid_w, self.encoder.teacher
                 )  # teacher's vit.norm already applied
 
-                # Extra layer_norm on top per ijepa repo
                 teacher_full_normed = F.layer_norm(
-                    teacher_full, [teacher_full.size(-1)]
+                    teacher_full, [teacher_full.size(-1)],
+                    weight=None, bias=None # extra norm but affine as per paper
                 )
                 # Select target patches from the full encoding
                 D = teacher_full.size(-1)
@@ -295,7 +302,7 @@ class IJEPA(Module):
                     embedding = teacher_full
                 else:
                     embedding = self._encode(
-                        patches, all_idx, grid_h, grid_w, self.encoder.student
+                        student_patches, all_idx, grid_h, grid_w, self.encoder.student
                     )
 
             # Predict target representations via cross-attention
@@ -310,10 +317,10 @@ class IJEPA(Module):
 
             loss = F.smooth_l1_loss(predictions, targets, beta=1.0)
         else:
-            # Eval: encode all patches through teacher (consistent with training embedding)
+            # Eval: encode all patches through student
             with torch.no_grad():
                 context = self._encode(
-                    patches, mask_out.context_idx, grid_h, grid_w, self.encoder.teacher
+                    student_patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
                 )
             predictions = context
             targets = context
@@ -339,3 +346,7 @@ class IJEPA(Module):
             for layer_id, block in enumerate(encoder.vit.blocks):
                 rescale(block.attn.proj.weight.data, layer_id + 1)
                 rescale(block.mlp.fc2.weight.data, layer_id + 1)
+
+        for layer_id, block in enumerate(self.predictor.blocks):
+            rescale(block.attn.proj.weight.data, layer_id + 1)
+            rescale(block.mlp.fc2.weight.data, layer_id + 1)
