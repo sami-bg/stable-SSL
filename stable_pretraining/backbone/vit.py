@@ -1827,10 +1827,8 @@ class MAEDecoder(nn.Module):
                 x, dim=1, index=visible_idx.unsqueeze(-1).expand(-1, -1, x.shape[-1])
             )
         else:
-            assert ids_keep is not None, (
-                "received visible-only tokens but ids_keep=None"
-            )
-            visible_idx = ids_keep
+            if ids_keep is not None:
+                visible_idx = ids_keep
             visible_tokens = x
 
         order = torch.argsort(mask_bool.int(), dim=1, stable=True)
