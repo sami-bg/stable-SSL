@@ -1,4 +1,3 @@
-import time
 import types
 import sys
 from pathlib import Path
@@ -46,6 +45,7 @@ SAVE_EVERY_N_EPOCHS = 300
 CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "mae-vitb")
 
 PROBE_LR_SCALING = 100
+
 
 def mae_forward(self, batch, stage):
     images = batch["image"]
@@ -101,6 +101,7 @@ class _HFDataset(spt.data.Dataset):
     def __len__(self):
         return len(self.dataset)
 
+
 _builder = Imagenette(config_name="imagenette", cache_dir=str(data_dir))
 _builder.download_and_prepare()
 train_dataset = _HFDataset(_builder.as_dataset(split="train"), train_transform)
@@ -130,8 +131,8 @@ module = MAE(
     decoder_depth=DECODER_DEPTH,
     decoder_num_heads=DECODER_HEADS,
     mask_ratio=MASK_RATIO,
-    block_size=1,       # random masking
-    norm_pix_loss=True, # normalize pixel targets per patch
+    block_size=1,  # random masking
+    norm_pix_loss=True,  # normalize pixel targets per patch
     loss_type="mse",
     pretrained=False,
 )
@@ -157,6 +158,8 @@ module.optim = {
 
 
 class AutoProbeWrapper(nn.Module):
+    """Wrapper for AutoLinearClassifier to work with OnlineProbe."""
+
     def __init__(self, classifier, input_key="embedding", target_key="label"):
         super().__init__()
         self.classifier = classifier
@@ -184,7 +187,7 @@ auto_probe = spt.callbacks.OnlineProbe(
             pooling="mean",
             normalization=["bn"],
             lr_scaling=[PROBE_LR_SCALING, PROBE_LR_SCALING // 2, PROBE_LR_SCALING // 4],
-            weight_decay=[0.],
+            weight_decay=[0.0],
             dropout=[0],
             label_smoothing=[0],
         ),
@@ -225,7 +228,7 @@ lr_monitor = LearningRateMonitor(logging_interval="step")
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet10-mae-ijepa",
-    name=f"mae-vitb-inet10",
+    name="mae-vitb-inet10",
     log_model=False,
     config={
         "image_size": IMAGE_SIZE,
@@ -244,7 +247,6 @@ wandb_logger = WandbLogger(
         "method": "mae",
         "dataset": "imagenet10",
     },
-
 )
 
 

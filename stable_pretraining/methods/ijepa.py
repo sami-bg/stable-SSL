@@ -158,7 +158,7 @@ class IJEPA(Module):
             encoder_name,
             masking=None,
             pretrained=pretrained,
-            norm_layer=nn.LayerNorm # important that elementwise_affine=True (default param)
+            norm_layer=nn.LayerNorm,  # important that elementwise_affine=True (default param)
         )
         self.encoder = TeacherStudentWrapper(
             base_encoder,
@@ -181,7 +181,7 @@ class IJEPA(Module):
             self_attn=True,
             cross_attn=False,
             add_mask_token=True,
-            use_adaln=False, 
+            use_adaln=False,
             num_prefix_tokens=0,
             zero_init_output=False,
         )
@@ -261,7 +261,11 @@ class IJEPA(Module):
         if self.training:
             # Context: student sees only context patches
             context = self._encode(
-                student_patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
+                student_patches,
+                mask_out.context_idx,
+                grid_h,
+                grid_w,
+                self.encoder.student,
             )
 
             with torch.no_grad():
@@ -277,8 +281,10 @@ class IJEPA(Module):
                 )  # teacher's vit.norm already applied
 
                 teacher_full_normed = F.layer_norm(
-                    teacher_full, [teacher_full.size(-1)],
-                    weight=None, bias=None # extra norm but affine as per paper
+                    teacher_full,
+                    [teacher_full.size(-1)],
+                    weight=None,
+                    bias=None,  # extra norm but affine as per paper
                 )
                 # Select target patches from the full encoding
                 D = teacher_full.size(-1)
@@ -299,7 +305,9 @@ class IJEPA(Module):
             # Predict target representations via joint self-attention on [context + mask tokens]
             N_tgt = mask_out.target_idx.shape[1]
             # Create dummy queries and just mask them all out
-            queries = torch.zeros(B, N_tgt, self.embed_dim, device=images.device, dtype=context.dtype)
+            queries = torch.zeros(
+                B, N_tgt, self.embed_dim, device=images.device, dtype=context.dtype
+            )
             query_mask = torch.ones(B, N_tgt, device=images.device, dtype=torch.bool)
             predictions = self.predictor(
                 context=context,
@@ -314,7 +322,11 @@ class IJEPA(Module):
             # Eval: encode all patches through student
             with torch.no_grad():
                 context = self._encode(
-                    student_patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
+                    student_patches,
+                    mask_out.context_idx,
+                    grid_h,
+                    grid_w,
+                    self.encoder.student,
                 )
             predictions = context
             targets = context

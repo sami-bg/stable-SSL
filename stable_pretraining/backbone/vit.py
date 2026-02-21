@@ -356,7 +356,9 @@ class MaskedEncoder(nn.Module):
             tokens.append(self.vit.reg_token.expand(B, -1, -1))
         return torch.cat(tokens, dim=1) if tokens else None
 
-    def forward(self, images: torch.Tensor, apply_mask: bool | None = None) -> MaskedEncoderOutput:
+    def forward(
+        self, images: torch.Tensor, apply_mask: bool | None = None
+    ) -> MaskedEncoderOutput:
         """Encode images with optional masking.
 
         :param images: Input images (B, C, H, W)
@@ -364,15 +366,15 @@ class MaskedEncoder(nn.Module):
         """
         B = images.shape[0]
         device = images.device
-    
+
         grid_h, grid_w = self._get_grid_size(images)
         num_patches = grid_h * grid_w
-    
+
         # Patch embed + positional embed
         x = self.patch_embed(images)
         prefix_pos, patch_pos = self._get_pos_embed(grid_h, grid_w)
         x = x + patch_pos
-    
+
         if apply_mask is None:
             apply_mask = self.training
 
@@ -404,12 +406,11 @@ class MaskedEncoder(nn.Module):
             grid_size=(grid_h, grid_w),
         )
 
-    def forward_features(self, images: torch.Tensor ) -> torch.Tensor:
+    def forward_features(self, images: torch.Tensor) -> torch.Tensor:
         """Encode without masking (for inference)."""
         with torch.no_grad():
             output = self.forward(images, apply_mask=False)
         return output.encoded
-
 
     def extra_repr(self) -> str:
         return (
@@ -1794,8 +1795,9 @@ class MAEDecoder(nn.Module):
         n_vis_per = (~mask_bool).sum(dim=1)
         n_mask_per = mask_bool.sum(dim=1)
 
-        assert torch.all(n_vis_per == n_vis_per[0]), \
+        assert torch.all(n_vis_per == n_vis_per[0]), (
             "Number of visible patches must be the same for all samples"
+        )
 
         N_vis = int(n_vis_per[0].item())
         N_mask = int(n_mask_per[0].item())
@@ -1818,14 +1820,16 @@ class MAEDecoder(nn.Module):
 
         # Get indices (sort False/0 before True/1, so visible indices come first)
         visible_idx = torch.argsort(mask_bool.int(), dim=1, stable=True)[:, :N_vis]
-        masked_idx  = torch.argsort(mask_bool.int(), dim=1, stable=True)[:, N_vis:]
+        masked_idx = torch.argsort(mask_bool.int(), dim=1, stable=True)[:, N_vis:]
         # Get visible tokens
         if x.shape[1] == T:
             visible_tokens = torch.gather(
                 x, dim=1, index=visible_idx.unsqueeze(-1).expand(-1, -1, x.shape[-1])
             )
         else:
-            assert ids_keep is not None, "received visible-only tokens but ids_keep=None"
+            assert ids_keep is not None, (
+                "received visible-only tokens but ids_keep=None"
+            )
             visible_idx = ids_keep
             visible_tokens = x
 

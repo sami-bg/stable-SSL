@@ -135,8 +135,13 @@ def make_probe(ckpt_path):
         head=head,
         forward=probe_forward,
         optim={
-            "optimizer": {"type": "SGD", "lr": 0.01, "momentum": 0.9, "weight_decay": 0.0},
-            "scheduler": {"type":"StepLR", "step_size": 15, "gamma": 0.1},
+            "optimizer": {
+                "type": "SGD",
+                "lr": 0.01,
+                "momentum": 0.9,
+                "weight_decay": 0.0,
+            },
+            "scheduler": {"type": "StepLR", "step_size": 15, "gamma": 0.1},
         },
     )
 

@@ -213,7 +213,7 @@ module = spt.Module(
         },
         "scheduler": {
             "type": "LinearWarmupCosineAnnealing",
-            "total_steps": (len(train_dataloader) // NUM_GPUS) * MAX_EPOCHS,
+            "total_steps": (len(train_dataloader) // num_devices) * num_epochs,
             "peak_step": 0.1,
         },
         "interval": "step",

@@ -1,4 +1,3 @@
-import time
 import types
 import sys
 from pathlib import Path
@@ -69,11 +68,7 @@ def ijepa_forward(self, batch, stage):
 
     if self.training:
         self.log(
-            f"{stage}/loss",
-            output.loss,
-            on_step=True,
-            on_epoch=True,
-            sync_dist=True
+            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
         )
 
     return out
@@ -170,7 +165,10 @@ teacher_student_callback = spt.callbacks.TeacherStudentCallback(
     update_after_backward=True,
 )
 
+
 class AutoProbeWrapper(nn.Module):
+    """Wrapper for AutoLinearClassifier to work with OnlineProbe."""
+
     def __init__(self, classifier, input_key="embedding", target_key="label"):
         super().__init__()
         self.classifier = classifier
@@ -197,8 +195,13 @@ auto_probe = spt.callbacks.OnlineProbe(
             num_classes=NUM_CLASSES,
             pooling="mean",
             normalization=["bn"],
-            lr_scaling=[PROBE_LR_SCALING, PROBE_LR_SCALING // 2, PROBE_LR_SCALING // 4, PROBE_LR_SCALING * 2],
-            weight_decay=[0.],
+            lr_scaling=[
+                PROBE_LR_SCALING,
+                PROBE_LR_SCALING // 2,
+                PROBE_LR_SCALING // 4,
+                PROBE_LR_SCALING * 2,
+            ],
+            weight_decay=[0.0],
             dropout=[0],
             label_smoothing=[0],
         ),
@@ -239,7 +242,7 @@ lr_monitor = LearningRateMonitor(logging_interval="step")
 wandb_logger = WandbLogger(
     entity="stable-ssl",
     project="imagenet10-mae-ijepa",
-    name=f"ijepa-vitb-inet10",
+    name="ijepa-vitb-inet10",
     log_model=False,
     config={
         "image_size": IMAGE_SIZE,
