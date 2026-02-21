@@ -218,7 +218,7 @@ class IJEPA(Module):
         # patch -> posemb -> mask -> block -> norm
         _, pos = encoder._get_pos_embed(grid_h, grid_w)
         x = patches + pos.expand(B, -1, -1)
-        x = torch.gather(patches, 1, indices.unsqueeze(-1).expand(-1, -1, D))
+        x = torch.gather(x, 1, indices.unsqueeze(-1).expand(-1, -1, D))
         x = encoder.vit.pos_drop(x)
         x = encoder.vit.blocks(x)
         return encoder.vit.norm(x)
@@ -259,7 +259,7 @@ class IJEPA(Module):
         mask_out = self.masking(student_patches, grid_h, grid_w)
 
         if self.training:
-            # Context: student sees only context patches (correct — matches Meta's masked encoder)
+            # Context: student sees only context patches
             context = self._encode(
                 student_patches, mask_out.context_idx, grid_h, grid_w, self.encoder.student
             )

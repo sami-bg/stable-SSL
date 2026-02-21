@@ -1,15 +1,10 @@
 """Offline linear probe evaluation for I-JEPA checkpoints on ImageNet-10.
 
-Sweeps LRs and weight decays following the I-JEPA paper (Table 8):
-  - LARS optimizer (SGD fallback), batch 16384 in paper → scaled to local batch
-  - StepLR: divide by 10 every 15 epochs
-  - Sweep: lr in [0.001, 0.01, 0.05], wd in [0.0, 0.0005]
-  - 100 epochs (paper uses 50 on IN-1k, more steps needed here)
+Sweeps LRs and weight decays using AutoLinearClassifier.
 
 Usage:
-    python benchmarks/imagenet10/linear-probe-inet10.py
+    python benchmarks/imagenet10/linear-probe-inet10.py --ckpt-dir /path/to/ckpt-dir
     python benchmarks/imagenet10/linear-probe-inet10.py --single /path/to/ckpt.ckpt
-    python benchmarks/imagenet10/linear-probe-inet10.py --no-wandb
 """
 
 import argparse
@@ -37,16 +32,15 @@ IMAGE_SIZE = 224
 EMBED_DIM = 768
 NUM_CLASSES = 10
 PROBE_EPOCHS = 100
-BATCH_SIZE = 256
-DEFAULT_CKPT_DIR = str(Path(__file__).parent / "checkpoints" / "ijepa-vitb")
+BATCH_SIZE = 512
+PROBE_LR_SCALING = 200
 
 
 # Data
 def get_data():
     train_transform = transforms.Compose(
         transforms.RGB(),
-        transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.08, 1.0)),
-        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomResizedCrop((IMAGE_SIZE, IMAGE_SIZE), scale=(0.2, 1.0)),
         transforms.ToImage(**spt.data.static.ImageNet),
     )
     val_transform = transforms.Compose(
@@ -59,6 +53,8 @@ def get_data():
     data_dir = get_data_dir("imagenet10")
     from stable_datasets.images.imagenette import Imagenette
 
+    # We do this cause HF transforms apply to entire batches at a time
+    # so we need to inject them here
     class _HFDataset(spt.data.Dataset):
         def __init__(self, hf_dataset, transform):
             super().__init__(transform)
@@ -129,8 +125,8 @@ def make_probe(ckpt_path):
         num_classes=NUM_CLASSES,
         pooling="mean",
         normalization=["none", "bn"],
-        lr_scaling=[0.005, 0.01, 0.02, 0.05],
-        weight_decay=[0.0, 0.0005],
+        lr_scaling=[10, 50, 200],
+        weight_decay=[0.0, 5e-4],
         dropout=[0],
         label_smoothing=[0],
     )
@@ -139,13 +135,8 @@ def make_probe(ckpt_path):
         head=head,
         forward=probe_forward,
         optim={
-            "optimizer": {
-                "type": "LARS",
-                "lr": 1.0,
-                "momentum": 0.9,
-                "weight_decay": 0.0,
-            },
-            "scheduler": "CosineAnnealingLR",
+            "optimizer": {"type": "SGD", "lr": 0.01, "momentum": 0.9, "weight_decay": 0.0},
+            "scheduler": {"type":"StepLR", "step_size": 15, "gamma": 0.1},
         },
     )
 
@@ -161,8 +152,9 @@ def extract_epoch(ckpt_path: str) -> int:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt-dir", type=str, default=DEFAULT_CKPT_DIR)
-    parser.add_argument("--single", type=str, default='/mnt/data/sami/stable-SSL/benchmarks/imagenet10/checkpoints/ijepa-vitb/last-v5.ckpt')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--ckpt-dir", type=str)
+    group.add_argument("--single", type=str)
     parser.add_argument("--no-wandb", action="store_true")
     args = parser.parse_args()
 
