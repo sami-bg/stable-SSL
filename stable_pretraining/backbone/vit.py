@@ -356,9 +356,7 @@ class MaskedEncoder(nn.Module):
             tokens.append(self.vit.reg_token.expand(B, -1, -1))
         return torch.cat(tokens, dim=1) if tokens else None
 
-    def forward(
-        self, images: torch.Tensor, apply_mask: bool | None = None
-    ) -> MaskedEncoderOutput:
+    def forward(self, images: torch.Tensor) -> MaskedEncoderOutput:
         """Encode images with optional masking.
 
         :param images: Input images (B, C, H, W)
@@ -375,11 +373,8 @@ class MaskedEncoder(nn.Module):
         prefix_pos, patch_pos = self._get_pos_embed(grid_h, grid_w)
         x = x + patch_pos
 
-        if apply_mask is None:
-            apply_mask = self.training
-
         # Apply masking (training only)
-        if apply_mask and self.masking is not None:
+        if self.training and self.masking is not None:
             mask_out = self.masking(x, grid_h, grid_w)
             x = mask_out.visible
             mask = mask_out.mask
@@ -408,8 +403,12 @@ class MaskedEncoder(nn.Module):
 
     def forward_features(self, images: torch.Tensor) -> torch.Tensor:
         """Encode without masking (for inference)."""
+        was_training = self.training
+        self.eval()
         with torch.no_grad():
-            output = self.forward(images, apply_mask=False)
+            output = self.forward(images)
+        if was_training:
+            self.train()
         return output.encoded
 
     def extra_repr(self) -> str:

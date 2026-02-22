@@ -161,7 +161,7 @@ class MAE(Module):
         )
 
         if self.training:
-            loss = self.loss_fn(predictions, images, enc_out.mask)
+            loss = self.loss_fn(predictions, images.to(predictions.dtype), enc_out.mask)
             num_masked = int(enc_out.mask.sum(dim=1)[0].item())
         else:
             loss = torch.tensor(0.0, device=images.device)

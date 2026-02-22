@@ -392,7 +392,6 @@ class MAELoss(nn.Module):
         :param debug: If True, print debug statistics
         :return: Scalar loss value
         """
-        imgs = imgs.to(pred.dtype)
         self._validate_inputs(pred, imgs, mask)
 
         # Patchify target images
