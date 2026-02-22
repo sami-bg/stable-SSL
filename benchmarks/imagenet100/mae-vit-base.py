@@ -25,13 +25,11 @@ def mae_forward(self, batch, stage):
     with torch.no_grad():
         features = self.encoder.forward_features(batch["image"])
 
-    self.log(
-        f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
-    )
+    self.log(f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True)
 
     return {
-        "loss":      output.loss,
-        "embedding": features[:, 1:].mean(dim=1).detach(), # skip cls
+        "loss": output.loss,
+        "embedding": features[:, 1:].mean(dim=1).detach(),  # skip cls
         **({"label": batch["label"].long()} if "label" in batch else {}),
     }
 
@@ -146,7 +144,7 @@ trainer = pl.Trainer(
     logger=pl.pytorch.loggers.WandbLogger(
         entity="stable-ssl",
         project="imagenet100-mae-ijepa",
-        name=f"mae-vitb-inet100",
+        name="mae-vitb-inet100",
         log_model=False,
     ),
     precision="16-mixed",

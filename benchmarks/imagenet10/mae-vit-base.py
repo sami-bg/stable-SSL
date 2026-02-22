@@ -23,9 +23,7 @@ def mae_forward(self, batch, stage):
     with torch.no_grad():
         features = self.encoder.forward_features(batch["image"])
 
-    self.log(
-        f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
-    )
+    self.log(f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True)
 
     return {
         "loss": output.loss,
