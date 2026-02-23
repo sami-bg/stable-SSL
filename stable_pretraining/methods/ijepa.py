@@ -158,7 +158,6 @@ class IJEPA(Module):
             encoder_name,
             masking=None,
             pretrained=pretrained,
-            norm_layer=nn.LayerNorm,  # important that elementwise_affine=True (default param)
         )
         self.encoder = TeacherStudentWrapper(
             base_encoder,
