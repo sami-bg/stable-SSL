@@ -19,6 +19,16 @@ def pytest_configure(config):
     )
 
 
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip @pytest.mark.gpu tests when no CUDA device is available."""
+    if torch.cuda.is_available():
+        return
+    skip_gpu = pytest.mark.skip(reason="no GPU available")
+    for item in items:
+        if "gpu" in item.keywords:
+            item.add_marker(skip_gpu)
+
+
 @pytest.fixture
 def device():
     """Fixture to get appropriate device for tests."""
