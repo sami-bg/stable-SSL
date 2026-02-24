@@ -19,12 +19,7 @@ import torchmetrics
 import stable_pretraining as spt
 from stable_pretraining.backbone import MLP
 from stable_pretraining.data import transforms
-from stable_pretraining.methods.lejepa import SlicedEppsPulley, lejepa_loss
-
-
-# ---------------------------------------------------------------------------
-# Forward
-# ---------------------------------------------------------------------------
+from stable_pretraining.methods.lejepa import LeJEPA, LeJEPAOutput
 
 
 def lejepa_forward(self, batch, stage):
@@ -50,16 +45,21 @@ def lejepa_forward(self, batch, stage):
     """
     out = {}
 
-    global_views = [batch[key] for key in batch if "global" in key]
-    local_views = [batch[key] for key in batch if "local" in key]
-    images = batch["image"]
+    images          = batch.get("image")
+    if stage == "fit":
+        global_views    = [batch[key]["image"] for key in batch if key.startswith("global")]
+        local_views     = [batch[key]["image"] for key in batch if key.startswith("local")]
+        labels          = next(batch[key]["label"] for key in batch if key.startswith("global") or key.startswith("local"))
+        all_views       = global_views + local_views
 
-    output = self.forward(global_views=global_views, local_views=local_views, images=images)
+        output: LeJEPAOutput = self.model.forward(global_views=global_views, all_views=all_views, images=images)
+        out["label"] = labels.repeat(len(global_views))
+    else: 
+        output: LeJEPAOutput = self.model.forward(images=images)
+        out["label"] = batch["label"].long()
 
     out["loss"] = output.loss
     out["embedding"] = output.embedding
-    out["label"] = batch["label"] if "label" in batch else None
-    
     self.log(f"{stage}/sigreg", output.sigreg_loss, on_step=True, on_epoch=True, sync_dist=True)
     self.log(f"{stage}/inv", output.inv_loss, on_step=True, on_epoch=True, sync_dist=True)
     self.log(f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True)
@@ -68,7 +68,6 @@ def lejepa_forward(self, batch, stage):
 
 
 def _global_transform():
-    """Global view: 224x224, scale [0.4, 1.0]."""
     return transforms.Compose(
         transforms.RGB(),
         transforms.RandomResizedCrop((224, 224), scale=(0.4, 1.0)),
@@ -81,7 +80,6 @@ def _global_transform():
 
 
 def _local_transform():
-    """Local view: 96x96, scale [0.05, 0.4]."""
     return transforms.Compose(
         transforms.RGB(),
         transforms.RandomResizedCrop((96, 96), scale=(0.05, 0.4)),
@@ -93,22 +91,16 @@ def _local_transform():
     )
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 def main():
     sys.path.append(str(Path(__file__).parent.parent))
     from utils import get_data_dir
 
     num_gpus = torch.cuda.device_count() or 1
-    batch_size = 256
-    num_workers = 16
+    batch_size = 64 # 8 -> 8 transforms = 64 -> 8 gpus = 512
+    num_workers = 32
     max_epochs = 600
-    embed_dim = 768
     global_views = 2
-    all_views = 6
+    all_views = 8
 
 
     data_dir = str(get_data_dir("imagenet10"))
@@ -154,25 +146,14 @@ def main():
             persistent_workers=num_workers > 0,
         ),
     )
-
-    backbone = timm.create_model("vit_base_patch16_224", pretrained=False, num_classes=0)
-
-    projector = MLP(
-        in_channels=embed_dim,
-        hidden_channels=[2048, 2048, 128],
-        norm_layer="batch_norm",
-        activation_layer=nn.ReLU,
-        inplace=True,
-        dropout=0.0,
+    
+    model = LeJEPA(
+        encoder_name="vit_small_patch8_224",
+        lamb=0.02,
     )
 
-    sigreg = SlicedEppsPulley(num_slices=256, t_max=3.0, n_points=17)
-
     module = spt.Module(
-        backbone=backbone,
-        projector=projector,
-        sigreg=sigreg,
-        lamb=0.02,
+        model=model,
         forward=lejepa_forward,
         optim={
             "optimizer": {
@@ -201,7 +182,7 @@ def main():
                 name="linear_probe",
                 input="embedding",
                 target="label",
-                probe=nn.Linear(embed_dim, 10),
+                probe=nn.Linear(model.embed_dim, 10),
                 loss=nn.CrossEntropyLoss(),
                 metrics={
                     "top1": torchmetrics.classification.MulticlassAccuracy(10),
@@ -215,14 +196,14 @@ def main():
                 target="label",
                 queue_length=10000,
                 metrics={"top1": torchmetrics.classification.MulticlassAccuracy(10)},
-                input_dim=embed_dim,
+                input_dim=model.embed_dim,
                 k=20,
             ),
             spt.callbacks.RankMe(
                 name="rankme",
                 target="embedding",
                 queue_length=1000,
-                target_shape=embed_dim,
+                target_shape=model.embed_dim,
             ),
             pl.pytorch.callbacks.ModelCheckpoint(
                 dirpath=str(Path(__file__).parent / "checkpoints" / "lejepa-vitb"),

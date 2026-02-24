@@ -192,23 +192,34 @@ class LeJEPA(Module):
         n_points: int = 17,
         lamb: float = 0.02,
         pretrained: bool = False,
+        drop_path_rate: float = 0.1,
     ):
         super().__init__()
 
         self.backbone = timm.create_model(
-            encoder_name, pretrained=pretrained, num_classes=0
+            encoder_name,
+            pretrained=pretrained,
+            num_classes=0,
+            dynamic_img_size=True,
+            drop_path_rate=drop_path_rate,
         )
+
         embed_dim = self.backbone.embed_dim
 
         if projector is None:
-            projector = MLP(
-                in_channels=embed_dim,
-                hidden_channels=[2048, 2048, 128],
-                norm_layer="batch_norm",
-                activation_layer=nn.ReLU,
-                inplace=True,
-                dropout=0.0,
+            projector = nn.Sequential(
+                nn.Linear(embed_dim, 512, bias=True),
+                MLP(
+                    in_channels=512,
+                    hidden_channels=[2048, 2048, 512],
+                    norm_layer="batch_norm",
+                    activation_layer=nn.ReLU,
+                    inplace=True,
+                    dropout=0.0,
+                ),
             )
+
+
         self.projector = projector
 
         self.sigreg = SlicedEppsPulley(
@@ -259,7 +270,7 @@ class LeJEPA(Module):
 
         In training mode:
             - Encodes and projects global views → mean projection = center
-            - Encodes and projects all views
+            - Encodes and projects all views (handles mixed resolutions)
             - Invariance loss: MSE between each view projection and center
             - SIGReg loss: per-view Epps-Pulley, averaged
 
@@ -267,30 +278,28 @@ class LeJEPA(Module):
             - Encodes a single image tensor, returns embeddings with zero loss
 
         :param global_views: List of V_g image tensors [N, C, H, W].
-        :param all_views: List of V image tensors [N, C, H, W] (superset of global).
+        :param all_views: List of V image tensors [N, C, H, W] (may have mixed sizes).
         :param images: Single image tensor [N, C, H, W] for eval.
         :return: :class:`LeJEPAOutput` with loss and embeddings.
         """
         if self.training:
-            N = global_views[0].shape[0]
+            # Encode each view separately to handle mixed resolutions
+            g_embs = [self.backbone(v) for v in global_views]
+            g_projections = [self.projector(e) for e in g_embs]
 
-            # Embed + project global views → centers
-            g_emb = self.projector(self.backbone(torch.cat(global_views, dim=0)))
-            g_projections = list(g_emb.reshape(len(global_views), N, -1))
-
-            # Embed + project all views
-            a_cat = torch.cat(all_views, dim=0)
-            a_backbone = self.backbone(a_cat)
-            a_proj = self.projector(a_backbone)
-            a_projections = list(a_proj.reshape(len(all_views), N, -1))
+            a_embs = [self.backbone(v) for v in all_views]
+            a_projections = [self.projector(e) for e in a_embs]
 
             loss, inv_loss, sigreg_loss = self._compute_loss(
                 g_projections, a_projections, self.sigreg, self.lamb
             )
 
+            # Return global-view embeddings for probes
+            embedding = torch.cat(g_embs, dim=0)
+
             return LeJEPAOutput(
                 loss=loss,
-                embedding=a_backbone,
+                embedding=embedding,
                 inv_loss=inv_loss,
                 sigreg_loss=sigreg_loss,
             )
