@@ -152,12 +152,16 @@ class MAE(Module):
         enc_out = self.encoder(images)
 
         # Decode (output_masked_only=False gives full reconstruction)
+        encoded_patches = enc_out.encoded[:, self.encoder.num_prefix_tokens :]
         predictions = self.decoder(
-            enc_out.encoded, enc_out.mask, output_masked_only=False
+            encoded_patches,
+            enc_out.mask,
+            ids_keep=enc_out.ids_keep,
+            output_masked_only=False,
         )
 
         if self.training:
-            loss = self.loss_fn(predictions, images, enc_out.mask)
+            loss = self.loss_fn(predictions, images.to(predictions.dtype), enc_out.mask)
             num_masked = int(enc_out.mask.sum(dim=1)[0].item())
         else:
             loss = torch.tensor(0.0, device=images.device)
