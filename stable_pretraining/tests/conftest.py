@@ -17,7 +17,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "download: Tests that download data from the internet"
     )
-    config.addinivalue_line("markers", "v1: Legacy tests that need updating (auto-skipped)")
+    config.addinivalue_line(
+        "markers", "v1: Legacy tests that need updating (auto-skipped)"
+    )
 
 
 def pytest_collection_modifyitems(config, items):
