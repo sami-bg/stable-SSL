@@ -1,4 +1,4 @@
-"""Deterministic smoke test for the IJEPA imagenet10 benchmark config."""
+"""Deterministic smoke test for the IJEPA training pipeline."""
 
 import types
 
@@ -12,21 +12,19 @@ from stable_pretraining.methods.ijepa import IJEPA
 
 
 @pytest.mark.integration
-@pytest.mark.gpu
 @pytest.mark.download
-@pytest.mark.filterwarnings("ignore:Precision 16-mixed is not supported")
 @pytest.mark.filterwarnings("ignore:`isinstance.treespec, LeafSpec.` is deprecated")
 @pytest.mark.filterwarnings("ignore:.*does not have many workers")
 @pytest.mark.filterwarnings("ignore:Trying to infer the `batch_size`")
 class TestIJEPAImagenet10:
-    """Run the inet10 IJEPA benchmark for 10 steps and check determinism."""
+    """Run IJEPA (vit_tiny) on imagenette for 10 steps and check determinism."""
 
     def test_ijepa_10_steps(self):
         """Train IJEPA for 10 steps and assert loss matches expected value."""
         pl.seed_everything(42, workers=True)
 
         # Build data from frgfm/imagenette
-        # IJEPA uses scale=(0.3, 1.0)
+        # IJEPA uses scale=(0.3, 1.0) and no horizontal flip
         data = spt.data.DataModule(
             train=torch.utils.data.DataLoader(
                 dataset=spt.data.HFDataset(
@@ -61,7 +59,7 @@ class TestIJEPAImagenet10:
             ),
         )
 
-        # Forward function matching benchmarks/imagenet10/ijepa-vit-base.py
+        # Forward function matching benchmark pattern
         def ijepa_forward(self, batch, stage):
             output = IJEPA.forward(self, batch["image"], embedding_source="student")
             embedding = output.embedding.mean(dim=1)
@@ -82,11 +80,11 @@ class TestIJEPAImagenet10:
                 **({"label": batch["label"].long()} if "label" in batch else {}),
             }
 
-        # Create IJEPA module (same hyperparams as benchmark)
+        # Create IJEPA module with vit_tiny for fast CPU testing
         module = IJEPA(
-            encoder_name="vit_base_patch16_224",
-            predictor_embed_dim=384,
-            predictor_depth=12,
+            encoder_name="vit_tiny_patch16_224",
+            predictor_embed_dim=192,
+            predictor_depth=6,
             num_targets=4,
             target_scale=(0.15, 0.2),
             target_aspect_ratio=(0.75, 1.5),
@@ -108,7 +106,7 @@ class TestIJEPAImagenet10:
             "interval": "epoch",
         }
 
-        # Create trainer (stripped down for testing, with EMA callback)
+        # Create trainer (CPU-compatible, with EMA callback)
         trainer = pl.Trainer(
             max_steps=10,
             num_sanity_val_steps=0,
@@ -118,11 +116,10 @@ class TestIJEPAImagenet10:
                     update_after_backward=True,
                 ),
             ],
-            precision="16-mixed",
             logger=False,
             enable_checkpointing=False,
             devices=1,
-            accelerator="gpu",
+            accelerator="cpu",
             enable_progress_bar=False,
         )
 
@@ -133,9 +130,8 @@ class TestIJEPAImagenet10:
         # Verify deterministic loss
         final_loss = trainer.callback_metrics.get("fit/loss_step")
         assert final_loss is not None, "No loss logged"
-
         print(f"\nIJEPA final loss after 10 steps: {final_loss.item():.6f}")
-        expected = torch.tensor(0.404552)
+        expected = torch.tensor(0.413147)
         assert torch.isclose(final_loss.cpu(), expected, atol=1e-4), (
             f"IJEPA loss {final_loss.item():.6f} != expected {expected.item():.6f}"
         )
