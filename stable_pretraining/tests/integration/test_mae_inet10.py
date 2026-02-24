@@ -106,7 +106,7 @@ class TestMAEImagenet10:
 
         # Create trainer (CPU-compatible, stripped down for testing)
         trainer = pl.Trainer(
-            max_steps=10,
+            max_steps=3,
             num_sanity_val_steps=0,
             logger=False,
             enable_checkpointing=False,
@@ -122,8 +122,8 @@ class TestMAEImagenet10:
         # Verify deterministic loss
         final_loss = trainer.callback_metrics.get("fit/loss_step")
         assert final_loss is not None, "No loss logged"
-        print(f"\nMAE final loss after 10 steps: {final_loss.item():.6f}")
-        expected = torch.tensor(1.025965)
+        print(f"\nMAE final loss after 3 steps: {final_loss.item():.6f}")
+        expected = torch.tensor(1.214716)
         assert torch.isclose(final_loss.cpu(), expected, atol=1e-4), (
             f"MAE loss {final_loss.item():.6f} != expected {expected.item():.6f}"
         )

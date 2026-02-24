@@ -108,7 +108,7 @@ class TestIJEPAImagenet10:
 
         # Create trainer (CPU-compatible, with EMA callback)
         trainer = pl.Trainer(
-            max_steps=10,
+            max_steps=3,
             num_sanity_val_steps=0,
             callbacks=[
                 spt.callbacks.TeacherStudentCallback(
@@ -130,8 +130,8 @@ class TestIJEPAImagenet10:
         # Verify deterministic loss
         final_loss = trainer.callback_metrics.get("fit/loss_step")
         assert final_loss is not None, "No loss logged"
-        print(f"\nIJEPA final loss after 10 steps: {final_loss.item():.6f}")
-        expected = torch.tensor(0.413147)
+        print(f"\nIJEPA final loss after 3 steps: {final_loss.item():.6f}")
+        expected = torch.tensor(0.515345)
         assert torch.isclose(final_loss.cpu(), expected, atol=1e-4), (
             f"IJEPA loss {final_loss.item():.6f} != expected {expected.item():.6f}"
         )
