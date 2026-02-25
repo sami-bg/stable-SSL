@@ -3,8 +3,6 @@
 Multi-view invariance + Epps-Pulley goodness-of-fit (SIGReg).
 Uses 2 global views (224x224) + 6 local views (96x96) matching
 the official LeJEPA augmentation strategy.
-
-Mirrors the ijepa-vit-base.py benchmark structure.
 """
 
 import sys
