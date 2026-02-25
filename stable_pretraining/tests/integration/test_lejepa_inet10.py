@@ -68,7 +68,6 @@ class TestLeJEPAImagenet10:
                     "frgfm/imagenette",
                     split="validation",
                     revision="refs/convert/parquet",
-                    data_files={"train": "*.parquet"},
                     transform=transforms.Compose(
                         transforms.RGB(),
                         transforms.Resize((256, 256)),
