@@ -85,10 +85,14 @@ class TestLeJEPAImagenet10:
         def lejepa_forward(self, batch, stage):
             if stage == "fit":
                 global_views = [
-                    batch[key]["image"] for key in sorted(batch) if key.startswith("global")
+                    batch[key]["image"]
+                    for key in sorted(batch)
+                    if key.startswith("global")
                 ]
                 local_views = [
-                    batch[key]["image"] for key in sorted(batch) if key.startswith("local")
+                    batch[key]["image"]
+                    for key in sorted(batch)
+                    if key.startswith("local")
                 ]
                 output = LeJEPA.forward(
                     self, global_views=global_views, local_views=local_views
