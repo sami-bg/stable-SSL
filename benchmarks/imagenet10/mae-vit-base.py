@@ -148,7 +148,7 @@ def main():
         ],
         logger=pl.pytorch.loggers.WandbLogger(
             entity="stable-ssl",
-            project="imagenet10-mae-ijepa",
+            project="imagenet10-methods",
             name="mae-vitb-inet10",
             log_model=False,
         ),
