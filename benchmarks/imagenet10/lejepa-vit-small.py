@@ -112,8 +112,8 @@ def main():
     sys.path.append(str(Path(__file__).parent.parent))
     from utils import get_data_dir
 
-    num_gpus = torch.cuda.device_count() or 1
-    batch_size = 64  # 8 -> 8 transforms = 64 -> 8 gpus = 512
+    num_gpus = 1
+    batch_size = 128
     num_workers = 16
     max_epochs = 600
     global_views = 2
@@ -181,7 +181,7 @@ def main():
         optim={
             "optimizer": {
                 "type": "AdamW",
-                "lr": (lr := 5e-4),
+                "lr": (lr := 4e-4),
                 "weight_decay": 0.05,
                 "betas": (0.9, 0.999),
             },
