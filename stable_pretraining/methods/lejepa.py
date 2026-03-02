@@ -32,6 +32,7 @@ from typing import Optional
 import timm
 import torch
 import torch.nn as nn
+from torch.distributed.nn import all_reduce
 
 from stable_pretraining import Module
 from stable_pretraining.backbone import MLP
@@ -77,8 +78,8 @@ class EppsPulley(nn.Module):
         sin_mean = x_t.sin().mean(0)
 
         if self._is_ddp:
-            torch.distributed.all_reduce(cos_mean, op=torch.distributed.ReduceOp.AVG)
-            torch.distributed.all_reduce(sin_mean, op=torch.distributed.ReduceOp.AVG)
+            all_reduce(cos_mean, op=torch.distributed.ReduceOp.AVG)
+            all_reduce(sin_mean, op=torch.distributed.ReduceOp.AVG)
 
         err = (cos_mean - self.phi).square() + sin_mean.square()
         return (err @ self.weights) * N * self.world_size
@@ -114,6 +115,10 @@ class SlicedEppsPulley(nn.Module):
             step = self.global_step.clone()
 
             if self._is_ddp:
+                # All ranks increment global_step in lockstep, so this
+                # broadcast is redundant under normal synchronous training.
+                # It is kept as a safety net against step drift from
+                # uneven batches (e.g. drop_last=False).
                 torch.distributed.broadcast(step, src=0)
 
             g = torch.Generator(device=x.device).manual_seed(step.item())
