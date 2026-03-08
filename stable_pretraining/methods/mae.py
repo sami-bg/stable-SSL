@@ -8,15 +8,15 @@ References:
 
 Example::
 
-    from stable_pretraining.backbone import MAE
-    import lightning as pl
+    from stable_pretraining.methods.mae import MAE
 
     # Create model
     model = MAE("vit_base_patch16_224", mask_ratio=0.75)
+    images = torch.randn(4, 3, 224, 224)
 
-    # Training
+    # Reconstruction forward
     model.train()
-    output = model(images)
+    output = model.forward_model(images)
     output.loss.backward()
 
     # Get encoder for downstream
@@ -70,30 +70,31 @@ class MAE(Module):
 
     Example::
 
-        # Basic usage
+        # Reconstruction forward
         model = MAE("vit_base_patch16_224", mask_ratio=0.75)
         images = torch.randn(4, 3, 224, 224)
 
         model.train()
-        output = model(images)
+        output = model.forward_model(images)
         output.loss.backward()
 
         model.eval()
-        output = model(images)  # Full reconstruction, zero loss
+        output = model.forward_model(images)  # Full reconstruction, zero loss
 
-    Example with Lightning::
+    Example as a Lightning module (no extra plumbing needed)::
 
-        class MAELightning(pl.LightningModule):
-            def __init__(self):
-                super().__init__()
-                self.model = MAE("vit_base_patch16_224")
+        import stable_pretraining as spt
 
-            def training_step(self, batch, batch_idx):
-                images = batch[0] if isinstance(batch, (list, tuple)) else batch
-                return self.model(images).loss
-
-            def configure_optimizers(self):
-                return torch.optim.AdamW(self.parameters(), lr=1.5e-4)
+        model = MAE("vit_base_patch16_224")
+        model.optim = {
+            "optimizer": {"type": "AdamW", "lr": 1.5e-4, "weight_decay": 0.05},
+            "scheduler": {"type": "LinearWarmupCosineAnnealing"},
+            "interval": "epoch",
+        }
+        manager = spt.Manager(
+            trainer=pl.Trainer(max_epochs=100), module=model, data=datamodule
+        )
+        manager()
     """
 
     def __init__(
@@ -140,14 +141,15 @@ class MAE(Module):
             patch_normalize=norm_pix_loss,
         )
 
-    def forward(self, images: torch.Tensor) -> MAEOutput:
-        """Forward pass.
+    def forward_model(self, images: torch.Tensor) -> MAEOutput:
+        """Compute MAE reconstruction from input images.
 
-        Training: masks patches, encodes visible, decodes all, loss on masked.
-        Eval: no masking, full encode/decode, zero loss.
+        In training mode, randomly masks patches, encodes visible ones,
+        decodes all positions, and computes MSE loss on masked patches.
+        In eval mode, performs full encode/decode with zero loss.
 
         :param images: Input images [B, C, H, W]
-        :return: MAEOutput with loss and reconstructions
+        :return: :class:`MAEOutput` with loss, predictions, and mask
         """
         enc_out = self.encoder(images)
 
@@ -174,3 +176,41 @@ class MAE(Module):
             num_masked=num_masked,
             num_visible=enc_out.mask.shape[1] - num_masked,
         )
+
+    def forward(self, batch: dict, stage: str) -> dict:
+        """Module-level forward for Lightning training and evaluation.
+
+        Runs MAE reconstruction and extracts patch features for downstream
+        evaluation (e.g. linear probing, KNN). Logs the reconstruction loss
+        at every step and epoch.
+
+        Expected batch keys:
+
+            - ``"image"`` *(required)*: Input images ``[B, C, H, W]``
+            - ``"label"`` *(optional)*: Class labels ``[B]``,
+              passed through when present (e.g. for online probes)
+
+        :param batch: Batch dictionary from the dataloader.
+        :param stage: Lightning stage string (``"fit"``, ``"validate"``,
+            ``"test"``, or ``"predict"``).
+        :return: Dictionary with:
+
+            - ``"loss"``: Reconstruction loss scalar
+            - ``"embedding"``: CLS-free mean patch features ``[B, D]``
+              (extracted without gradient via :meth:`encoder.forward_features`,
+              CLS token at index 0 is skipped)
+            - ``"label"``: Class labels ``[B]`` *(only if present in batch)*
+        """
+        output = self.forward_model(batch["image"])
+        with torch.no_grad():
+            features = self.encoder.forward_features(batch["image"])
+
+        self.log(
+            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
+        )
+
+        return {
+            "loss": output.loss,
+            "embedding": features[:, 1:].mean(dim=1).detach(),  # skip cls token
+            **({"label": batch["label"].long()} if "label" in batch else {}),
+        }

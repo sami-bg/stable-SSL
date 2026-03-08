@@ -93,43 +93,35 @@ class IJEPA(Module):
 
     Example::
 
-        # Basic usage
+        # Prediction forward
         model = IJEPA("vit_base_patch16_224")
         images = torch.randn(4, 3, 224, 224)
 
         # Training mode: predicts masked targets
         model.train()
-        output = model(images)
+        output = model.forward_model(images)
         output.loss.backward()
 
         # Eval mode: encodes all patches (no masking)
         model.eval()
-        output = model(images)
+        output = model.forward_model(images)
         features = output.predictions  # [B, N, D]
 
-    Example with Lightning::
+    Example as a Lightning module (no extra plumbing needed)::
 
         import lightning as pl
+        import stable_pretraining as spt
         from stable_pretraining.callbacks import TeacherStudentCallback
 
-
-        class IJEPALightning(pl.LightningModule):
-            def __init__(self):
-                super().__init__()
-                self.model = IJEPA("vit_base_patch16_224")
-
-            def training_step(self, batch, batch_idx):
-                images = batch[0] if isinstance(batch, (list, tuple)) else batch
-                output = self.model(images)
-                self.log("loss", output.loss)
-                return output.loss
-
-            def configure_optimizers(self):
-                return torch.optim.AdamW(self.parameters(), lr=1.5e-4)
-
-
-        trainer = pl.Trainer(callbacks=[TeacherStudentCallback()])
-        trainer.fit(IJEPALightning(), dataloader)
+        model = IJEPA("vit_base_patch16_224")
+        model.optim = {
+            "optimizer": {"type": "AdamW", "lr": 6e-4, "weight_decay": 0.05},
+            "scheduler": {"type": "LinearWarmupCosineAnnealing"},
+            "interval": "epoch",
+        }
+        trainer = pl.Trainer(max_epochs=300, callbacks=[TeacherStudentCallback()])
+        manager = spt.Manager(trainer=trainer, module=model, data=datamodule)
+        manager()
 
     Note:
         - Use :class:`TeacherStudentCallback` to handle EMA updates automatically
@@ -221,15 +213,15 @@ class IJEPA(Module):
         x = encoder.vit.blocks(x)
         return encoder.vit.norm(x)
 
-    def forward(
+    def forward_model(
         self, images: torch.Tensor, embedding_source: str = "teacher"
     ) -> IJEPAOutput:
-        """Forward pass.
+        """Compute I-JEPA target prediction from input images.
 
         In training mode:
             - Samples target blocks and context region via :class:`IJEPAMasking`
             - Encodes context through student, targets through teacher (EMA)
-            - Predicts target representations from context
+            - Predicts target representations from context via predictor
             - Returns smooth L1 loss between predictions and targets
 
         In eval mode:
@@ -339,6 +331,45 @@ class IJEPA(Module):
             num_targets=mask_out.target_idx.shape[1],
             num_context=mask_out.context_idx.shape[1],
         )
+
+    def forward(self, batch: dict, stage: str) -> dict:
+        """Module-level forward for Lightning training and evaluation.
+
+        Runs I-JEPA context-to-target prediction and returns mean-pooled
+        student patch embeddings for downstream evaluation (e.g. linear
+        probing, KNN). Logs the prediction loss at every step and epoch.
+
+        Expected batch keys:
+
+            - ``"image"`` *(required)*: Input images ``[B, C, H, W]``
+            - ``"label"`` *(optional)*: Class labels ``[B]``,
+              passed through when present (e.g. for online probes)
+
+        :param batch: Batch dictionary from the dataloader.
+        :param stage: Lightning stage string (``"fit"``, ``"validate"``,
+            ``"test"``, or ``"predict"``).
+        :return: Dictionary with:
+
+            - ``"loss"``: Smooth-L1 prediction loss scalar
+            - ``"embedding"``: Mean-pooled student patch features ``[B, D]``
+              (detached during training to prevent probe gradients from
+              interfering with the encoder)
+            - ``"label"``: Class labels ``[B]`` *(only if present in batch)*
+        """
+        output = self.forward_model(batch["image"], embedding_source="student")
+        embedding = output.embedding.mean(dim=1)
+        if self.training:
+            embedding = embedding.detach()
+
+        self.log(
+            f"{stage}/loss", output.loss, on_step=True, on_epoch=True, sync_dist=True
+        )
+
+        return {
+            "loss": output.loss,
+            "embedding": embedding,
+            **({"label": batch["label"].long()} if "label" in batch else {}),
+        }
 
     def _fix_init_weight(self):
         """Rescale attention proj and MLP output weights by depth, matching I-JEPA init from the repo."""
