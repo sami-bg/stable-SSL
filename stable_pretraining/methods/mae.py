@@ -173,9 +173,7 @@ class MAE(Module):
         with torch.no_grad():
             features = self.encoder.forward_features(images)
 
-        self.log(
-            f"{stage}/loss", loss, on_step=True, on_epoch=True, sync_dist=True
-        )
+        self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, sync_dist=True)
 
         return {
             "loss": loss,

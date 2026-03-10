@@ -305,9 +305,7 @@ class IJEPA(Module):
         if self.training:
             embedding = embedding.detach()
 
-        self.log(
-            f"{stage}/loss", loss, on_step=True, on_epoch=True, sync_dist=True
-        )
+        self.log(f"{stage}/loss", loss, on_step=True, on_epoch=True, sync_dist=True)
 
         return {
             "loss": loss,
