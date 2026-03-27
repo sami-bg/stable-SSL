@@ -4,7 +4,7 @@ from .env_info import EnvironmentDumpCallback
 from .registry import ModuleRegistryCallback
 from .unused_parameters import LogUnusedParametersOnce
 from .cpu_offload import CPUOffloadCallback
-
+from .hf_models import HuggingFaceCheckpointCallback
 
 def default():
     """Factory function that returns default callbacks."""
@@ -20,6 +20,7 @@ def default():
         SLURMInfo(),
         LogUnusedParametersOnce(),
         CPUOffloadCallback(),
+        HuggingFaceCheckpointCallback()
     ]
 
     return callbacks

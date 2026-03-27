@@ -22,6 +22,7 @@ from .env_info import EnvironmentDumpCallback
 from .cpu_offload import CPUOffloadCallback
 from .registry import ModuleRegistryCallback
 from .unused_parameters import LogUnusedParametersOnce
+from .hf_models import HuggingFaceCheckpointCallback
 
 __all__ = [
     OnlineProbe,
@@ -49,4 +50,5 @@ __all__ = [
     EnvironmentDumpCallback,
     ModuleRegistryCallback,
     LogUnusedParametersOnce,
+    HuggingFaceCheckpointCallback
 ]
