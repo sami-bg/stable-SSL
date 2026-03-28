@@ -181,6 +181,8 @@ class DataModule(pl.LightningDataModule):
         return loader
 
     def val_dataloader(self):
+        if self.val is None:
+            return []
         if isinstance(self.val, DataLoader):
             if hasattr(self.val.dataset, "set_pl_trainer"):
                 self.val.dataset.set_pl_trainer(self._trainer)
