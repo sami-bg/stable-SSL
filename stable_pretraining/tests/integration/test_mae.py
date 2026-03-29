@@ -193,7 +193,10 @@ class TestMAEIntegration:
         mask = output.mask
 
         # Check that masking is applied
-        assert mask.shape == (2, 196)  # mask for each patch (float: 0=visible, 1=masked)
+        assert mask.shape == (
+            2,
+            196,
+        )  # mask for each patch (float: 0=visible, 1=masked)
 
         # Verify some patches are masked and not all
         assert mask.sum() > 0

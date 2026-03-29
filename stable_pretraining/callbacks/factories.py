@@ -6,6 +6,7 @@ from .unused_parameters import LogUnusedParametersOnce
 from .cpu_offload import CPUOffloadCallback
 from .hf_models import HuggingFaceCheckpointCallback
 
+
 def default():
     """Factory function that returns default callbacks."""
     callbacks = [
@@ -20,7 +21,7 @@ def default():
         SLURMInfo(),
         LogUnusedParametersOnce(),
         CPUOffloadCallback(),
-        HuggingFaceCheckpointCallback()
+        HuggingFaceCheckpointCallback(),
     ]
 
     return callbacks

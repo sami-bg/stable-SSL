@@ -50,5 +50,5 @@ __all__ = [
     EnvironmentDumpCallback,
     ModuleRegistryCallback,
     LogUnusedParametersOnce,
-    HuggingFaceCheckpointCallback
+    HuggingFaceCheckpointCallback,
 ]

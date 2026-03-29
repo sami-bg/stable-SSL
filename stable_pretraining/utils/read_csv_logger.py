@@ -10,6 +10,7 @@ import concurrent.futures
 
 # ========== Internal Functions ==========
 
+
 def _optimize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     logger.info("Optimizing DataFrame dtypes...")
     df_opt = df.copy()
@@ -27,18 +28,23 @@ def _optimize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in df_opt.columns:
         # Use a more efficient check for Path objects
         sample_val = df_opt[col].iloc[0] if not df_opt[col].empty else None
-        
+
         # Check for Path objects (PosixPath/WindowsPath)
-        if isinstance(sample_val, Path) or df_opt[col].apply(lambda x: isinstance(x, Path)).any():
+        if (
+            isinstance(sample_val, Path)
+            or df_opt[col].apply(lambda x: isinstance(x, Path)).any()
+        ):
             logger.warning(f"Column '{col}' contains Path objects, converting to str.")
             df_opt[col] = df_opt[col].astype(str)
 
         # Handle Categorical conversion for low-cardinality strings/objects
-        if pd.api.types.is_object_dtype(df_opt[col]) or pd.api.types.is_string_dtype(df_opt[col]):
+        if pd.api.types.is_object_dtype(df_opt[col]) or pd.api.types.is_string_dtype(
+            df_opt[col]
+        ):
             # Skip if it's already a category
             if pd.api.types.is_categorical_dtype(df_opt[col]):
                 continue
-                
+
             num_unique = df_opt[col].nunique()
             num_total = len(df_opt)
             if num_total > 0 and (num_unique / num_total) < 0.5:

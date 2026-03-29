@@ -417,7 +417,7 @@ The library is not yet available on PyPI. You can install it from the source cod
     tar xzf install-tl-unx.tar.gz
     cd install-tl-*/
     ./install-tl --texdir ~/texlive --no-interaction --scheme=scheme-basic
-    ~/texlive/bin/x86_64-linux/tlmgr install type1cm cm-super dvipng collection-fontsrecommended amsmath amssymb bm underscore
+    ~/texlive/bin/x86_64-linux/tlmgr install type1cm cm-super dvipng collection-fontsrecommended amsmath amssymb bm underscore xcolor
     ```
 
     Add to your `~/.bashrc` (or equivalent):

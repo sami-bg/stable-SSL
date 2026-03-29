@@ -202,7 +202,9 @@ class HFMapDataset(Dataset):
     :func:`HFDataset` factory instead.
     """
 
-    def __init__(self, dataset, transform=None, rename_columns=None, remove_columns=None):
+    def __init__(
+        self, dataset, transform=None, rename_columns=None, remove_columns=None
+    ):
         super().__init__(transform)
         dataset = dataset.add_column("sample_idx", list(range(dataset.num_rows)))
         if rename_columns:
@@ -255,7 +257,9 @@ class HFIterableDataset(IterableDataset):
     :func:`HFDataset` factory instead.
     """
 
-    def __init__(self, dataset, transform=None, rename_columns=None, remove_columns=None):
+    def __init__(
+        self, dataset, transform=None, rename_columns=None, remove_columns=None
+    ):
         super().__init__(transform)
         dataset = dataset.map(
             lambda sample, idx: {**sample, "sample_idx": idx}, with_indices=True
@@ -295,9 +299,13 @@ class HFIterableDataset(IterableDataset):
 # ---------------------------------------------------------------------------
 
 
-def HFDataset(*args, transform=None, rename_columns=None, remove_columns=None, **kwargs):
-    """Create a HuggingFace dataset wrapper, automatically choosing map-style
-    or streaming based on ``streaming=True/False`` in *kwargs*.
+def HFDataset(
+    *args, transform=None, rename_columns=None, remove_columns=None, **kwargs
+):
+    """Create a HuggingFace dataset wrapper.
+
+    Automatically chooses map-style or streaming based on
+    ``streaming=True/False`` in *kwargs*.
 
     The returned object is either an :class:`HFMapDataset` (subclass of
     :class:`torch.utils.data.Dataset`) or an :class:`HFIterableDataset`

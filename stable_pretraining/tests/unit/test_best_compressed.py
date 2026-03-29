@@ -59,12 +59,15 @@ def test_get_extension():
     assert _get_extension("csv", "zstd") == ".csv.zst"
     assert _get_extension("csv", "zip") == ".csv.zip"
 
+
 @pytest.mark.unit
 def test_optimize_dataframe():
-    df = pd.DataFrame({
-        "category_col": ["A", "B", "A", "B", "A"],  # Low cardinality (0.4 ratio)
-        "object_col": ["x", "y", "z", "w", "v"],    # High cardinality (1.0 ratio)
-    })
+    df = pd.DataFrame(
+        {
+            "category_col": ["A", "B", "A", "B", "A"],  # Low cardinality (0.4 ratio)
+            "object_col": ["x", "y", "z", "w", "v"],  # High cardinality (1.0 ratio)
+        }
+    )
 
     df_opt = _optimize_dataframe(df)
 
@@ -74,8 +77,9 @@ def test_optimize_dataframe():
     # Check that high cardinality stayed as a string-like type (NOT category)
     # This is the robust way to check "it stayed as it was"
     assert not isinstance(df_opt["object_col"].dtype, pd.CategoricalDtype)
-    assert pd.api.types.is_string_dtype(df_opt["object_col"]) or \
-           pd.api.types.is_object_dtype(df_opt["object_col"])
+    assert pd.api.types.is_string_dtype(
+        df_opt["object_col"]
+    ) or pd.api.types.is_object_dtype(df_opt["object_col"])
 
 
 @pytest.mark.unit
