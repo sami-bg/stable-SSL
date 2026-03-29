@@ -127,11 +127,16 @@ class CPUOffloadCallback(Callback):
         return moved, nbytes
 
     def _to_cpu_recursive(self, obj: Any, parent: Any = None, key: Any = None) -> tuple:
-        """Walk the checkpoint tree, moving only GPU tensors to CPU."""
+        """Walk the checkpoint tree, copying GPU tensors to CPU.
+
+        Uses ``.detach().cpu()`` so the live optimizer/model state on GPU is
+        not affected — the checkpoint gets a CPU *copy*, the originals stay
+        on their device.
+        """
         if isinstance(obj, torch.Tensor):
             if obj.is_cuda:
                 nbytes = obj.element_size() * obj.nelement()
-                parent[key] = obj.cpu()
+                parent[key] = obj.detach().clone().cpu()
                 return 1, nbytes
             return 0, 0
 
