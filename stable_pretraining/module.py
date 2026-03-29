@@ -275,7 +275,11 @@ class Module(pl.LightningModule):
                 schedulers[idx].step()
 
             # Log learning rate for each optimizer
-            lr = opt.optimizer.param_groups[0]["lr"] if isinstance(opt, LightningOptimizer) else opt.param_groups[0]["lr"]
+            lr = (
+                opt.optimizer.param_groups[0]["lr"]
+                if isinstance(opt, LightningOptimizer)
+                else opt.param_groups[0]["lr"]
+            )
             _spt_log(f"hparams/lr_{name}", lr, on_step=True, on_epoch=False)
 
         # zero grad what's needed

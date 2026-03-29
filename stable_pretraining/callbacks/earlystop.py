@@ -115,12 +115,16 @@ class EpochMilestones(pl.Callback):
             logging.info(f"EpochMilestones: Maximum value is {final}")
             if self.verbose:
                 _spt_log(
-                    "epoch_milestones/value", float(final),
-                    on_step=False, on_epoch=True,
+                    "epoch_milestones/value",
+                    float(final),
+                    on_step=False,
+                    on_epoch=True,
                 )
                 _spt_log(
-                    "epoch_milestones/threshold", float(self.milestones[epoch]),
-                    on_step=False, on_epoch=True,
+                    "epoch_milestones/threshold",
+                    float(self.milestones[epoch]),
+                    on_step=False,
+                    on_epoch=True,
                 )
             if final < self.milestones[epoch]:
                 logging.warning(
@@ -138,12 +142,16 @@ class EpochMilestones(pl.Callback):
             logging.info(f"EpochMilestones: Minimum value is {final}")
             if self.verbose:
                 _spt_log(
-                    "epoch_milestones/value", float(final),
-                    on_step=False, on_epoch=True,
+                    "epoch_milestones/value",
+                    float(final),
+                    on_step=False,
+                    on_epoch=True,
                 )
                 _spt_log(
-                    "epoch_milestones/threshold", float(self.milestones[epoch]),
-                    on_step=False, on_epoch=True,
+                    "epoch_milestones/threshold",
+                    float(self.milestones[epoch]),
+                    on_step=False,
+                    on_epoch=True,
                 )
             if final > self.milestones[epoch]:
                 logging.warning(

@@ -171,7 +171,9 @@ class OnlineQueue(Callback):
 
             if self.verbose:
                 queue = self._shared_queues[self.key]
-                n_items = queue.max_length if queue.filled else int(queue.pointer.item())
+                n_items = (
+                    queue.max_length if queue.filled else int(queue.pointer.item())
+                )
                 fill = n_items / queue.max_length if queue.max_length > 0 else 0.0
                 _spt_log(
                     f"queue/{self.key}_fill_pct",

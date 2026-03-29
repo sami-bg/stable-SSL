@@ -1,6 +1,6 @@
 # test_callback_verbose_logging.py
 """Unit tests for verbose logging via stable_pretraining.log across callbacks."""
-import warnings
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +9,6 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, TensorDataset
 
 from stable_pretraining.callbacks.registry import (
-    ModuleRegistryCallback,
     _MODULE_REGISTRY,
     _METRIC_BUFFER,
     _DICT_BUFFER,
@@ -22,6 +21,7 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def clean_registry():
@@ -47,6 +47,7 @@ def dummy_dataloader():
 # ---------------------------------------------------------------------------
 # WeightDecayUpdater
 # ---------------------------------------------------------------------------
+
 
 class TestWeightDecayUpdaterVerbose:
     """Test that WeightDecayUpdater logs weight decay via stable_pretraining.log."""
@@ -99,6 +100,7 @@ class TestWeightDecayUpdaterVerbose:
 # ---------------------------------------------------------------------------
 # TeacherStudentCallback
 # ---------------------------------------------------------------------------
+
 
 class TestTeacherStudentVerbose:
     """Test that TeacherStudentCallback logs EMA coefficient."""
@@ -157,6 +159,7 @@ class TestTeacherStudentVerbose:
 # LiDAR
 # ---------------------------------------------------------------------------
 
+
 class TestLiDARVerbose:
     """Test that LiDAR returns dict and logs entropy/eigenvalue."""
 
@@ -190,6 +193,7 @@ class TestLiDARVerbose:
 # RankMe
 # ---------------------------------------------------------------------------
 
+
 class TestRankMeVerbose:
     """Test that RankMe logs entropy and singular value stats when verbose."""
 
@@ -218,6 +222,7 @@ class TestRankMeVerbose:
 # ---------------------------------------------------------------------------
 # EpochMilestones
 # ---------------------------------------------------------------------------
+
 
 class TestEpochMilestonesVerbose:
     """Test that EpochMilestones logs value/threshold when verbose."""
@@ -270,6 +275,7 @@ class TestEpochMilestonesVerbose:
 # OnlineQueue
 # ---------------------------------------------------------------------------
 
+
 class TestOnlineQueueVerbose:
     """Test that OnlineQueue logs fill percentage when verbose."""
 
@@ -286,6 +292,7 @@ class TestOnlineQueueVerbose:
 # ---------------------------------------------------------------------------
 # Module LR logging
 # ---------------------------------------------------------------------------
+
 
 class TestModuleLRLogging:
     """Test that Module logs per-optimizer LR via stable_pretraining.log."""

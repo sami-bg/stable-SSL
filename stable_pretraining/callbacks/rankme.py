@@ -107,12 +107,8 @@ class RankMe(Callback):
 
                 pl_module.log(self.name, rankme.item())
                 if self.verbose:
-                    _spt_log(
-                        f"{self.name}/entropy", entropy.item()
-                    )
-                    _spt_log(
-                        f"{self.name}/top_singular_value", s[0].item()
-                    )
+                    _spt_log(f"{self.name}/entropy", entropy.item())
+                    _spt_log(f"{self.name}/top_singular_value", s[0].item())
                     _spt_log(
                         f"{self.name}/condition_number",
                         (s[0] / s[-1].clamp(min=1e-10)).item(),
