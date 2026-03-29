@@ -4,6 +4,8 @@ import torch
 from lightning.pytorch import Callback, LightningModule, Trainer
 from loguru import logger as logging
 
+from .registry import log as _spt_log
+
 from .queue import find_or_create_queue_callback
 
 
@@ -27,6 +29,7 @@ class RankMe(Callback):
         target: str,
         queue_length: int,
         target_shape: Union[int, Iterable[int]],
+        verbose: bool = True,
     ) -> None:
         super().__init__()
 
@@ -40,6 +43,7 @@ class RankMe(Callback):
         self.target = target
         self.queue_length = queue_length
         self.target_shape = target_shape
+        self.verbose = verbose
 
         self._target_queue = None
 
@@ -102,3 +106,14 @@ class RankMe(Callback):
                 rankme = torch.exp(entropy)
 
                 pl_module.log(self.name, rankme.item())
+                if self.verbose:
+                    _spt_log(
+                        f"{self.name}/entropy", entropy.item()
+                    )
+                    _spt_log(
+                        f"{self.name}/top_singular_value", s[0].item()
+                    )
+                    _spt_log(
+                        f"{self.name}/condition_number",
+                        (s[0] / s[-1].clamp(min=1e-10)).item(),
+                    )

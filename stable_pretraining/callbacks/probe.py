@@ -78,6 +78,7 @@ class OnlineProbe(TrainableCallback):
         gradient_clip_val: float = None,
         gradient_clip_algorithm: str = "norm",
         metrics: Optional[Union[dict, tuple, list, torchmetrics.Metric]] = None,
+        verbose: bool = True,
     ) -> None:
         # Initialize base class
         self.input = input
@@ -85,6 +86,7 @@ class OnlineProbe(TrainableCallback):
         if loss is None:
             logging.warning(f"Not loss given to {name}, will use output of `probe`")
         self.loss = loss
+        self.verbose = verbose
 
         # Store probe configuration for later initialization
         self._probe_config = probe

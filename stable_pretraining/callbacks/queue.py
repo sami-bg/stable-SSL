@@ -11,6 +11,8 @@ import torch
 from lightning.pytorch import Callback, LightningModule, Trainer
 from loguru import logger as logging
 
+from .registry import log as _spt_log
+
 from ..utils import OrderedQueue, get_data_from_batch_or_outputs
 
 
@@ -51,6 +53,7 @@ class OnlineQueue(Callback):
         dim: Optional[Union[int, tuple]] = None,
         dtype: Optional[torch.dtype] = None,
         gather_distributed: bool = False,
+        verbose: bool = True,
     ) -> None:
         super().__init__()
 
@@ -59,6 +62,7 @@ class OnlineQueue(Callback):
         self.dim = dim
         self.dtype = dtype
         self.gather_distributed = gather_distributed
+        self.verbose = verbose
         self._snapshot = None
 
         logging.info(f"OnlineQueue initialized for key '{key}'")
@@ -164,6 +168,17 @@ class OnlineQueue(Callback):
 
             # Append to the shared queue
             self._shared_queues[self.key].append(data)
+
+            if self.verbose:
+                queue = self._shared_queues[self.key]
+                n_items = queue.max_length if queue.filled else int(queue.pointer.item())
+                fill = n_items / queue.max_length if queue.max_length > 0 else 0.0
+                _spt_log(
+                    f"queue/{self.key}_fill_pct",
+                    fill,
+                    on_step=True,
+                    on_epoch=False,
+                )
 
     def on_validation_epoch_start(
         self, trainer: Trainer, pl_module: LightningModule

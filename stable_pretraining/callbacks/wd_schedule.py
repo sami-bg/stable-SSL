@@ -2,6 +2,8 @@ import math
 from loguru import logger
 from lightning.pytorch import Callback, Trainer, LightningModule
 
+from .registry import log as _spt_log
+
 
 class WeightDecayUpdater(Callback):
     """PyTorch Lightning Callback to update optimizer's weight decay per batch.
@@ -25,6 +27,7 @@ class WeightDecayUpdater(Callback):
         end_value: float = 0.0,
         param_group_indices: list = None,
         opt_idx: int = None,
+        verbose: bool = True,
     ):
         super().__init__()
         self.schedule_type = schedule_type
@@ -33,6 +36,7 @@ class WeightDecayUpdater(Callback):
         self.param_group_indices = param_group_indices
         self.total_steps = None  # Will be set in on_fit_start
         self.opt_idx = opt_idx
+        self.verbose = verbose
 
     def on_fit_start(self, trainer: Trainer, pl_module: LightningModule):
         # Prefer max_steps if set
@@ -66,6 +70,13 @@ class WeightDecayUpdater(Callback):
             param_group["weight_decay"] = new_weight_decay
             logger.debug(
                 f"[WeightDecayUpdater] Step {step}: param_group {i} weight_decay {old_wd} -> {new_weight_decay}"
+            )
+        if self.verbose:
+            _spt_log(
+                "hparams/weight_decay",
+                new_weight_decay,
+                on_step=True,
+                on_epoch=False,
             )
 
     def _compute_weight_decay(self, step: int) -> float:

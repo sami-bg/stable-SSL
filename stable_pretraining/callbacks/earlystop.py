@@ -4,6 +4,8 @@ from loguru import logger as logging
 import numpy as np
 import torchmetrics
 
+from .registry import log as _spt_log
+
 
 def to_scalar(x):
     if isinstance(x, torchmetrics.Metric):
@@ -55,6 +57,7 @@ class EpochMilestones(pl.Callback):
         direction: str = "max",
         after_validation: bool = True,
         strict: bool = True,
+        verbose: bool = True,
     ):
         if monitor is None and contains is None:
             raise ValueError("`monitor` and `contains` can't both be None")
@@ -70,6 +73,7 @@ class EpochMilestones(pl.Callback):
         self.milestones = milestones
         self.direction = direction
         self.after_validation = after_validation
+        self.verbose = verbose
 
     def _check_condition(self, trainer):
         # Get the current epoch
@@ -109,6 +113,15 @@ class EpochMilestones(pl.Callback):
         if self.direction == "max":
             final = np.max([to_scalar(x) for x in values])
             logging.info(f"EpochMilestones: Maximum value is {final}")
+            if self.verbose:
+                _spt_log(
+                    "epoch_milestones/value", float(final),
+                    on_step=False, on_epoch=True,
+                )
+                _spt_log(
+                    "epoch_milestones/threshold", float(self.milestones[epoch]),
+                    on_step=False, on_epoch=True,
+                )
             if final < self.milestones[epoch]:
                 logging.warning(
                     f"EpochMilestones: Value {final} below threshold"
@@ -123,6 +136,15 @@ class EpochMilestones(pl.Callback):
         else:
             final = np.min([to_scalar(x) for x in values])
             logging.info(f"EpochMilestones: Minimum value is {final}")
+            if self.verbose:
+                _spt_log(
+                    "epoch_milestones/value", float(final),
+                    on_step=False, on_epoch=True,
+                )
+                _spt_log(
+                    "epoch_milestones/threshold", float(self.milestones[epoch]),
+                    on_step=False, on_epoch=True,
+                )
             if final > self.milestones[epoch]:
                 logging.warning(
                     f"EpochMilestones: Value {final} above threshold"

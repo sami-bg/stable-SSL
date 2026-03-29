@@ -14,6 +14,8 @@ from lightning.pytorch import LightningModule, Trainer
 from loguru import logger as logging
 from torch import Tensor
 
+from .registry import log as _spt_log
+
 from ..utils.distance_metrics import compute_pairwise_distances_chunked
 
 from .queue import find_or_create_queue_callback
@@ -79,6 +81,7 @@ class LatentViz(TrainableCallback):
         plot_interval: int = 10,
         save_dir: Optional[str] = None,
         input_dim: Optional[Union[int, tuple, list]] = None,
+        verbose: bool = True,
     ):
         super().__init__(
             name=name,
@@ -106,6 +109,7 @@ class LatentViz(TrainableCallback):
         self.input_dim = input_dim
 
         self._projection_config = projection
+        self.verbose = verbose
 
         # Will be initialized in setup
         self._input_queue = None
@@ -245,6 +249,21 @@ class LatentViz(TrainableCallback):
             prog_bar=True,
             sync_dist=True,
         )
+        if self.verbose:
+            _spt_log(
+                f"train/{self.name}_attraction_loss",
+                self._last_attraction_loss,
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+            )
+            _spt_log(
+                f"train/{self.name}_repulsion_loss",
+                self._last_repulsion_loss,
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+            )
 
         self.optimizer_step(batch_idx, trainer)
 
@@ -309,6 +328,10 @@ class LatentViz(TrainableCallback):
         repulsion_loss = -((1 - q_negatives).clamp(min=1e-10).log()).mean()
 
         total_loss = attraction_loss + repulsion_loss
+
+        # Store components for verbose logging
+        self._last_attraction_loss = attraction_loss.item()
+        self._last_repulsion_loss = repulsion_loss.item()
 
         return total_loss
 

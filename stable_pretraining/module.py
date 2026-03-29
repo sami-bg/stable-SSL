@@ -13,6 +13,7 @@ from prettytable import PrettyTable
 from lightning.pytorch.core.optimizer import LightningOptimizer
 from .optim import create_optimizer, create_scheduler
 from stable_pretraining.utils.error_handling import catch_errors_class
+from stable_pretraining.callbacks.registry import log as _spt_log
 
 
 @catch_errors_class()
@@ -272,6 +273,10 @@ class Module(pl.LightningModule):
             # Step its scheduler if it exists
             if schedulers[idx] is not None:
                 schedulers[idx].step()
+
+            # Log learning rate for each optimizer
+            lr = opt.optimizer.param_groups[0]["lr"] if isinstance(opt, LightningOptimizer) else opt.param_groups[0]["lr"]
+            _spt_log(f"hparams/lr_{name}", lr, on_step=True, on_epoch=False)
 
         # zero grad what's needed
         for opt in zero_grad_opts:

@@ -73,6 +73,7 @@ class OnlineKNN(Callback):
         distance_metric: Literal[
             "euclidean", "squared_euclidean", "cosine", "manhattan"
         ] = "euclidean",
+        verbose: bool = True,
     ) -> None:
         super().__init__()
 
@@ -97,6 +98,7 @@ class OnlineKNN(Callback):
         self.chunk_size = chunk_size
         self.distance_metric = distance_metric
         self.metrics = metrics
+        self.verbose = verbose
 
         self._input_queue = None
         self._target_queue = None

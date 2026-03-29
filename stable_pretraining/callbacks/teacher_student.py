@@ -4,6 +4,8 @@ import lightning as pl
 from lightning.pytorch.callbacks import Callback
 from loguru import logger as logging
 
+from .registry import log as _spt_log
+
 
 class TeacherStudentCallback(Callback):
     """Automatically updates TeacherStudentWrapper instances during training.
@@ -28,10 +30,16 @@ class TeacherStudentCallback(Callback):
         >>> trainer = pl.Trainer(callbacks=[TeacherStudentCallback()])
     """
 
-    def __init__(self, update_frequency: int = 1, update_after_backward: bool = False):
+    def __init__(
+        self,
+        update_frequency: int = 1,
+        update_after_backward: bool = False,
+        verbose: bool = True,
+    ):
         super().__init__()
         self.update_frequency = update_frequency
         self.update_after_backward = update_after_backward
+        self.verbose = verbose
         self._wrapper_found = False
         # Track optimizer-step progress and accumulation steps
         self._last_global_step = -1
@@ -107,6 +115,15 @@ class TeacherStudentCallback(Callback):
                         trainer.current_epoch, trainer.max_epochs
                     )
                 module.update_teacher()
+
+                # Log EMA coefficient if available
+                if self.verbose and hasattr(module, "ema_coefficient"):
+                    _spt_log(
+                        f"teacher_student/{getattr(module, 'name', 'ema')}_coefficient",
+                        float(module.ema_coefficient),
+                        on_step=True,
+                        on_epoch=False,
+                    )
 
                 # Mark that updates are happening (for warning system)
                 if hasattr(module, "_mark_updated"):
