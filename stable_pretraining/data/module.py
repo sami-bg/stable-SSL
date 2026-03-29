@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
 from .sampler import RepeatedRandomSampler
-from .datasets import HFDataset
+from .datasets import HFMapDataset, HFIterableDataset
 
 
 class DictFormat(Dataset):
@@ -75,7 +75,7 @@ class DataModule(pl.LightningDataModule):
             return None
         if isinstance(conf, DataLoader):
             return conf
-        elif isinstance(conf["dataset"], HFDataset):
+        elif isinstance(conf["dataset"], (HFMapDataset, HFIterableDataset)):
             logging.info(f"\t● {stage} already has an instantiated dataset! ✅")
         elif type(conf) is dict:
             logging.info(f"\t● {stage} has `dict` type and no instantiated dataset!")

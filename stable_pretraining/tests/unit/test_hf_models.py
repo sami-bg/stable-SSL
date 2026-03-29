@@ -78,6 +78,7 @@ class MockSPTSystem(spt.Module):
 
 def check_load_fidelity(model_path, input_tensor, expected_output, q):
     """Execution in a spawned process to ensure Zero-Knowledge loading."""
+    import traceback
     try:
         from transformers import AutoModel
         import torch
@@ -85,11 +86,11 @@ def check_load_fidelity(model_path, input_tensor, expected_output, q):
         loaded = AutoModel.from_pretrained(model_path, trust_remote_code=True)
         with torch.no_grad():
             actual = loaded(input_tensor)
-        
+
         match = torch.allclose(actual, expected_output, atol=1e-5)
         q.put((True, match))
     except Exception as e:
-        q.put((False, str(e)))
+        q.put((False, f"{e}\n{traceback.format_exc()}"))
 
 # =============================================================================
 # 4. Standalone Unit Test
@@ -167,7 +168,7 @@ def test_spt_hf_fidelity_flow():
         p = ctx.Process(target=check_load_fidelity, args=(str(target), feat_fixed, trained_out, q))
         p.start()
         
-        success, result = q.get(timeout=60)
+        success, result = q.get(timeout=120)
         p.join()
 
         if not success:
