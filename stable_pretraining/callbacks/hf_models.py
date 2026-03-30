@@ -111,7 +111,10 @@ class HuggingFaceCheckpointCallback(Callback):
         """Create an atomic HF-compatible export for every found submodule.
 
         Triggered by Lightning's checkpointing logic.
+        Only rank 0 performs the export to avoid filesystem race conditions.
         """
+        if trainer.global_rank != 0:
+            return
         step = trainer.global_step
         hf_step_dir = self.save_dir / f"step_{step}"
 

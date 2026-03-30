@@ -72,7 +72,7 @@ class OnlineWriter(Callback):
 
         if not path.is_dir():
             logging.warning(f"! path {path} does not exist, creating it")
-            path.mkdir(parents=True, exist_ok=False)
+            path.mkdir(parents=True, exist_ok=True)
 
     def on_sanity_check_start(self, trainer, pl_module):
         self.is_sanity_check = True

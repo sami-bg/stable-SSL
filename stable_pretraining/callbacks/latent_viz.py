@@ -372,8 +372,11 @@ class LatentViz(TrainableCallback):
 
             z_2d = self.module(cached_features)
 
-        # Create visualization
-        self._plot_2d_embeddings(z_2d, cached_labels, trainer.current_epoch, trainer)
+        # Create visualization (only rank 0 writes files / logs to wandb)
+        if trainer.global_rank == 0:
+            self._plot_2d_embeddings(
+                z_2d, cached_labels, trainer.current_epoch, trainer
+            )
 
     def _plot_2d_embeddings(
         self, z_2d: Tensor, labels: Optional[Tensor], epoch: int, trainer: Trainer
