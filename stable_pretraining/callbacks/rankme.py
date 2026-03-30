@@ -64,7 +64,7 @@ class RankMe(Callback):
                 gather_distributed=True,
                 create_if_missing=True,
             )
-            logging.info(f"{self.name}: Using queue for target '{self.target}'")
+            logging.info(f"  target queue: {self.target}")
 
     def on_validation_batch_end(
         self,
@@ -79,19 +79,19 @@ class RankMe(Callback):
         if batch_idx > 0:
             return
 
-        logging.info(f"{self.name}: Computing RankMe on first validation batch")
+        logging.info("  computing RankMe on first validation batch")
 
         embeddings = self._target_queue.data
 
         if embeddings is None:
             logging.warning(
-                f"{self.name}: Queue data not available (not in validation?)"
+                f"! {self.name}: queue data not available (not in validation?)"
             )
             return
 
         if embeddings.numel() == 0:
             logging.warning(
-                f"{self.name}: Queue data is empty, skipping RankMe computation"
+                f"! {self.name}: queue data is empty, skipping RankMe computation"
             )
             return
 

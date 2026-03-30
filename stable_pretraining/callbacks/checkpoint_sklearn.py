@@ -10,6 +10,7 @@ from typing import Any, Dict
 import lightning.pytorch as pl
 from loguru import logger
 
+from .utils import log_header
 from .. import SKLEARN_AVAILABLE
 
 if SKLEARN_AVAILABLE:
@@ -47,12 +48,12 @@ class SklearnCheckpoint(Callback):
         for name, module in sklearn_modules.items():
             stats.append((name, module.__str__(), type(module)))
         headers = ["Module", "Name", "Type"]
-        logging.info("Setting up SklearnCheckpoint callback!")
-        logging.info("Sklearn Modules:")
+        log_header("SklearnCheckpoint")
+        logging.info("  Sklearn Modules:")
         logging.info(f"\n{tabulate(stats, headers, tablefmt='heavy_outline')}")
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("Checking for non PyTorch modules to save... 🔧")
+        logging.info("  Checking for non PyTorch modules to save")
         modules = _get_sklearn_modules(pl_module)
         for name, module in modules.items():
             if name in checkpoint:
@@ -60,16 +61,16 @@ class SklearnCheckpoint(Callback):
                     f"Can't pickle {name}, already present in checkpoint"
                 )
             checkpoint[name] = module
-            logging.info(f"Saving non PyTorch system: {name} 🔧")
+            logging.info(f"  Saving non PyTorch system: {name}")
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("Checking for non PyTorch modules to load... 🔧")
+        logging.info("  Checking for non PyTorch modules to load")
         if not SKLEARN_AVAILABLE:
             return
         for name, item in checkpoint.items():
             if isinstance(item, RegressorMixin) or isinstance(item, ClassifierMixin):
                 setattr(pl_module, name, item)
-                logging.info(f"Loading non PyTorch system: {name} 🔧")
+                logging.info(f"  Loading non PyTorch system: {name}")
 
 
 def _contains_sklearn_module(item):
@@ -101,7 +102,7 @@ class StrictCheckpointCallback(Callback):
     def __init__(self, strict: bool = True):
         super().__init__()
         self.strict = strict
-        logger.info(f"StrictCheckpointCallback initialized with strict={self.strict}")
+        logger.info(f"  StrictCheckpointCallback initialized with strict={self.strict}")
 
     def on_load_checkpoint(
         self,
@@ -113,12 +114,11 @@ class StrictCheckpointCallback(Callback):
         if self.strict:
             return
 
-        logger.info("=" * 80)
-        logger.info("Processing checkpoint with strict=False")
-        logger.info("=" * 80)
+        log_header("StrictCheckpointCallback")
+        logger.info("  Processing checkpoint with strict=False")
 
         if "state_dict" not in checkpoint:
-            logger.warning("No 'state_dict' found in checkpoint.")
+            logger.warning("! No 'state_dict' found in checkpoint.")
             return
 
         checkpoint_state_dict = checkpoint["state_dict"]
@@ -152,7 +152,7 @@ class StrictCheckpointCallback(Callback):
                         }
                     )
                     logger.warning(
-                        f"❌ Shape mismatch for '{key}': "
+                        f"! Shape mismatch for '{key}': "
                         f"checkpoint={checkpoint_state_dict[key].shape}, "
                         f"model={model_state_dict[key].shape} - Using model's current value"
                     )
@@ -161,7 +161,7 @@ class StrictCheckpointCallback(Callback):
                 filtered_state_dict[key] = model_state_dict[key]
                 missing_in_checkpoint.append(key)
                 logger.warning(
-                    f"⚠️  Parameter missing in checkpoint: '{key}' - Using model's current value"
+                    f"! Parameter missing in checkpoint: '{key}' - Using model's current value"
                 )
 
         # 2. Check for extra keys in checkpoint
@@ -169,7 +169,7 @@ class StrictCheckpointCallback(Callback):
             if key not in model_state_dict:
                 missing_in_model.append(key)
                 logger.warning(
-                    f"⚠️  Parameter in checkpoint but not in model: '{key}' - SKIPPING"
+                    f"! Parameter in checkpoint but not in model: '{key}' - SKIPPING"
                 )
 
         # Update checkpoint with filtered state dict
@@ -179,12 +179,12 @@ class StrictCheckpointCallback(Callback):
         if missing_in_model or shape_mismatches or missing_in_checkpoint:
             if "optimizer_states" in checkpoint:
                 logger.warning(
-                    "🗑️  Clearing optimizer states due to parameter mismatches."
+                    "! Clearing optimizer states due to parameter mismatches."
                 )
                 checkpoint.pop("optimizer_states", None)
 
             if "lr_schedulers" in checkpoint:
-                logger.warning("🗑️  Clearing learning rate scheduler states.")
+                logger.warning("! Clearing learning rate scheduler states.")
                 checkpoint.pop("lr_schedulers", None)
 
         # Print summary
@@ -204,21 +204,18 @@ class StrictCheckpointCallback(Callback):
         shape_mismatches,
         total_model_params,
     ):
-        logger.info("-" * 80)
-        logger.info(f"✅ Successfully matched parameters: {len(matched_keys)}")
+        logger.success(f"✓ Successfully matched parameters: {len(matched_keys)}")
 
         if missing_in_checkpoint:
             logger.warning(
-                f"⚠️  Parameters missing in checkpoint: {len(missing_in_checkpoint)}"
+                f"! Parameters missing in checkpoint: {len(missing_in_checkpoint)}"
             )
 
         if missing_in_model:
-            logger.warning(
-                f"⚠️  Extra parameters in checkpoint: {len(missing_in_model)}"
-            )
+            logger.warning(f"! Extra parameters in checkpoint: {len(missing_in_model)}")
 
         if shape_mismatches:
-            logger.warning(f"❌ Shape mismatches found: {len(shape_mismatches)}")
+            logger.warning(f"! Shape mismatches found: {len(shape_mismatches)}")
 
         loaded_percentage = (
             (len(matched_keys) / total_model_params * 100)
@@ -226,9 +223,8 @@ class StrictCheckpointCallback(Callback):
             else 0
         )
         logger.info(
-            f"📊 Checkpoint loading coverage: {loaded_percentage:.2f}% ({len(matched_keys)}/{total_model_params})"
+            f"  Checkpoint loading coverage: {loaded_percentage:.2f}% ({len(matched_keys)}/{total_model_params})"
         )
-        logger.info("=" * 80)
 
 
 class WandbCheckpoint(Callback):
@@ -254,44 +250,44 @@ class WandbCheckpoint(Callback):
     def setup(
         self, trainer: Trainer, pl_module: LightningModule, stage: Optional[str] = None
     ) -> None:
-        logging.info("Setting up WandbCheckpoint callback!")
+        log_header("WandbCheckpoint")
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("Checking for Wandb params to save... 🔧")
+        logging.info("  Checking for Wandb params to save")
         if isinstance(trainer.logger, WandbLogger):
             checkpoint["wandb"] = {"id": trainer.logger.version}
             # checkpoint["wandb_checkpoint_name"] = trainer.logger._checkpoint_name
-            logging.info(f"Saving Wandb params {checkpoint['wandb']}")
-        logging.info("Checking for Wandb params to save... Done!")
+            logging.info(f"  Saving Wandb params {checkpoint['wandb']}")
+        logging.success("✓ Wandb params save check complete")
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("Checking for Wandb init params... 🔧")
+        logging.info("  Checking for Wandb init params")
         if "wandb" in checkpoint:
-            logging.info("Wandb info in checkpoint!!! Restoring same run... 🔧")
+            logging.info("  Wandb info in checkpoint, restoring same run")
             if not hasattr(trainer, "logger"):
-                logging.warning("Expected Trainer to have a logger, leaving...")
+                logging.warning("! Expected Trainer to have a logger, leaving")
                 return
             elif not isinstance(trainer.logger, WandbLogger):
                 logging.warning(
-                    f"Expected WandbLogger, got {trainer.logger}, leaving..."
+                    f"! Expected WandbLogger, got {trainer.logger}, leaving"
                 )
                 return
             else:
-                logging.info("Trainer has a WandbLogger!")
+                logging.info("  Trainer has a WandbLogger")
             import wandb
 
             if wandb.run is None and trainer.global_rank > 0:
                 logging.info(
-                    "Run not initialized yet, skipping since this is a slave process!"
+                    "  Run not initialized yet, skipping since this is a slave process"
                 )
                 return
             if wandb.run is not None and wandb.run.id == checkpoint["wandb"]["id"]:
                 logging.info(
-                    "Run already property initialized, skipping deletion and setup!"
+                    "  Run already properly initialized, skipping deletion and setup"
                 )
                 return
             logging.info(
-                f"Deleting current run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}... 🔧"
+                f"  Deleting current run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}"
             )
             api = wandb.Api()
             run = api.run(f"{wandb.run.entity}/{wandb.run.project}/{wandb.run.id}")
@@ -304,7 +300,7 @@ class WandbCheckpoint(Callback):
             # to reset the run
             trainer.logger.experiment
             logging.info(
-                f"New run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}... 🔧"
+                f"  New run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}"
             )
 
             # trainer.logger._wandb_init = wandb_init

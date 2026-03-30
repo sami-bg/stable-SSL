@@ -19,7 +19,6 @@ from .earlystop import EpochMilestones
 from .wd_schedule import WeightDecayUpdater
 from .cleanup import CleanUpCallback
 from .env_info import EnvironmentDumpCallback
-from .cpu_offload import CPUOffloadCallback
 from .registry import ModuleRegistryCallback
 from .unused_parameters import LogUnusedParametersOnce
 from .hf_models import HuggingFaceCheckpointCallback
@@ -39,7 +38,6 @@ __all__ = [
     RankMe,
     LiDAR,
     ImageRetrieval,
-    CPUOffloadCallback,
     TeacherStudentCallback,
     CLIPZeroShot,
     EmbeddingCache,

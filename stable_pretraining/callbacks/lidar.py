@@ -14,6 +14,7 @@ from loguru import logger as logging
 from .registry import log as _spt_log
 
 from .queue import find_or_create_queue_callback
+from .utils import log_header
 
 
 class LiDAR(Callback):
@@ -91,17 +92,18 @@ class LiDAR(Callback):
         min_required_samples = n_classes * samples_per_class
         if queue_length < min_required_samples:
             logging.warning(
-                f"{name}: Queue length ({queue_length}) is less than required "
-                f"samples ({min_required_samples} = {n_classes} classes × {samples_per_class} samples/class). "
+                f"! queue length ({queue_length}) is less than required "
+                f"samples ({min_required_samples} = {n_classes} classes x {samples_per_class} samples/class). "
                 f"LiDAR computation may use fewer classes than specified."
             )
 
-        logging.info(f"Initialized LiDAR callback: {name}")
-        logging.info(f"  - Target: {target}")
-        logging.info(f"  - Queue length: {queue_length}")
-        logging.info(f"  - Feature dimension: {target_shape}")
+        log_header("LiDAR")
+        logging.info(f"  name: {name}")
+        logging.info(f"  target: {target}")
+        logging.info(f"  queue_length: {queue_length}")
+        logging.info(f"  feature_dimension: {target_shape}")
         logging.info(
-            f"  - N classes: {n_classes}, Samples per class: {samples_per_class}"
+            f"  n_classes: {n_classes}, samples_per_class: {samples_per_class}"
         )
 
     @property
@@ -121,7 +123,7 @@ class LiDAR(Callback):
                 gather_distributed=True,
                 create_if_missing=True,
             )
-            logging.info(f"{self.name}: Using queue for target '{self.target}'")
+            logging.info(f"  target queue: {self.target}")
 
     def on_validation_batch_end(
         self,
@@ -136,16 +138,16 @@ class LiDAR(Callback):
         if batch_idx > 0:
             return
 
-        logging.info(f"{self.name}: Computing LiDAR on first validation batch")
+        logging.info("  computing LiDAR on first validation batch")
 
         embeddings = self._target_queue.data
 
         if embeddings is None:
-            logging.warning(f"{self.name}: Queue data not available")
+            logging.warning(f"! {self.name}: queue data not available")
             return
 
         if embeddings.numel() == 0:
-            logging.warning(f"{self.name}: Queue data is empty")
+            logging.warning(f"! {self.name}: queue data is empty")
             return
 
         # The queue already handles gathering across GPUs if gather_distributed=True
@@ -173,7 +175,7 @@ class LiDAR(Callback):
                     sync_dist=False,
                 )
             if trainer.global_rank == 0:
-                logging.info(f"{self.name}: LiDAR = {lidar_value['lidar']:.4f}")
+                logging.info(f"  LiDAR = {lidar_value['lidar']:.4f}")
 
     def _compute_lidar(self, embeddings: torch.Tensor) -> Optional[dict]:
         """Compute the LiDAR metric from embeddings.
@@ -191,7 +193,7 @@ class LiDAR(Callback):
 
         if actual_n_classes < 2:
             logging.warning(
-                f"{self.name}: Not enough samples for LiDAR computation. "
+                f"! {self.name}: not enough samples for LiDAR computation. "
                 f"Need at least {2 * self.samples_per_class} samples, got {n_samples}"
             )
             return None
@@ -255,7 +257,7 @@ class LiDAR(Callback):
             eigvals_with_eps = eigvals_lidar + self.epsilon
             eigvals_sum = eigvals_with_eps.sum()
             if eigvals_sum <= 0:
-                logging.warning(f"{self.name}: All eigenvalues are zero or negative")
+                logging.warning(f"! {self.name}: all eigenvalues are zero or negative")
                 return {"lidar": 1.0, "entropy": 0.0, "top_eigenvalue": 0.0}
 
             p = eigvals_with_eps / eigvals_sum

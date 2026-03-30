@@ -30,6 +30,8 @@ from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from loguru import logger
 
+from .utils import log_header
+
 try:
     from hydra.core.hydra_config import HydraConfig
 except ImportError:
@@ -192,7 +194,7 @@ class CleanUpCallback(Callback):
     @rank_zero_only
     def on_exception(self, trainer, pl_module, exception) -> None:
         self._exception = True
-        logger.warning("CleanUpCallback: training failed — skipping cleanup")
+        logger.warning("! training failed, skipping cleanup")
 
     @rank_zero_only
     def on_fit_end(self, trainer: Trainer, pl_module) -> None:
@@ -201,8 +203,10 @@ class CleanUpCallback(Callback):
 
         targets = self._collect_targets(trainer)
         if not targets:
-            logger.info("CleanUpCallback: no artifacts to clean up")
+            logger.info("  no artifacts to clean up")
             return
+
+        log_header("CleanUpCallback")
 
         total_bytes = 0
         deleted = 0
@@ -218,8 +222,7 @@ class CleanUpCallback(Callback):
 
             if self.dry_run:
                 logger.info(
-                    f"  [dry-run] would delete [{category}] "
-                    f"{path} ({_human_size(size)})"
+                    f"  [dry-run] would delete {category}: {path} ({_human_size(size)})"
                 )
                 continue
 
@@ -229,17 +232,17 @@ class CleanUpCallback(Callback):
                 else:
                     os.remove(path)
                 deleted += 1
-                logger.info(f"  deleted [{category}] {path} ({_human_size(size)})")
+                logger.info(f"  deleted {category}: {path} ({_human_size(size)})")
             except Exception as e:
-                logger.warning(f"  failed to delete {path}: {e}")
+                logger.warning(f"! failed to delete {path}: {e}")
 
         if self.dry_run:
             logger.info(
-                f"CleanUpCallback: dry-run — would free {_human_size(total_bytes)} "
+                f"  dry-run: would free {_human_size(total_bytes)} "
                 f"across {len(targets)} item(s)"
             )
         else:
             logger.success(
-                f"CleanUpCallback: deleted {deleted}/{len(targets)} item(s), "
+                f"✓ deleted {deleted}/{len(targets)} item(s), "
                 f"freed {_human_size(total_bytes)}"
             )

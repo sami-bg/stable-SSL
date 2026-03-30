@@ -6,6 +6,7 @@ from loguru import logger
 import lightning.pytorch as pl
 from lightning.pytorch.callbacks import Callback
 from transformers import PreTrainedModel
+from .utils import log_header
 
 
 class HuggingFaceCheckpointCallback(Callback):
@@ -46,9 +47,8 @@ class HuggingFaceCheckpointCallback(Callback):
         super().__init__()
         self.save_dir = Path(save_dir)
         self.verbose = verbose
-        logger.info(
-            f"Initialized HF Checkpoint Callback. Target: <cyan>{self.save_dir}</cyan>"
-        )
+        log_header("HuggingFaceCheckpoint")
+        logger.info(f"  save_dir: <cyan>{self.save_dir}</cyan>")
 
     def _get_hf_submodules(
         self, pl_module: pl.LightningModule
@@ -64,7 +64,7 @@ class HuggingFaceCheckpointCallback(Callback):
         """Renders a diagnostic table of discovered HF submodules using Loguru."""
         if not submodules:
             logger.warning(
-                "No Hugging Face (PreTrainedModel) submodules found in LightningModule."
+                "! No Hugging Face (PreTrainedModel) submodules found in LightningModule."
             )
             return
 
@@ -72,15 +72,15 @@ class HuggingFaceCheckpointCallback(Callback):
         header = f"| {'Module Name':<18} | {'Class Type':<22} | {'Config Type':<22} |"
         sep = f"|{'-' * 20}|{'-' * 24}|{'-' * 24}|"
 
-        logger.info("HF Submodule Discovery Summary:")
-        print(sep)
-        print(header)
-        print(sep)
+        logger.info("  HF Submodule Discovery Summary:")
+        logger.info(sep)
+        logger.info(header)
+        logger.info(sep)
         for name, mod in submodules.items():
-            print(
+            logger.info(
                 f"| {name:<18} | {mod.__class__.__name__:<22} | {mod.config.__class__.__name__:<22} |"
             )
-        print(sep)
+        logger.info(sep)
 
     def on_train_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
         """Discovers modules and logs the status table once at start."""
@@ -146,5 +146,5 @@ class HuggingFaceCheckpointCallback(Callback):
             self._copy_dependency_tree(model, model_save_path)
 
             logger.success(
-                f"Step {step}: Exported HF submodule '<green>{name}</green>' -> {model_save_path}"
+                f"Exported HF submodule '<green>{name}</green>' at step {step} -> {model_save_path}"
             )

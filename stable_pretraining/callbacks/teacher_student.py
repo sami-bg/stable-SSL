@@ -5,6 +5,7 @@ from lightning.pytorch.callbacks import Callback
 from loguru import logger as logging
 
 from .registry import log as _spt_log
+from .utils import log_header
 
 
 class TeacherStudentCallback(Callback):
@@ -53,13 +54,14 @@ class TeacherStudentCallback(Callback):
         wrapper_count = self._count_teacher_student_wrappers(pl_module)
         if wrapper_count > 0:
             self._wrapper_found = True
+            log_header("TeacherStudentCallback")
             logging.info(
-                f"TeacherStudentCallback: Found {wrapper_count} TeacherStudentWrapper instance(s). "
-                f"Updates will occur every {self.update_frequency} batch(es)."
+                f"  found {wrapper_count} TeacherStudentWrapper instance(s). "
+                f"Updates every {self.update_frequency} batch(es)."
             )
         else:
             logging.warning(
-                "TeacherStudentCallback: No TeacherStudentWrapper instances found in model. "
+                "! no TeacherStudentWrapper instances found in model. "
                 "This callback will have no effect."
             )
 

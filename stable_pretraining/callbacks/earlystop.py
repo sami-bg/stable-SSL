@@ -5,6 +5,7 @@ import numpy as np
 import torchmetrics
 
 from .registry import log as _spt_log
+from .utils import log_header
 
 
 def to_scalar(x):
@@ -91,28 +92,27 @@ class EpochMilestones(pl.Callback):
             }
         # Sanity check: verify presence
         if trainer.sanity_checking:
-            logging.info("Sanity checking EpochMilstones...")
-            logging.info(f"We matched {len(matched)} metrics!")
+            log_header("EpochMilestones")
+            logging.info("  sanity checking...")
+            logging.info(f"  matched {len(matched)} metrics")
             if not matched:
                 msg = f"No metrics found for monitor='{self.monitor}' contains='{self.contains}' in callback_metrics: {list(metrics.keys())}"
                 if self.strict:
                     raise RuntimeError(msg)
                 else:
-                    logging.warning(msg)
-            logging.info(
-                f"Sanity check passed, congrats! We will use {self.milestones}..."
-            )
+                    logging.warning(f"! {msg}")
+            logging.success(f"✓ sanity check passed, milestones: {self.milestones}")
             return
         if epoch not in self.milestones:
-            logging.info(f"EpochMilestones: {epoch=} is not in milestones, skipping...")
+            logging.info(f"  epoch {epoch} is not in milestones, skipping")
             return
-        logging.info(f"EpochMilestones: {epoch=} is in milestones, checking condition!")
+        logging.info(f"  epoch {epoch} is in milestones, checking condition")
         # Retrieve the metric from the logged metrics
         values = list(matched.values())
         # Stop training if the metric is not greater than min_value
         if self.direction == "max":
             final = np.max([to_scalar(x) for x in values])
-            logging.info(f"EpochMilestones: Maximum value is {final}")
+            logging.info(f"  maximum value: {final}")
             if self.verbose:
                 _spt_log(
                     "epoch_milestones/value",
@@ -128,18 +128,17 @@ class EpochMilestones(pl.Callback):
                 )
             if final < self.milestones[epoch]:
                 logging.warning(
-                    f"EpochMilestones: Value {final} below threshold"
-                    f" {self.milestones[epoch]}... stopping!"
+                    f"! value {final} below threshold"
+                    f" {self.milestones[epoch]}, stopping"
                 )
                 trainer.should_stop = True
             else:
-                logging.warning(
-                    f"EpochMilestones: Value {final} above threshold"
-                    f" {self.milestones[epoch]}... Yayy!"
+                logging.success(
+                    f"✓ value {final} above threshold {self.milestones[epoch]}"
                 )
         else:
             final = np.min([to_scalar(x) for x in values])
-            logging.info(f"EpochMilestones: Minimum value is {final}")
+            logging.info(f"  minimum value: {final}")
             if self.verbose:
                 _spt_log(
                     "epoch_milestones/value",
@@ -155,14 +154,13 @@ class EpochMilestones(pl.Callback):
                 )
             if final > self.milestones[epoch]:
                 logging.warning(
-                    f"EpochMilestones: Value {final} above threshold"
-                    f" {self.milestones[epoch]}... stopping!"
+                    f"! value {final} above threshold"
+                    f" {self.milestones[epoch]}, stopping"
                 )
                 trainer.should_stop = True
             else:
-                logging.warning(
-                    f"EpochMilestones: Value {final} below threshold"
-                    f" {self.milestones[epoch]}... Yayy!"
+                logging.success(
+                    f"✓ value {final} below threshold {self.milestones[epoch]}"
                 )
 
     def on_training_epoch_end(self, trainer, pl_module):

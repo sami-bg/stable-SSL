@@ -3,6 +3,7 @@ from loguru import logger
 from lightning.pytorch import Callback, Trainer, LightningModule
 
 from .registry import log as _spt_log
+from .utils import log_header
 
 
 class WeightDecayUpdater(Callback):
@@ -43,7 +44,8 @@ class WeightDecayUpdater(Callback):
         self.total_steps = (
             trainer.estimated_stepping_batches * trainer.accumulate_grad_batches
         )
-        logger.info(f"[WeightDecayUpdater] Using total_steps={self.total_steps}")
+        log_header("WeightDecayUpdater")
+        logger.info(f"  total_steps: {self.total_steps}")
 
     def on_before_optimizer_step(
         self, trainer: Trainer, pl_module: LightningModule, optimizer
@@ -54,9 +56,7 @@ class WeightDecayUpdater(Callback):
         step = trainer.global_step // len(optis)
         accumulate_grad_batches = trainer.accumulate_grad_batches
         if (step + 1) % accumulate_grad_batches != 0:
-            logger.debug(
-                "[WeightDecayUpdater] Step but accumulating grad, skipping step"
-            )
+            logger.debug("  step but accumulating grad, skipping step")
             return
         new_weight_decay = self._compute_weight_decay(step)
         indices = (
@@ -69,7 +69,7 @@ class WeightDecayUpdater(Callback):
             old_wd = param_group.get("weight_decay", None)
             param_group["weight_decay"] = new_weight_decay
             logger.debug(
-                f"[WeightDecayUpdater] Step {step}: param_group {i} weight_decay {old_wd} -> {new_weight_decay}"
+                f"  step {step}: param_group {i} weight_decay {old_wd} -> {new_weight_decay}"
             )
         if self.verbose:
             _spt_log(
@@ -94,9 +94,7 @@ class WeightDecayUpdater(Callback):
             gamma = math.log(self.end_value / self.start_value) / self.total_steps
             return self.start_value * math.exp(gamma * step)
         else:
-            logger.error(
-                f"[WeightDecayUpdater] Unknown schedule_type: {self.schedule_type}"
-            )
+            logger.error(f"  unknown schedule_type: {self.schedule_type}")
             raise ValueError(f"Unknown schedule_type: {self.schedule_type}")
 
     def state_dict(self):
@@ -118,6 +116,4 @@ class WeightDecayUpdater(Callback):
             "param_group_indices", self.param_group_indices
         )
         self.total_steps = state_dict.get("total_steps", self.total_steps)
-        logger.info(
-            f"[WeightDecayUpdater] State restored from checkpoint: {state_dict}"
-        )
+        logger.info(f"  state restored from checkpoint: {state_dict}")

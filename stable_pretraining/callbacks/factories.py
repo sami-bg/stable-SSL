@@ -5,7 +5,6 @@ from lightning.pytorch import Callback, LightningModule, Trainer
 from lightning.pytorch.callbacks import RichProgressBar as _RichProgressBar
 
 from .checkpoint_sklearn import SklearnCheckpoint, WandbCheckpoint
-from .cpu_offload import CPUOffloadCallback
 from .env_info import EnvironmentDumpCallback
 from .hf_models import HuggingFaceCheckpointCallback
 from .registry import ModuleRegistryCallback
@@ -107,7 +106,6 @@ def default():
         ModuleSummary(),
         SLURMInfo(),
         LogUnusedParametersOnce(),
-        CPUOffloadCallback(),
         HuggingFaceCheckpointCallback(),
     ]
 

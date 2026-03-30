@@ -124,10 +124,27 @@ def rank_zero_only_filter(record):
     return rank == "0" and record["level"].no >= logger.level("INFO").no
 
 
+_FILE_COL_WIDTH = 12
+_LEVEL_MAP = {"WARNING": "WARN", "SUCCESS": "OK"}
+
+
+def _log_format(record):
+    name = record["file"].name
+    if len(name) > _FILE_COL_WIDTH:
+        name = name[: _FILE_COL_WIDTH - 1] + "~"
+    name = name.ljust(_FILE_COL_WIDTH)
+    level = _LEVEL_MAP.get(record["level"].name, record["level"].name)
+    level = level.ljust(5)
+    return (
+        f"<green>{{time:HH:mm:ss}}</green> | <level>{level}</level> | "
+        f"<cyan>{name}</cyan>| <level>{{message}}</level>\n{{exception}}"
+    )
+
+
 logger.remove()
 logger.add(
     sys.stdout,
-    format="<green>{time:HH:mm:ss}</green> | <level>{level: <7}</level> | <cyan>{file}</cyan> | <level>{message}</level>",
+    format=_log_format,
     filter=rank_zero_only_filter,
     level="INFO",
 )
