@@ -29,7 +29,7 @@ class RankMe(Callback):
         target: str,
         queue_length: int,
         target_shape: Union[int, Iterable[int]],
-        verbose: bool = True,
+        verbose: bool = None,
     ) -> None:
         super().__init__()
 
@@ -43,7 +43,9 @@ class RankMe(Callback):
         self.target = target
         self.queue_length = queue_length
         self.target_shape = target_shape
-        self.verbose = verbose
+        from .utils import resolve_verbose
+
+        self.verbose = resolve_verbose(verbose)
 
         self._target_queue = None
 

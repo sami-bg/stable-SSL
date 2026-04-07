@@ -26,6 +26,9 @@ try:
 except ImportError:
     WANDB_AVAILABLE = False
 
+# Import global config first (no heavy deps)
+from ._config import get_config, set  # noqa: F401
+
 from . import backbone, callbacks, data, losses, module, optim, static, utils
 from .__about__ import (
     __author__,
@@ -64,6 +67,9 @@ __all__ = [
     # Availability flags
     "SKLEARN_AVAILABLE",
     "WANDB_AVAILABLE",
+    # Global config
+    "set",
+    "get_config",
     # Callbacks
     "OnlineProbe",
     "SklearnCheckpoint",
@@ -115,20 +121,12 @@ except ImportError:
     pass
 
 
-def rank_zero_only_filter(record):
-    """Filter to only log on rank 0 in distributed training."""
-    import os
-
-    # Check common environment variables for distributed rank
-    rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
-    return rank == "0" and record["level"].no >= logger.level("INFO").no
-
-
 _FILE_COL_WIDTH = 12
 _LEVEL_MAP = {"WARNING": "WARN", "SUCCESS": "OK"}
 
 
 def _log_format(record):
+    """Loguru format function — shared with ``_config._apply_verbose``."""
     name = record["file"].name
     if len(name) > _FILE_COL_WIDTH:
         name = name[: _FILE_COL_WIDTH - 1] + "~"
@@ -141,12 +139,26 @@ def _log_format(record):
     )
 
 
+def _make_log_filter():
+    """Build a loguru filter that respects ``get_config().log_rank``."""
+    cfg = get_config()
+
+    def _filter(record):
+        log_rank = cfg.log_rank
+        if log_rank == "all":
+            return True
+        rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
+        return str(rank) == str(log_rank)
+
+    return _filter
+
+
 logger.remove()
 logger.add(
     sys.stdout,
     format=_log_format,
-    filter=rank_zero_only_filter,
-    level="INFO",
+    filter=_make_log_filter(),
+    level=os.environ.get("LOGURU_LEVEL", "INFO"),
 )
 
 
@@ -154,20 +166,6 @@ logger.add(
 class InterceptHandler(logging.Handler):
     def emit(self, record):
         logger.log(record.levelname, record.getMessage())
-        # Get corresponding Loguru level if it exists
-        # try:
-        #     level = logger.level(record.levelname).name
-        # except ValueError:
-        #     level = "INFO"
-
-        # Find caller from where originated the log message
-        # frame, depth = logging.currentframe(), 2
-        # while frame.f_code.co_filename == logging.__file__:
-        #     frame = frame.f_back
-        #     depth += 1
-        # logger.opt(depth=depth, exception=record.exc_info).log(
-        #     level, record.getMessage()
-        # )
 
 
 # Remove all handlers associated with the root logger object

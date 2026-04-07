@@ -18,12 +18,14 @@ class LogUnusedParametersOnce(Callback):
     Works with both automatic and manual optimization.
     """
 
-    def __init__(self, verbose: bool = True):
+    def __init__(self, verbose: bool = None):
         super().__init__()
+        from .utils import resolve_verbose
+
         self._hooks: List[torch.utils.hooks.RemovableHandle] = []
         self._used_flags: Dict[nn.Parameter, bool] = {}
         self._enabled: bool = True
-        self._verbose = verbose
+        self._verbose = resolve_verbose(verbose)
         self._backward_called: bool = False
 
     def _register_hooks(self, model: nn.Module):

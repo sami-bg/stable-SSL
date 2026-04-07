@@ -81,32 +81,60 @@ class PrintProgressBar(Callback):
 
 
 def _make_progress_bar():
-    """Create a progress bar callback.
+    """Create a progress bar callback respecting ``spt.set(progress_bar=...)``.
 
-    If stdout is a tty (local shell, interactive srun, etc.), uses Rich for
-    a nice live display.  Otherwise (sbatch, Hydra multirun, piped output),
-    falls back to a plain-text line printer that shows up in slurm .out
-    files and the wandb Logs tab.
+    Resolution order:
+
+    1. ``get_config().progress_bar`` if explicitly set (``"rich"``, ``"simple"``,
+       ``"none"``).
+    2. ``"auto"`` (default): ``"rich"`` for TTYs, ``"simple"`` otherwise.
     """
+    from .._config import get_config
+
+    style = get_config().progress_bar
+
+    if style == "none":
+        return None
+    if style == "rich":
+        return RichProgressBar()
+    if style == "simple":
+        return PrintProgressBar()
+    # "auto"
     if os.isatty(1):
         return RichProgressBar()
     return PrintProgressBar()
 
 
-def default():
-    """Factory function that returns default callbacks."""
-    callbacks = [
-        _make_progress_bar(),
-        ModuleRegistryCallback(),
-        LoggingCallback(),
-        EnvironmentDumpCallback(async_dump=True),
-        TrainerInfo(),
-        SklearnCheckpoint(),
-        WandbCheckpoint(),
-        ModuleSummary(),
-        SLURMInfo(),
-        LogUnusedParametersOnce(),
-        HuggingFaceCheckpointCallback(),
-    ]
+# Maps default_callbacks keys → (factory callable, kwargs)
+_DEFAULT_CALLBACK_REGISTRY = {
+    "progress_bar": (_make_progress_bar, {}),
+    "registry": (ModuleRegistryCallback, {}),
+    "logging": (LoggingCallback, {}),
+    "env_dump": (EnvironmentDumpCallback, {"async_dump": True}),
+    "trainer_info": (TrainerInfo, {}),
+    "sklearn_checkpoint": (SklearnCheckpoint, {}),
+    "wandb_checkpoint": (WandbCheckpoint, {}),
+    "module_summary": (ModuleSummary, {}),
+    "slurm_info": (SLURMInfo, {}),
+    "unused_params": (LogUnusedParametersOnce, {}),
+    "hf_checkpoint": (HuggingFaceCheckpointCallback, {}),
+}
 
+
+def default():
+    """Factory function that returns default callbacks.
+
+    Respects ``spt.set(default_callbacks={...})`` to toggle individual
+    callbacks on/off.
+    """
+    from .._config import get_config
+
+    overrides = get_config().default_callbacks
+    callbacks = []
+    for key, (factory, kwargs) in _DEFAULT_CALLBACK_REGISTRY.items():
+        if not overrides.get(key, True):
+            continue
+        cb = factory(**kwargs) if kwargs else factory()
+        if cb is not None:
+            callbacks.append(cb)
     return callbacks

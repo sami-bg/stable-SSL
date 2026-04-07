@@ -65,7 +65,7 @@ class LiDAR(Callback):
         samples_per_class: int = 10,
         delta: float = 1e-4,
         epsilon: float = 1e-8,
-        verbose: bool = True,
+        verbose: bool = None,
     ) -> None:
         super().__init__()
 
@@ -84,7 +84,9 @@ class LiDAR(Callback):
         self.samples_per_class = samples_per_class
         self.delta = delta
         self.epsilon = epsilon
-        self.verbose = verbose
+        from .utils import resolve_verbose
+
+        self.verbose = resolve_verbose(verbose)
 
         self._target_queue = None
 

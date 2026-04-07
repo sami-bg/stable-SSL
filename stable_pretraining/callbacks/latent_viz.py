@@ -81,7 +81,7 @@ class LatentViz(TrainableCallback):
         plot_interval: int = 10,
         save_dir: Optional[str] = None,
         input_dim: Optional[Union[int, tuple, list]] = None,
-        verbose: bool = True,
+        verbose: bool = None,
     ):
         super().__init__(
             name=name,
@@ -108,8 +108,10 @@ class LatentViz(TrainableCallback):
             input_dim = int(np.prod(input_dim))
         self.input_dim = input_dim
 
+        from .utils import resolve_verbose
+
         self._projection_config = projection
-        self.verbose = verbose
+        self.verbose = resolve_verbose(verbose)
 
         # Will be initialized in setup
         self._input_queue = None

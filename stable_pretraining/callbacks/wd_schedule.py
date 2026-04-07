@@ -28,7 +28,7 @@ class WeightDecayUpdater(Callback):
         end_value: float = 0.0,
         param_group_indices: list = None,
         opt_idx: int = None,
-        verbose: bool = True,
+        verbose: bool = None,
     ):
         super().__init__()
         self.schedule_type = schedule_type
@@ -37,7 +37,9 @@ class WeightDecayUpdater(Callback):
         self.param_group_indices = param_group_indices
         self.total_steps = None  # Will be set in on_fit_start
         self.opt_idx = opt_idx
-        self.verbose = verbose
+        from .utils import resolve_verbose
+
+        self.verbose = resolve_verbose(verbose)
 
     def on_fit_start(self, trainer: Trainer, pl_module: LightningModule):
         # Prefer max_steps if set

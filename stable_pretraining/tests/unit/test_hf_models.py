@@ -1,5 +1,4 @@
 import os
-import shutil
 import pytest
 import torch
 import torch.nn as nn
@@ -116,11 +115,9 @@ def check_load_fidelity(model_path, input_tensor, expected_output, q):
 
 
 @pytest.mark.unit
-def test_spt_hf_fidelity_flow():
-    test_root = Path(os.getcwd()).resolve() / "spt_fidelity_artifacts"
+def test_spt_hf_fidelity_flow(tmp_path):
+    test_root = tmp_path / "spt_fidelity_artifacts"
     hf_save_dir = test_root / "hf_exports"
-    if test_root.exists():
-        shutil.rmtree(test_root)
     test_root.mkdir(parents=True)
 
     # Setup baseline data
@@ -165,48 +162,42 @@ def test_spt_hf_fidelity_flow():
         },
     )
 
-    try:
-        logger.info("Executing SPT-Native fit...")
-        trainer.fit(model, dl)
+    logger.info("Executing SPT-Native fit...")
+    trainer.fit(model, dl)
 
-        # Explicitly trigger save to ensure on_save_checkpoint executes
-        trainer.save_checkpoint(test_root / "manual.ckpt")
+    # Explicitly trigger save to ensure on_save_checkpoint executes
+    trainer.save_checkpoint(test_root / "manual.ckpt")
 
-        # Verify Weight Drift
-        with torch.no_grad():
-            trained_out = model.hf_backbone(feat_fixed).clone()
+    # Verify Weight Drift
+    with torch.no_grad():
+        trained_out = model.hf_backbone(feat_fixed).clone()
 
-        delta = (trained_out - init_out).abs().sum().item()
-        logger.info(f"Weight delta after 1 step: {delta:.4f}")
-        assert delta > 0, "Weights failed to update! Check gradient flow in forward()."
+    delta = (trained_out - init_out).abs().sum().item()
+    logger.info(f"Weight delta after 1 step: {delta:.4f}")
+    assert delta > 0, "Weights failed to update! Check gradient flow in forward()."
 
-        # Verify Export and Isolation
-        target = hf_save_dir / f"step_{trainer.global_step}" / "hf_backbone"
-        assert target.exists(), "HF Export folder missing."
+    # Verify Export and Isolation
+    target = hf_save_dir / f"step_{trainer.global_step}" / "hf_backbone"
+    assert target.exists(), "HF Export folder missing."
 
-        logger.info("Testing Zero-Knowledge load in fresh process...")
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
-        p = ctx.Process(
-            target=check_load_fidelity, args=(str(target), feat_fixed, trained_out, q)
-        )
-        p.start()
+    logger.info("Testing Zero-Knowledge load in fresh process...")
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue()
+    p = ctx.Process(
+        target=check_load_fidelity, args=(str(target), feat_fixed, trained_out, q)
+    )
+    p.start()
 
-        success, result = q.get(timeout=120)
-        p.join()
+    success, result = q.get(timeout=120)
+    p.join()
 
-        if not success:
-            pytest.fail(f"Isolation test crashed: {result}")
+    if not success:
+        pytest.fail(f"Isolation test crashed: {result}")
 
-        assert result is True, (
-            "The reloaded model prediction differs from the trained state!"
-        )
-        logger.success("SPT-Native Fidelity and Zero-Knowledge Load Verified.")
-
-    finally:
-        if test_root.exists():
-            shutil.rmtree(test_root)
-            logger.info("Cleanup complete.")
+    assert result is True, (
+        "The reloaded model prediction differs from the trained state!"
+    )
+    logger.success("SPT-Native Fidelity and Zero-Knowledge Load Verified.")
 
 
 if __name__ == "__main__":

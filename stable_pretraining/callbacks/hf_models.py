@@ -43,10 +43,12 @@ class HuggingFaceCheckpointCallback(Callback):
         ... )
     """
 
-    def __init__(self, save_dir: str = "hf_exports", verbose: bool = True):
+    def __init__(self, save_dir: str = "hf_exports", verbose: bool = None):
         super().__init__()
+        from .utils import resolve_verbose
+
         self.save_dir = Path(save_dir)
-        self.verbose = verbose
+        self.verbose = resolve_verbose(verbose)
         log_header("HuggingFaceCheckpoint")
         logger.info(f"  save_dir: <cyan>{self.save_dir}</cyan>")
 
