@@ -23,6 +23,7 @@ if WANDB_AVAILABLE:
 else:
     wandb = None
 
+from .callbacks.checkpoint_sklearn import find_wandb_logger, _WANDB_RESUME_FILENAME
 from .utils import get_required_fn_parameters
 from stable_pretraining.callbacks.utils import log_header
 from stable_pretraining.utils.error_handling import catch_errors_class
@@ -102,18 +103,81 @@ class Manager(submitit.helpers.Checkpointable):
         self.ckpt_path = ckpt_path
         self.resume_weights_only = resume_weights_only
 
+    def _maybe_restore_wandb_run_id(self):
+        """Inject a previous wandb run ID into the logger BEFORE wandb.init() fires.
+
+        Reads the sidecar ``wandb_resume.json`` written by :class:`WandbCheckpoint`
+        and, if the checkpoint file also exists, sets ``_wandb_init["id"]`` on the
+        WandbLogger so that ``wandb.init()`` resumes the correct run instead of
+        creating (and later deleting) a throwaway one.
+
+        Must be called after the Trainer is created but before anything accesses
+        ``trainer.logger.experiment``.
+        """
+        wandb_logger = find_wandb_logger(self._trainer)
+        if wandb_logger is None:
+            return
+
+        # Only attempt resume if we actually have a checkpoint to load
+        if self.ckpt_path is None or not self.ckpt_path.is_file():
+            return
+
+        sidecar = Path(_WANDB_RESUME_FILENAME)
+        if not sidecar.is_file():
+            logging.debug("  No wandb_resume.json found, skipping run ID injection")
+            return
+
+        try:
+            resume_info = json.loads(sidecar.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"! Failed to read {sidecar}: {e} — skipping run ID injection")
+            return
+
+        run_id = resume_info.get("id")
+        if not run_id:
+            logging.warning("! wandb_resume.json has no 'id' — skipping")
+            return
+
+        # Validate project/entity match the current logger config
+        saved_project = resume_info.get("project")
+        saved_entity = resume_info.get("entity")
+        current_project = wandb_logger._wandb_init.get("project")
+        current_entity = wandb_logger._wandb_init.get("entity")
+
+        if saved_project and current_project and saved_project != current_project:
+            logging.error(
+                f"! wandb_resume.json project '{saved_project}' does not match "
+                f"current logger project '{current_project}'. "
+                "Skipping run ID injection to avoid resuming into the wrong project."
+            )
+            return
+
+        if saved_entity and current_entity and saved_entity != current_entity:
+            logging.error(
+                f"! wandb_resume.json entity '{saved_entity}' does not match "
+                f"current logger entity '{current_entity}'. "
+                "Skipping run ID injection to avoid resuming into the wrong entity."
+            )
+            return
+
+        # Inject the run ID — wandb.init() hasn't been called yet
+        wandb_logger._wandb_init["id"] = run_id
+        wandb_logger._id = run_id
+        log_header("WandbResume")
+        logging.info(f"  Injected wandb run ID '{run_id}' from {sidecar}")
+        logging.info(f"  project={saved_project}  entity={saved_entity}")
+
     @rank_zero_only
     def init_and_sync_wandb(self):
         """Handles some utilities for WandB."""
-        if not isinstance(
-            self._trainer.logger, lightning.pytorch.loggers.wandb.WandbLogger
-        ):
+        wandb_logger = find_wandb_logger(self._trainer)
+        if wandb_logger is None:
             return
         log_header("Wandb")
-        exp = self._trainer.logger.experiment
+        exp = wandb_logger.experiment
 
         if exp.offline:
-            previous_run = self._wandb_previous_dir()
+            previous_run = self._wandb_previous_dir(wandb_logger)
             logging.info(f"  Found a previous run ({previous_run}), reusing config")
             with open(previous_run / "files/wandb-config.json", "r") as f:
                 last_config = json.load(f)
@@ -235,6 +299,7 @@ class Manager(submitit.helpers.Checkpointable):
                 )
                 self._trainer.callbacks.append(TeacherStudentCallback())
 
+        self._maybe_restore_wandb_run_id()
         self.init_and_sync_wandb()
         print_logger_info(self._trainer.logger)
         print_signal_info()
@@ -332,7 +397,7 @@ class Manager(submitit.helpers.Checkpointable):
             json.dump(wandb.run.config.as_dict(), f)
         logging.success(f"✓ Saved config at {fname}")
 
-    def _wandb_previous_dir(self):
+    def _wandb_previous_dir(self, wandb_logger=None):
         if not WANDB_AVAILABLE or not wandb.run:
             return None
         # to remove the /files

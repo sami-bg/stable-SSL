@@ -401,38 +401,10 @@ class LatentViz(TrainableCallback):
 
         logging.info(f"  saved 2D coordinates to {save_path}")
 
-        # Log to experiment tracker if available
-        try:
-            from lightning.pytorch.loggers import WandbLogger
-
-            if isinstance(trainer.logger, WandbLogger):
-                import wandb
-
-                # Create WandB-specific table only (no direct scatter logging)
-                if labels_np is not None:
-                    data = np.column_stack([z_2d_np, labels_np.astype(int)])
-                    columns = ["x", "y", "class"]
-                else:
-                    data = z_2d_np
-                    columns = ["x", "y"]
-
-                table = wandb.Table(columns=columns, data=data.tolist())
-
-                # Log table - will overwrite previous epoch's table
-                wandb.log(
-                    {
-                        f"{self.name}/2d_latent_table": table,
-                        f"{self.name}/current_epoch": epoch,
-                    }
-                )
-
-                logging.info(
-                    f"  logged latent table to experiment tracker at epoch {epoch}"
-                )
-        except ImportError:
-            logging.debug("  WandB not installed, skipping visualization logging")
-        except Exception as e:
-            logging.error(f"  failed to log visualization: {e}")
+        logging.info(
+            f"  2D coordinates saved to disk at epoch {epoch} "
+            f"(visualization data in {save_path})"
+        )
 
     @property
     def projection_module(self):
