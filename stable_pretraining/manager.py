@@ -130,7 +130,9 @@ class Manager(submitit.helpers.Checkpointable):
         try:
             resume_info = json.loads(sidecar.read_text())
         except (json.JSONDecodeError, OSError) as e:
-            logging.warning(f"! Failed to read {sidecar}: {e} — skipping run ID injection")
+            logging.warning(
+                f"! Failed to read {sidecar}: {e} — skipping run ID injection"
+            )
             return
 
         run_id = resume_info.get("id")

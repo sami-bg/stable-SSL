@@ -20,11 +20,18 @@ Example::
 
 from __future__ import annotations
 
-import copy
 import threading
-from typing import Any, Dict, Literal, Optional, Union
+from typing import Dict, Literal, Optional, Union
 
-_VALID_LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
+_VALID_LOG_LEVELS = (
+    "TRACE",
+    "DEBUG",
+    "INFO",
+    "SUCCESS",
+    "WARNING",
+    "ERROR",
+    "CRITICAL",
+)
 
 _CLEANUP_KEYS = (
     "checkpoints",
@@ -80,7 +87,14 @@ class _GlobalConfig:
     def verbose(self, value: Union[str, int]) -> None:
         if isinstance(value, int):
             # Map Python logging-style ints: 10=DEBUG, 20=INFO, 30=WARNING, ...
-            _int_map = {0: "TRACE", 10: "DEBUG", 20: "INFO", 30: "WARNING", 40: "ERROR", 50: "CRITICAL"}
+            _int_map = {
+                0: "TRACE",
+                10: "DEBUG",
+                20: "INFO",
+                30: "WARNING",
+                40: "ERROR",
+                50: "CRITICAL",
+            }
             if value not in _int_map:
                 raise ValueError(
                     f"Integer verbose level must be one of {list(_int_map.keys())}, got {value}"
@@ -123,9 +137,7 @@ class _GlobalConfig:
                     f"Unknown cleanup key {k!r}. Valid keys: {_CLEANUP_KEYS}"
                 )
             if not isinstance(v, bool):
-                raise TypeError(
-                    f"cleanup[{k!r}] must be bool, got {type(v).__name__}"
-                )
+                raise TypeError(f"cleanup[{k!r}] must be bool, got {type(v).__name__}")
         # Merge — unspecified keys keep their current value
         self._cleanup.update(value)
 
@@ -144,7 +156,9 @@ class _GlobalConfig:
             if value < 0:
                 raise ValueError(f"log_rank must be >= 0, got {value}")
         else:
-            raise TypeError(f"log_rank must be int or 'all', got {type(value).__name__}")
+            raise TypeError(
+                f"log_rank must be int or 'all', got {type(value).__name__}"
+            )
         self._log_rank = value
 
     # -- default_callbacks -----------------------------------------------------
@@ -169,7 +183,9 @@ class _GlobalConfig:
             "hf_checkpoint",
         )
         if not isinstance(value, dict):
-            raise TypeError(f"default_callbacks must be a dict, got {type(value).__name__}")
+            raise TypeError(
+                f"default_callbacks must be a dict, got {type(value).__name__}"
+            )
         for k, v in value.items():
             if k not in _VALID_CALLBACK_KEYS:
                 raise ValueError(

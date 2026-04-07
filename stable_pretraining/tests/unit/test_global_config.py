@@ -1,7 +1,6 @@
 """Unit tests for stable_pretraining.set() / get_config() global configuration."""
 
 import pytest
-from unittest.mock import patch, Mock
 
 from stable_pretraining._config import (
     _GlobalConfig,
