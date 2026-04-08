@@ -285,10 +285,18 @@ class WandbCheckpoint(Callback):
         logging.info(f"  Saved wandb resume info to checkpoint: {resume_info}")
 
         # Write sidecar so the Manager can inject the ID before wandb.init()
+        # Prefer trainer.default_root_dir (cache_dir mode), also write to CWD for compat
         if trainer.is_global_zero:
-            sidecar = Path(_WANDB_RESUME_FILENAME)
+            root = Path(trainer.default_root_dir)
+            sidecar = root / _WANDB_RESUME_FILENAME
+            sidecar.parent.mkdir(parents=True, exist_ok=True)
             sidecar.write_text(json.dumps(resume_info))
             logging.info(f"  Wrote {sidecar.resolve()}")
+            # Also write to CWD if it differs (backward compat)
+            cwd_sidecar = Path(_WANDB_RESUME_FILENAME)
+            if cwd_sidecar.resolve() != sidecar.resolve():
+                cwd_sidecar.write_text(json.dumps(resume_info))
+                logging.info(f"  Wrote {cwd_sidecar.resolve()} (compat)")
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
         if "wandb" not in checkpoint:

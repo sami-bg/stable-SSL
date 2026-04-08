@@ -393,6 +393,9 @@ class LatentViz(TrainableCallback):
             save_dir = self.save_dir
         else:
             save_dir = f"latent_viz_{self.name}"
+        # Resolve relative paths against trainer.default_root_dir
+        if not os.path.isabs(save_dir):
+            save_dir = os.path.join(trainer.default_root_dir, save_dir)
         os.makedirs(save_dir, exist_ok=True)
 
         save_path = os.path.join(save_dir, f"epoch_{epoch:04d}.npz")

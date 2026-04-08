@@ -1,8 +1,10 @@
 import copy
 import inspect
 import json
+import os
 import signal
-from datetime import timedelta
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Union
 
@@ -11,12 +13,13 @@ import lightning
 import lightning as pl
 import pandas as pd
 import submitit
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import Callback, ModelCheckpoint
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 from loguru import logger as logging
 from omegaconf import DictConfig, OmegaConf
-import os
+
 from . import WANDB_AVAILABLE
+from ._config import get_config
 
 if WANDB_AVAILABLE:
     import wandb
@@ -61,6 +64,40 @@ def print_signal_info():
     logging.info(f"  SIGUSR2: `{signal.getsignal(signal.SIGUSR2)}`")
     logging.info(f"  SIGCONT: `{signal.getsignal(signal.SIGCONT)}`")
     logging.info(f"  SIGTERM: `{signal.getsignal(signal.SIGTERM)}`")
+
+
+_RUN_META_FILENAME = "run_meta.json"
+
+
+def _generate_run_id() -> str:
+    """Generate a deterministic run ID that all ranks in the same job agree on.
+
+    Priority:
+        1. ``SLURM_JOB_ID`` (+ ``SLURM_ARRAY_TASK_ID`` if array job) — same
+           for every rank in the same SLURM job/task.
+        2. ``TORCHELASTIC_RUN_ID`` — same for every rank under ``torchrun``.
+        3. Random ``uuid4`` hex (12 chars) — single-process fallback.
+    """
+    slurm_job = os.environ.get("SLURM_JOB_ID")
+    if slurm_job is not None:
+        array_task = os.environ.get("SLURM_ARRAY_TASK_ID")
+        if array_task is not None:
+            return f"{slurm_job}_{array_task}"
+        return slurm_job
+    elastic_run = os.environ.get("TORCHELASTIC_RUN_ID")
+    if elastic_run is not None:
+        return elastic_run
+    return uuid.uuid4().hex[:12]
+
+
+class _RunDirCallback(Callback):
+    """Internal callback that persists the run directory path inside every checkpoint."""
+
+    def __init__(self, run_dir: str):
+        self.run_dir = run_dir
+
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint):
+        checkpoint["spt_run_dir"] = self.run_dir
 
 
 @catch_errors_class()
@@ -118,12 +155,25 @@ class Manager(submitit.helpers.Checkpointable):
         if wandb_logger is None:
             return
 
-        # Only attempt resume if we actually have a checkpoint to load
-        if self.ckpt_path is None or not self.ckpt_path.is_file():
+        # Only attempt resume if there's evidence of a previous run.
+        # In cache_dir mode, the run_dir sidecar is sufficient (ckpt_path may be None).
+        # In legacy mode, we need ckpt_path to exist on disk.
+        has_run_dir = hasattr(self, "_run_dir")
+        has_ckpt = self.ckpt_path is not None and self.ckpt_path.is_file()
+        if not has_run_dir and not has_ckpt:
             return
 
-        sidecar = Path(_WANDB_RESUME_FILENAME)
-        if not sidecar.is_file():
+        # Check run_dir first (cache_dir mode), then CWD (legacy)
+        sidecar = None
+        if hasattr(self, "_run_dir"):
+            candidate = self._run_dir / _WANDB_RESUME_FILENAME
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
+            candidate = Path(_WANDB_RESUME_FILENAME)
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
             logging.debug("  No wandb_resume.json found, skipping run ID injection")
             return
 
@@ -168,6 +218,233 @@ class Manager(submitit.helpers.Checkpointable):
         log_header("WandbResume")
         logging.info(f"  Injected wandb run ID '{run_id}' from {sidecar}")
         logging.info(f"  project={saved_project}  entity={saved_entity}")
+
+    # -- cache_dir / run_dir ----------------------------------------------------
+
+    def _resolve_run_dir(self) -> Optional[Path]:
+        """Compute the run directory under ``cache_dir``.
+
+        Layout::
+
+            {cache_dir}/runs/{YYYYMMDD}/{HHMMSS}/{run_id}/
+
+        On requeue (checkpoint with ``run_meta.json`` sidecar exists), the
+        previous run directory is reused so that the same job continues
+        writing to the same location.
+
+        Returns ``None`` when cache_dir is not configured.
+        """
+        cfg = get_config()
+        if cfg.cache_dir is None:
+            return None
+
+        cache_dir = Path(os.path.expanduser(cfg.cache_dir)).resolve()
+
+        # Try to restore from a previous run (requeue)
+        restored = self._try_restore_run_dir(cache_dir)
+        if restored is not None:
+            self._run_dir = restored
+            self._run_id = restored.name
+            log_header("RunDirectory (restored)")
+            logging.info(f"  run_dir: {self._run_dir}")
+            logging.info(f"  run_id:  {self._run_id}")
+            return self._run_dir
+
+        # Fresh run
+        now = datetime.now()
+        run_id = _generate_run_id()
+        run_dir = (
+            cache_dir
+            / "runs"
+            / now.strftime("%Y%m%d")
+            / now.strftime("%H%M%S")
+            / run_id
+        )
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write sidecar so requeue can find this directory later
+        meta = {"run_dir": str(run_dir), "run_id": run_id}
+        (run_dir / _RUN_META_FILENAME).write_text(json.dumps(meta))
+
+        self._run_dir = run_dir
+        self._run_id = run_id
+        log_header("RunDirectory")
+        logging.info(f"  run_dir: {self._run_dir}")
+        logging.info(f"  run_id:  {self._run_id}")
+        return self._run_dir
+
+    def _try_restore_run_dir(self, cache_dir: Path) -> Optional[Path]:
+        """Attempt to find a previous run directory for this job.
+
+        Checks two strategies:
+            1. Sidecar next to ``ckpt_path`` (explicit checkpoint from user).
+            2. Glob for the deterministic run_id in the cache_dir (requeue
+               with SLURM_JOB_ID / TORCHELASTIC_RUN_ID — no ckpt_path needed).
+        """
+        # Strategy 1: sidecar next to ckpt_path
+        if self.ckpt_path is not None and self.ckpt_path.is_file():
+            meta_path = self.ckpt_path.parent / _RUN_META_FILENAME
+            if meta_path.is_file():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    run_dir = Path(meta["run_dir"])
+                    if run_dir.is_dir():
+                        return run_dir
+                except Exception as exc:
+                    logging.warning(f"! Could not read {meta_path}: {exc}")
+
+        # Strategy 2: search by deterministic run_id (SLURM/torchrun requeue)
+        run_id = _generate_run_id()
+        matches = sorted(cache_dir.glob(f"runs/*/*/{run_id}"))
+        if matches:
+            # Take the most recent (last sorted by date/time path)
+            return matches[-1]
+
+        return None
+
+    def _inject_run_dir_into_trainer_config(self, run_dir: Path) -> None:
+        """Set ``default_root_dir`` in the trainer config before instantiation.
+
+        This is the public Trainer API — Lightning will propagate this to all
+        loggers and callbacks that rely on it (CSVLogger, TensorBoardLogger,
+        ModelCheckpoint without explicit ``dirpath``, etc.).
+
+        If the trainer is already a ``pl.Trainer`` instance (pre-built by the
+        user), we warn instead of hacking private attributes.
+        """
+        if isinstance(self.trainer, (DictConfig, dict)):
+            if OmegaConf.is_missing(self.trainer, "default_root_dir"):
+                pass  # replace the MISSING sentinel
+            elif "default_root_dir" in self.trainer:
+                logging.warning(
+                    f"! Overriding trainer.default_root_dir "
+                    f"({self.trainer.default_root_dir}) with cache_dir run_dir: {run_dir}"
+                )
+            self.trainer.default_root_dir = str(run_dir)
+        elif isinstance(self.trainer, pl.Trainer):
+            logging.warning(
+                "! cache_dir is set but the Trainer was passed as an already-"
+                "instantiated object. Cannot override default_root_dir cleanly. "
+                "Consider passing the trainer as a config dict instead."
+            )
+
+    def _resolve_load_path(self, run_dir: Path) -> Optional[str]:
+        """Determine what checkpoint to pass to ``trainer.fit(ckpt_path=...)``.
+
+        Priority:
+            1. User's explicit ``ckpt_path`` (if it exists on disk).
+            2. ``{run_dir}/checkpoints/last.ckpt`` (requeue from cache_dir).
+            3. ``None`` (fresh run).
+
+        This is purely the *load* path.  Where new checkpoints are *saved*
+        is controlled separately by ``_configure_cache_dir_checkpointing``.
+        """
+        # 1. User explicitly provided a checkpoint
+        if self.ckpt_path is not None:
+            if self.ckpt_path.is_file():
+                logging.info(f"  Load checkpoint (user): {self.ckpt_path}")
+                return str(self.ckpt_path)
+            logging.warning(
+                f"  {self.ckpt_path} specified but does not exist, using None"
+            )
+            return None
+
+        # 2. Auto-detect requeue checkpoint in run_dir
+        auto_ckpt = run_dir / "checkpoints" / "last.ckpt"
+        if auto_ckpt.is_file():
+            logging.info(f"  Load checkpoint (requeue): {auto_ckpt}")
+            return str(auto_ckpt)
+
+        # 3. Fresh run
+        return None
+
+    def _configure_cache_dir_checkpointing(self) -> None:
+        """Ensure all checkpoints are saved into ``run_dir/checkpoints/``.
+
+        When ``cache_dir`` is active:
+        1. Every user ``ModelCheckpoint`` is redirected to
+           ``run_dir/checkpoints/`` (preserving filename/monitor/etc.).
+        2. A **requeue checkpoint** (``last.ckpt``, saved every epoch) is
+           always added so that SLURM preemption recovery works even if the
+           user's callbacks only save "best" models.
+        """
+        run_dir = self._run_dir
+        save_dir = run_dir / "checkpoints"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        log_header("CacheDirCheckpointing")
+        logging.info(f"  Saving checkpoints to: {save_dir}")
+
+        # Redirect every existing ModelCheckpoint to our save_dir
+        for cb in self._trainer.callbacks:
+            if isinstance(cb, ModelCheckpoint):
+                old_dir = cb.dirpath
+                if (
+                    old_dir is not None
+                    and Path(old_dir).resolve() != save_dir.resolve()
+                ):
+                    logging.warning(
+                        f"  Redirecting ModelCheckpoint from '{old_dir}' "
+                        f"to '{save_dir}' (cache_dir is active)"
+                    )
+                cb.dirpath = str(save_dir)
+
+        # Add a requeue checkpoint (last.ckpt) so preemption recovery works
+        # regardless of what the user's callbacks save.  Can be disabled via
+        # spt.set(requeue_checkpoint=False) to save time/disk.
+        cfg = get_config()
+        if cfg.requeue_checkpoint:
+            requeue_saver = ModelCheckpoint(
+                dirpath=str(save_dir),
+                filename="last",
+                save_last=False,
+                save_on_train_epoch_end=True,
+                verbose=True,
+                enable_version_counter=False,
+            )
+            self._trainer.callbacks.append(requeue_saver)
+            logging.info("  Added requeue checkpoint (filename='last')")
+        else:
+            logging.info(
+                "  Requeue checkpoint disabled (spt.set(requeue_checkpoint=False))"
+            )
+
+    @staticmethod
+    def _warn_hydra_conflicts() -> None:
+        """Emit warnings when Hydra settings may conflict with the run directory."""
+        try:
+            from hydra.core.hydra_config import HydraConfig
+
+            if not HydraConfig.initialized():
+                return
+            hcfg = HydraConfig.get()
+            if getattr(hcfg.job, "chdir", False):
+                logging.warning(
+                    "! Hydra job.chdir=True detected. stable_pretraining's "
+                    "cache_dir overrides output paths — Hydra's chdir is "
+                    "redundant and may cause confusion."
+                )
+            # run.dir / sweep.dir
+            try:
+                run_dir_cfg = hcfg.run.dir
+                if run_dir_cfg:
+                    logging.warning(
+                        f"! Hydra run.dir='{run_dir_cfg}' will be ignored for "
+                        "trainer outputs (cache_dir takes precedence)."
+                    )
+            except Exception:
+                pass
+            try:
+                sweep_dir_cfg = hcfg.sweep.dir
+                if sweep_dir_cfg:
+                    logging.warning(
+                        f"! Hydra sweep.dir='{sweep_dir_cfg}' will be ignored for "
+                        "trainer outputs (cache_dir takes precedence)."
+                    )
+            except Exception:
+                pass
+        except Exception:
+            pass  # Hydra not active
 
     @rank_zero_only
     def init_and_sync_wandb(self):
@@ -251,6 +528,13 @@ class Manager(submitit.helpers.Checkpointable):
         log_header("Seed")
         logging.info(f"  seed: {self.seed}")
         pl.seed_everything(self.seed, workers=True)
+
+        # --- cache_dir: resolve run directory and inject into trainer config ---
+        run_dir = self._resolve_run_dir()
+        if run_dir is not None:
+            self._inject_run_dir_into_trainer_config(run_dir)
+            self._warn_hydra_conflicts()
+
         if isinstance(self.trainer, pl.Trainer):
             self._trainer = self.trainer
         else:
@@ -280,6 +564,10 @@ class Manager(submitit.helpers.Checkpointable):
                 raise ValueError("`trainer` should be a Trainer")
             logging.success("✓ trainer instantiated")
 
+        # Persist run_dir in every checkpoint so requeue can restore it
+        if run_dir is not None:
+            self._trainer.callbacks.append(_RunDirCallback(str(run_dir)))
+
         # Auto-detect TeacherStudentWrapper and add callback if needed
         # This runs AFTER trainer is set up, regardless of how it was created
         from .callbacks.teacher_student import TeacherStudentCallback
@@ -308,23 +596,33 @@ class Manager(submitit.helpers.Checkpointable):
 
         log_header("Callbacks")
         logging.info(f"  count: {len(self._trainer.callbacks)}")
-        if "SLURM_JOB_ID" in os.environ and self.ckpt_path is None:
-            logging.warning(
-                "Using SLURM but no ckpt_path, if requeued it will start from scratch"
-            )
-            logging.warning("Consider passing a value to the Manager's `ckpt_path` ")
-        else:
-            self._configure_checkpointing()
 
-        if self.ckpt_path is not None and self.ckpt_path.is_file():
-            ckpt_path = str(self.ckpt_path)
-        elif self.ckpt_path is not None and not self.ckpt_path.is_file():
-            logging.warning(
-                f"{self.ckpt_path} specified, but does not exist, using None for now!"
-            )
-            ckpt_path = None
+        # --- Checkpointing setup (load vs save are separate concerns) ---
+        if run_dir is not None:
+            # cache_dir mode: save always goes to run_dir/checkpoints/,
+            # load is resolved separately (user ckpt_path or requeue auto-detect)
+            self._configure_cache_dir_checkpointing()
+            ckpt_path = self._resolve_load_path(run_dir)
         else:
-            ckpt_path = None
+            # Legacy mode: ckpt_path controls both load and save location
+            if "SLURM_JOB_ID" in os.environ and self.ckpt_path is None:
+                logging.warning(
+                    "Using SLURM but no ckpt_path, if requeued it will start "
+                    "from scratch. Consider using spt.set(cache_dir=...) or "
+                    "passing a value to the Manager's `ckpt_path`."
+                )
+            else:
+                self._configure_checkpointing()
+
+            if self.ckpt_path is not None and self.ckpt_path.is_file():
+                ckpt_path = str(self.ckpt_path)
+            elif self.ckpt_path is not None and not self.ckpt_path.is_file():
+                logging.warning(
+                    f"{self.ckpt_path} specified, but does not exist, using None for now!"
+                )
+                ckpt_path = None
+            else:
+                ckpt_path = None
 
         if self.compile:
             logging.warning("Compiling module!")
@@ -424,7 +722,10 @@ class Manager(submitit.helpers.Checkpointable):
         if verbose:
             print("Entering checkpoint method", flush=True)
         if path is None:
-            path = (Path() / "checkpoint.ckpt").resolve()
+            if hasattr(self, "_run_dir"):
+                path = (self._run_dir / "checkpoints" / "checkpoint.ckpt").resolve()
+            else:
+                path = (Path() / "checkpoint.ckpt").resolve()
             if verbose:
                 print(f"  saving checkpoint to local path {path} ...", flush=True)
         else:

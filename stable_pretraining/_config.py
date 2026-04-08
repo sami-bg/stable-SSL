@@ -20,6 +20,7 @@ Example::
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Dict, Literal, Optional, Union
 
@@ -76,6 +77,8 @@ class _GlobalConfig:
         self._cleanup: Dict[str, bool] = dict(_CLEANUP_DEFAULTS)
         self._log_rank: Union[int, str] = 0
         self._default_callbacks: Dict[str, bool] = {}
+        self._cache_dir: Optional[str] = os.environ.get("SPT_CACHE_DIR", None)
+        self._requeue_checkpoint: bool = True
 
     # -- verbose ---------------------------------------------------------------
 
@@ -197,6 +200,37 @@ class _GlobalConfig:
                 )
         self._default_callbacks.update(value)
 
+    # -- cache_dir -------------------------------------------------------------
+
+    @property
+    def cache_dir(self) -> Optional[str]:
+        return self._cache_dir
+
+    @cache_dir.setter
+    def cache_dir(self, value: Optional[str]) -> None:
+        if value is not None:
+            if not isinstance(value, str):
+                raise TypeError(
+                    f"cache_dir must be a str or None, got {type(value).__name__}"
+                )
+            if not value.strip():
+                raise ValueError("cache_dir must not be empty")
+        self._cache_dir = value
+
+    # -- requeue_checkpoint ----------------------------------------------------
+
+    @property
+    def requeue_checkpoint(self) -> bool:
+        return self._requeue_checkpoint
+
+    @requeue_checkpoint.setter
+    def requeue_checkpoint(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"requeue_checkpoint must be a bool, got {type(value).__name__}"
+            )
+        self._requeue_checkpoint = value
+
     # -- reset (for testing) ---------------------------------------------------
 
     def reset(self) -> None:
@@ -211,6 +245,8 @@ class _GlobalConfig:
             f"  cleanup={self._cleanup!r},\n"
             f"  log_rank={self._log_rank!r},\n"
             f"  default_callbacks={self._default_callbacks!r},\n"
+            f"  cache_dir={self._cache_dir!r},\n"
+            f"  requeue_checkpoint={self._requeue_checkpoint!r},\n"
             f")"
         )
 
@@ -227,6 +263,8 @@ def set(
     cleanup: Optional[Dict[str, bool]] = None,
     log_rank: Optional[Union[int, Literal["all"]]] = None,
     default_callbacks: Optional[Dict[str, bool]] = None,
+    cache_dir: Optional[str] = None,
+    requeue_checkpoint: Optional[bool] = None,
 ) -> None:
     """Configure library-wide settings for stable_pretraining.
 
@@ -258,6 +296,27 @@ def set(
             ``"sklearn_checkpoint"``, ``"wandb_checkpoint"``,
             ``"module_summary"``, ``"slurm_info"``, ``"unused_params"``,
             ``"hf_checkpoint"``.
+        cache_dir: Root directory for all training outputs.  Each run
+            creates a unique subdirectory under
+            ``{cache_dir}/runs/{YYYYMMDD}/{HHMMSS}/{run_id}/``.
+            When set, the Manager injects this as the Trainer's
+            ``default_root_dir`` and auto-configures ``ckpt_path``,
+            ensuring no path collisions across parallel sweep jobs.
+            Can also be set via the ``SPT_CACHE_DIR`` environment
+            variable.  ``None`` (default) disables this and preserves
+            the standard Lightning / Hydra directory behavior.
+
+            .. note::
+                SLURM ``.out`` / ``.err`` files are created by the
+                scheduler before Python starts and cannot be redirected
+                into the run directory.
+
+        requeue_checkpoint: Whether to automatically add a
+            ``ModelCheckpoint`` that saves ``last.ckpt`` every epoch for
+            SLURM requeue recovery.  ``True`` (default) ensures seamless
+            preemption handling.  Set to ``False`` to save time/disk when
+            preemption is not a concern.  Only applies when ``cache_dir``
+            is set.
 
     Example::
 
@@ -266,6 +325,7 @@ def set(
         spt.set(verbose="DEBUG")
         spt.set(cleanup={"checkpoints": False, "slurm": False})
         spt.set(progress_bar="simple", log_rank="all")
+        spt.set(cache_dir="/scratch/my_runs")
     """
     cfg = get_config()
 
@@ -285,6 +345,12 @@ def set(
 
     if default_callbacks is not None:
         cfg.default_callbacks = default_callbacks
+
+    if cache_dir is not None:
+        cfg.cache_dir = cache_dir
+
+    if requeue_checkpoint is not None:
+        cfg.requeue_checkpoint = requeue_checkpoint
 
 
 def _apply_verbose(level: str) -> None:

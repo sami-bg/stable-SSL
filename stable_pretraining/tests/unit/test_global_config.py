@@ -56,6 +56,8 @@ def test_defaults():
     assert cfg.cleanup == _CLEANUP_DEFAULTS
     assert cfg.log_rank == 0
     assert cfg.default_callbacks == {}
+    assert cfg.cache_dir is None
+    assert cfg.requeue_checkpoint is True
 
 
 def test_reset_restores_defaults():
@@ -65,12 +67,16 @@ def test_reset_restores_defaults():
     cfg.cleanup = {"checkpoints": False}
     cfg.log_rank = "all"
     cfg.default_callbacks = {"logging": False}
+    cfg.cache_dir = "/tmp/test"
+    cfg.requeue_checkpoint = False
     cfg.reset()
     assert cfg.verbose == "INFO"
     assert cfg.progress_bar == "auto"
     assert cfg.cleanup == _CLEANUP_DEFAULTS
     assert cfg.log_rank == 0
     assert cfg.default_callbacks == {}
+    assert cfg.cache_dir is None
+    assert cfg.requeue_checkpoint is True
 
 
 # ============================================================================

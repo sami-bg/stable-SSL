@@ -195,6 +195,8 @@ class CleanUpCallback(Callback):
                 # LatentViz: saves to save_dir or latent_viz_{name}
                 if hasattr(cb, "save_dir") and hasattr(cb, "name"):
                     d = cb.save_dir if cb.save_dir else f"latent_viz_{cb.name}"
+                    if not os.path.isabs(d):
+                        d = os.path.join(trainer.default_root_dir, d)
                     if os.path.isdir(d):
                         targets.append(("callback", d))
                 # OnlineWriter: saves to cb.path

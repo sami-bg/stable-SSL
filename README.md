@@ -236,8 +236,85 @@ print(spt.get_config())
 | `cleanup` | `dict` | keeps checkpoints & logs | Controls which artifact categories `CleanUpCallback` removes after training. Keys: `"checkpoints"`, `"logs"`, `"hydra"`, `"slurm"`, `"env_dump"`, `"callback_artifacts"`. Values are bools (`True` = keep, `False` = delete). |
 | `log_rank` | `int` or `"all"` | `0` | Which distributed rank(s) may produce log output. |
 | `default_callbacks` | `dict` | all enabled | Toggle individual default callbacks: `"progress_bar"`, `"registry"`, `"logging"`, `"env_dump"`, `"trainer_info"`, `"sklearn_checkpoint"`, `"wandb_checkpoint"`, `"module_summary"`, `"slurm_info"`, `"unused_params"`, `"hf_checkpoint"`. |
+| `cache_dir` | `str` or `None` | `None` (or `SPT_CACHE_DIR` env var) | Root directory for all training outputs. See [Output Directory](#output-directory-cache_dir) below. |
+| `requeue_checkpoint` | `bool` | `True` | Auto-add a `last.ckpt` checkpoint every epoch for SLURM requeue. Set to `False` to save time/disk when preemption is not a concern. Only applies when `cache_dir` is set. |
 
 Settings apply immediately and persist for the process lifetime. `spt.set()` can be called multiple times; only the settings you pass are updated.
+
+## Output Directory (`cache_dir`)
+
+By default, Lightning and Hydra scatter training outputs (checkpoints, logs, wandb data) based on the current working directory or Hydra's `run.dir`. This causes collisions when multiple sweep jobs start at the same time and resolve to the same path.
+
+`stable-pretraining` solves this with a centralized `cache_dir`. When set, **every run gets its own unique directory** and all outputs are routed there automatically:
+
+```
+{cache_dir}/runs/{YYYYMMDD}/{HHMMSS}/{run_id}/
+├── checkpoints/last.ckpt
+├── wandb_resume.json
+├── run_meta.json
+├── environment.json
+└── ...
+```
+
+### Enabling `cache_dir`
+
+```python
+import stable_pretraining as spt
+
+# Option 1: in Python
+spt.set(cache_dir="~/.cache/stable_pretraining")
+
+# Option 2: via environment variable (e.g. in ~/.bashrc)
+# export SPT_CACHE_DIR=~/.cache/stable_pretraining
+```
+
+When `cache_dir` is set, the Manager:
+1. Creates a unique run directory under `cache_dir/runs/`.
+2. Sets the Trainer's `default_root_dir` to that directory (before instantiation).
+3. Redirects **all** `ModelCheckpoint` callbacks to `run_dir/checkpoints/` (preserving their filename, monitor, and other settings).
+4. Adds a requeue checkpoint (`last.ckpt`, saved every epoch) for seamless SLURM preemption recovery. You never need to add one yourself.
+5. Routes all callback outputs (environment dumps, latent visualizations, HuggingFace exports, etc.) there.
+
+If preemption is not a concern and you want to skip the requeue checkpoint overhead:
+```python
+spt.set(cache_dir="/scratch/runs", requeue_checkpoint=False)
+```
+
+When `cache_dir` is not set (`None`, the default), the library behaves exactly as before.
+
+### How the run ID is generated
+
+The run ID is chosen to be **deterministic across all ranks of the same job**, so multi-GPU training always agrees on a single directory:
+
+| Environment | Run ID | Example |
+|---|---|---|
+| SLURM | `SLURM_JOB_ID` | `99999` |
+| SLURM array job | `SLURM_JOB_ID_SLURM_ARRAY_TASK_ID` | `99999_3` |
+| torchrun | `TORCHELASTIC_RUN_ID` | `abc123` |
+| Local / other | Random UUID (12 hex chars) | `a1b2c3d4e5f6` |
+
+### `ckpt_path` is for loading only
+
+`ckpt_path` and `cache_dir` serve different purposes:
+
+- **`ckpt_path`** = where to **load** weights from (one-time, read-only).
+- **`cache_dir`** = where to **save** everything going forward.
+
+```python
+manager = spt.Manager(
+    trainer=trainer_cfg,
+    module=module,
+    data=data,
+    ckpt_path="/old/run/pretrained.ckpt",  # Load from here once
+)
+# New checkpoints, logs, wandb data → cache_dir/runs/.../
+```
+
+If you don't pass `ckpt_path`, the system checks `run_dir/checkpoints/last.ckpt` automatically. This means **SLURM requeue works without any user configuration**: the job is preempted, restarted with the same `SLURM_JOB_ID`, finds its previous run directory, and resumes from the last checkpoint.
+
+### Hydra compatibility
+
+When `cache_dir` is active, Hydra's `run.dir`, `sweep.dir`, and `job.chdir` settings are ignored for trainer outputs (a warning is logged). Hydra still manages its own `.hydra/` config dumps as usual. Note that SLURM `.out`/`.err` files are created by the scheduler before Python starts and cannot be redirected into the run directory.
 
 ## Built-in Methods
 

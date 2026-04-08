@@ -74,6 +74,13 @@ class OnlineWriter(Callback):
             logging.warning(f"! path {path} does not exist, creating it")
             path.mkdir(parents=True, exist_ok=True)
 
+    def setup(self, trainer, pl_module, stage=None):
+        # Resolve relative paths against trainer.default_root_dir
+        if not self.path.is_absolute():
+            self.path = Path(trainer.default_root_dir) / self.path
+            if not self.path.is_dir():
+                self.path.mkdir(parents=True, exist_ok=True)
+
     def on_sanity_check_start(self, trainer, pl_module):
         self.is_sanity_check = True
 
