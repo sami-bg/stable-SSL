@@ -1,6 +1,7 @@
 """Pytest configuration and shared fixtures."""
 
 import os
+from pathlib import Path
 
 import pytest
 import torch
@@ -19,6 +20,10 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "v1: Legacy tests that need updating (auto-skipped)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "regression: Regression tests (all methods, fake data, CPU-only, checks registry)",
     )
 
 
@@ -56,3 +61,31 @@ def mock_batch(device):
 def temp_dir(tmp_path_factory):
     """Create a temporary directory for test outputs."""
     return tmp_path_factory.mktemp("test_outputs")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_spt_config(tmp_path):
+    """Point spt cache_dir to a temp folder for every test.
+
+    This ensures no test writes files (environment.json, registry.db,
+    CSV logs, etc.) to the working directory.  pytest auto-cleans
+    tmp_path after each test.
+
+    Some tests intentionally reset cache_dir to ``None`` (e.g. to test
+    the legacy code path).  When that happens, Hydra/Lightning may
+    create an empty ``outputs/`` directory in CWD.  We clean it up in
+    teardown so it never persists.
+    """
+    import shutil
+
+    from stable_pretraining._config import get_config
+
+    cfg = get_config()
+    original = cfg._cache_dir
+    cfg._cache_dir = str(tmp_path)
+    yield
+    cfg._cache_dir = original
+    # Clean up empty outputs/ dir that Hydra creates when cache_dir is None
+    outputs = Path("outputs")
+    if outputs.is_dir():
+        shutil.rmtree(outputs, ignore_errors=True)

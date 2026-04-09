@@ -118,10 +118,18 @@ class HuggingFaceCheckpointCallback(Callback):
         if trainer.global_rank != 0:
             return
         step = trainer.global_step
-        # Resolve relative save_dir against trainer.default_root_dir
+        # Resolve relative save_dir against trainer.default_root_dir.
+        # When running outside the Manager, default_root_dir may be CWD —
+        # prefer cache_dir if configured so we never pollute CWD.
+        from stable_pretraining._config import get_config
+
+        root = trainer.default_root_dir
+        cfg = get_config()
+        if cfg.cache_dir is not None and root == str(Path().resolve()):
+            root = cfg.cache_dir
         save_dir = self.save_dir
         if not save_dir.is_absolute():
-            save_dir = Path(trainer.default_root_dir) / save_dir
+            save_dir = Path(root) / save_dir
         hf_step_dir = save_dir / f"step_{step}"
 
         # Ensure atomic overwrite: Clear directory if it exists

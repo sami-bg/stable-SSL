@@ -55,7 +55,16 @@ def print_logger_info(logger):
     elif logger is None:
         logging.warning("! No logger used!")
     else:
-        logging.warning("! Unrecognized logger!")
+        # Check for RegistryLogger without importing at module level
+        cls_name = type(logger).__name__
+        if cls_name == "RegistryLogger":
+            log_header("RegistryLogger")
+            logging.info(f"  db_path: {logger._db.db_path}")
+            logging.info(f"  run_id:  {logger.version}")
+            if logger._tags:
+                logging.info(f"  tags:    {logger._tags}")
+        else:
+            logging.warning("! Unrecognized logger!")
 
 
 def print_signal_info():
@@ -446,6 +455,125 @@ class Manager(submitit.helpers.Checkpointable):
         except Exception:
             pass  # Hydra not active
 
+    def _inject_registry_logger(self) -> None:
+        """Auto-add :class:`RegistryLogger` and a :class:`CSVLogger`.
+
+        Always active by default so that every run is indexed and has
+        per-step CSV logs.  Works with or without ``cache_dir``:
+
+        - **With ``cache_dir``**: ``registry.db`` lives in ``cache_dir``,
+          CSV logs go to ``run_dir/``.
+        - **Without ``cache_dir``**: both fall back to the Trainer's
+          ``default_root_dir`` (typically the current working directory).
+
+        The RegistryLogger captures the run summary, config, and metadata
+        into a shared SQLite database for fast cross-run queries.
+
+        The CSVLogger records **per-step metrics** so that no detailed
+        training history is lost — the RegistryLogger only stores the
+        last value per metric key (like wandb's ``run.summary``), not the
+        full time series.
+
+        Can be disabled via ``spt.set(default_callbacks={"registry_logger": False})``.
+        """
+        cfg = get_config()
+
+        # Respect user opt-out
+        if not cfg.default_loggers.get("registry", True):
+            return
+
+        from .registry.logger import RegistryLogger
+
+        # Resolve paths: cache_dir → run_dir, otherwise trainer's root dir
+        if hasattr(self, "_run_dir") and self._run_dir is not None:
+            log_dir = str(self._run_dir)
+            run_id = self._run_id
+        else:
+            log_dir = str(
+                Path(self._trainer.default_root_dir).resolve()
+            )
+            run_id = _generate_run_id()
+
+        if cfg.cache_dir is not None:
+            db_path = str(Path(cfg.cache_dir).resolve() / "registry.db")
+        else:
+            db_path = str(Path(log_dir) / "registry.db")
+
+        registry_logger = RegistryLogger(db_path=db_path)
+        registry_logger._run_id = run_id
+        registry_logger._run_dir = log_dir
+
+        self._trainer.loggers.append(registry_logger)
+
+        log_header("RegistryLogger")
+        logging.info(f"  db_path: {registry_logger._db.db_path}")
+        logging.info(f"  run_id:  {run_id}")
+        if registry_logger._tags:
+            logging.info(f"  tags:    {registry_logger._tags}")
+
+        # Ensure a CSVLogger is present so per-step metrics are saved.
+        # The RegistryLogger only stores summary (last value per key);
+        # without a CSVLogger, the step-by-step history would be lost.
+        has_csv = any(
+            isinstance(lgr, lightning.pytorch.loggers.CSVLogger)
+            for lgr in self._trainer.loggers
+        )
+        if not has_csv:
+            csv_logger = lightning.pytorch.loggers.CSVLogger(
+                save_dir=log_dir, name="", version=""
+            )
+            self._trainer.loggers.append(csv_logger)
+            log_header("CSVLogger (auto)")
+            logging.info(f"  log_dir: {csv_logger.log_dir}")
+
+    def _flatten_hydra_config(self) -> dict:
+        """Build a flat dot-separated dict from the raw Hydra configs.
+
+        Collects ``trainer``, ``module``, and ``data`` DictConfigs, flattens
+        them with ``pd.json_normalize``, and recursively expands lists.
+        Returns an empty dict when everything is already instantiated.
+        """
+        config = {}
+        if isinstance(self.trainer, (dict, DictConfig)):
+            config["trainer"] = OmegaConf.to_container(self.trainer, resolve=True)
+        if isinstance(self.module, (dict, DictConfig)):
+            config["module"] = OmegaConf.to_container(self.module, resolve=True)
+        if isinstance(self.data, (dict, DictConfig)):
+            config["data"] = OmegaConf.to_container(self.data, resolve=True)
+        if not config:
+            return {}
+
+        config = pd.json_normalize(config, sep=".").to_dict(orient="records")[0]
+        while True:
+            changed = False
+            for k in list(config.keys()):
+                if isinstance(config[k], list):
+                    changed = True
+                    for i, v in enumerate(config[k]):
+                        config[f"{k}.{i}"] = v
+                    del config[k]
+            if changed:
+                config = pd.json_normalize(config, sep=".").to_dict(orient="records")[0]
+            else:
+                break
+        return config
+
+    def _inject_hydra_hparams(self) -> None:
+        """Inject the full flattened Hydra config into the module's hparams.
+
+        Called right before ``trainer.fit()`` so that Lightning's built-in
+        ``_log_hyperparams`` sends the config to **all** loggers (wandb,
+        CSV, TensorBoard, registry, etc.) automatically — no per-logger
+        special-casing required.
+        """
+        flat = self._flatten_hydra_config()
+        if not flat:
+            return
+        module = self.instantiated_module
+        module.save_hyperparameters(flat)
+        log_header("HydraHparams")
+        logging.info(f"  Injected {len(flat)} config keys into module.hparams")
+
     @rank_zero_only
     def init_and_sync_wandb(self):
         """Handles some utilities for WandB."""
@@ -467,33 +595,12 @@ class Manager(submitit.helpers.Checkpointable):
             logging.info("  a Wandb config is provided, not uploading Hydra's:")
         else:
             logging.info("  Wandb's config is empty, trying to use Hydra's")
-            config = {}
-            if isinstance(self.trainer, dict):
-                config["trainer"] = OmegaConf.to_container(self.trainer, resolve=True)
-            if isinstance(self.module, dict):
-                config["module"] = OmegaConf.to_container(self.module, resolve=True)
-            if isinstance(self.data, dict):
-                config["data"] = OmegaConf.to_container(self.data, resolve=True)
+            config = self._flatten_hydra_config()
             if not config:
                 logging.info(
                     "  Everything already instantiated, nothing is added to config!"
                 )
                 return
-            config = pd.json_normalize(config, sep=".")
-            config = config.to_dict(orient="records")[0]
-            while True:
-                logging.info("  flattening one level of Hydra's config")
-                valid = True
-                for k in list(config.keys()):
-                    if type(config[k]) is list:
-                        valid = False
-                        for i, j in enumerate(config[k]):
-                            config[f"{k}.{i}"] = j
-                        del config[k]
-                config = pd.json_normalize(config, sep=".")
-                config = config.to_dict(orient="records")[0]
-                if valid:
-                    break
             logging.info(f"  Final Hydra's config has {len(config)} items")
             if WANDB_AVAILABLE and wandb.run:
                 wandb.config.update(config)
@@ -568,6 +675,9 @@ class Manager(submitit.helpers.Checkpointable):
         if run_dir is not None:
             self._trainer.callbacks.append(_RunDirCallback(str(run_dir)))
 
+        # Always inject RegistryLogger + CSVLogger (works with or without cache_dir)
+        self._inject_registry_logger()
+
         # Auto-detect TeacherStudentWrapper and add callback if needed
         # This runs AFTER trainer is set up, regardless of how it was created
         from .callbacks.teacher_student import TeacherStudentCallback
@@ -639,6 +749,11 @@ class Manager(submitit.helpers.Checkpointable):
                 "Installed Lightning Trainer.fit does not accept `weights_only`; "
                 f"ignoring manager.resume_weights_only={self.resume_weights_only}."
             )
+
+        # Inject the full flattened Hydra config into the module's hparams
+        # so Lightning's _log_hyperparams sends it to ALL loggers automatically
+        # (wandb, CSV, TensorBoard, registry, etc.)
+        self._inject_hydra_hparams()
 
         log_header("TrainerFit")
         logging.info(f"  ckpt_path: {ckpt_path}")

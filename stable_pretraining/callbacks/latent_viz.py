@@ -393,9 +393,16 @@ class LatentViz(TrainableCallback):
             save_dir = self.save_dir
         else:
             save_dir = f"latent_viz_{self.name}"
-        # Resolve relative paths against trainer.default_root_dir
+        # Resolve relative paths against trainer.default_root_dir.
+        # Prefer cache_dir when default_root_dir is CWD (outside Manager).
         if not os.path.isabs(save_dir):
-            save_dir = os.path.join(trainer.default_root_dir, save_dir)
+            from stable_pretraining._config import get_config
+
+            root = trainer.default_root_dir
+            cfg = get_config()
+            if cfg.cache_dir is not None and root == str(Path().resolve()):
+                root = cfg.cache_dir
+            save_dir = os.path.join(root, save_dir)
         os.makedirs(save_dir, exist_ok=True)
 
         save_path = os.path.join(save_dir, f"epoch_{epoch:04d}.npz")

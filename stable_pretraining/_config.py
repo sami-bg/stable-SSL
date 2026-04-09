@@ -77,7 +77,13 @@ class _GlobalConfig:
         self._cleanup: Dict[str, bool] = dict(_CLEANUP_DEFAULTS)
         self._log_rank: Union[int, str] = 0
         self._default_callbacks: Dict[str, bool] = {}
-        self._cache_dir: Optional[str] = os.environ.get("SPT_CACHE_DIR", None)
+        self._default_loggers: Dict[str, bool] = {}
+        _default_cache = str(
+            os.path.join(os.path.expanduser("~"), ".cache", "stable-pretraining")
+        )
+        self._cache_dir: Optional[str] = os.environ.get(
+            "SPT_CACHE_DIR", _default_cache
+        )
         self._requeue_checkpoint: bool = True
 
     # -- verbose ---------------------------------------------------------------
@@ -200,6 +206,32 @@ class _GlobalConfig:
                 )
         self._default_callbacks.update(value)
 
+    # -- default_loggers -------------------------------------------------------
+
+    @property
+    def default_loggers(self) -> Dict[str, bool]:
+        return dict(self._default_loggers)
+
+    @default_loggers.setter
+    def default_loggers(self, value: Dict[str, bool]) -> None:
+        _VALID_LOGGER_KEYS = (
+            "registry",
+        )
+        if not isinstance(value, dict):
+            raise TypeError(
+                f"default_loggers must be a dict, got {type(value).__name__}"
+            )
+        for k, v in value.items():
+            if k not in _VALID_LOGGER_KEYS:
+                raise ValueError(
+                    f"Unknown default_loggers key {k!r}. Valid keys: {_VALID_LOGGER_KEYS}"
+                )
+            if not isinstance(v, bool):
+                raise TypeError(
+                    f"default_loggers[{k!r}] must be bool, got {type(v).__name__}"
+                )
+        self._default_loggers.update(value)
+
     # -- cache_dir -------------------------------------------------------------
 
     @property
@@ -245,6 +277,7 @@ class _GlobalConfig:
             f"  cleanup={self._cleanup!r},\n"
             f"  log_rank={self._log_rank!r},\n"
             f"  default_callbacks={self._default_callbacks!r},\n"
+            f"  default_loggers={self._default_loggers!r},\n"
             f"  cache_dir={self._cache_dir!r},\n"
             f"  requeue_checkpoint={self._requeue_checkpoint!r},\n"
             f")"
@@ -263,6 +296,7 @@ def set(
     cleanup: Optional[Dict[str, bool]] = None,
     log_rank: Optional[Union[int, Literal["all"]]] = None,
     default_callbacks: Optional[Dict[str, bool]] = None,
+    default_loggers: Optional[Dict[str, bool]] = None,
     cache_dir: Optional[str] = None,
     requeue_checkpoint: Optional[bool] = None,
 ) -> None:
@@ -296,15 +330,20 @@ def set(
             ``"sklearn_checkpoint"``, ``"wandb_checkpoint"``,
             ``"module_summary"``, ``"slurm_info"``, ``"unused_params"``,
             ``"hf_checkpoint"``.
+        default_loggers: Dict toggling individual default loggers
+            on/off.  Keys: ``"registry"`` (SQLite run registry +
+            per-step CSV logger — both are added together as a
+            pair).  Enabled by default.
         cache_dir: Root directory for all training outputs.  Each run
             creates a unique subdirectory under
             ``{cache_dir}/runs/{YYYYMMDD}/{HHMMSS}/{run_id}/``.
-            When set, the Manager injects this as the Trainer's
+            The Manager injects this as the Trainer's
             ``default_root_dir`` and auto-configures ``ckpt_path``,
             ensuring no path collisions across parallel sweep jobs.
-            Can also be set via the ``SPT_CACHE_DIR`` environment
-            variable.  ``None`` (default) disables this and preserves
-            the standard Lightning / Hydra directory behavior.
+            Defaults to ``~/.cache/stable-pretraining``.  Can be
+            overridden via the ``SPT_CACHE_DIR`` environment variable.
+            Set to ``None`` to disable and preserve the standard
+            Lightning / Hydra directory behavior.
 
             .. note::
                 SLURM ``.out`` / ``.err`` files are created by the
@@ -345,6 +384,9 @@ def set(
 
     if default_callbacks is not None:
         cfg.default_callbacks = default_callbacks
+
+    if default_loggers is not None:
+        cfg.default_loggers = default_loggers
 
     if cache_dir is not None:
         cfg.cache_dir = cache_dir

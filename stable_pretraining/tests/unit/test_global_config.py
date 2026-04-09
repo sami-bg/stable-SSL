@@ -56,7 +56,7 @@ def test_defaults():
     assert cfg.cleanup == _CLEANUP_DEFAULTS
     assert cfg.log_rank == 0
     assert cfg.default_callbacks == {}
-    assert cfg.cache_dir is None
+    assert cfg.cache_dir is not None  # defaults to ~/.cache/stable-pretraining
     assert cfg.requeue_checkpoint is True
 
 
@@ -75,7 +75,7 @@ def test_reset_restores_defaults():
     assert cfg.cleanup == _CLEANUP_DEFAULTS
     assert cfg.log_rank == 0
     assert cfg.default_callbacks == {}
-    assert cfg.cache_dir is None
+    assert cfg.cache_dir is not None  # defaults to ~/.cache/stable-pretraining
     assert cfg.requeue_checkpoint is True
 
 

@@ -50,8 +50,9 @@ def cache_dir(tmp_path):
 
 
 class TestCacheDirConfig:
-    def test_default_is_none(self):
-        assert get_config().cache_dir is None
+    def test_default_is_set(self):
+        assert get_config().cache_dir is not None
+        assert "stable-pretraining" in get_config().cache_dir
 
     def test_set_via_spt_set(self, tmp_path):
         spt_set(cache_dir=str(tmp_path))
@@ -80,10 +81,12 @@ class TestCacheDirConfig:
         with pytest.raises(TypeError, match="must be a str"):
             get_config().cache_dir = 123
 
-    def test_reset_clears_cache_dir(self, tmp_path):
+    def test_reset_restores_default_cache_dir(self, tmp_path):
         spt_set(cache_dir=str(tmp_path))
         get_config().reset()
-        assert get_config().cache_dir is None
+        # reset() restores the default (~/.cache/stable-pretraining), not None
+        assert get_config().cache_dir is not None
+        assert "stable-pretraining" in get_config().cache_dir
 
     def test_repr_includes_cache_dir(self, tmp_path):
         spt_set(cache_dir=str(tmp_path))
@@ -218,7 +221,8 @@ class TestResolveRunDir:
             ckpt_path=str(ckpt_path) if ckpt_path else None,
         )
 
-    def test_returns_none_when_cache_dir_unset(self):
+    def test_returns_none_when_cache_dir_none(self):
+        get_config()._cache_dir = None
         manager = self._make_manager()
         assert manager._resolve_run_dir() is None
 
@@ -797,8 +801,9 @@ class TestManagerCallWithCacheDir:
         assert manager._trainer.default_root_dir == str(manager._run_dir)
 
     def test_cache_dir_none_preserves_old_behavior(self, tmp_path, monkeypatch):
-        """When cache_dir is None, no run_dir is created."""
+        """When cache_dir is explicitly None, no run_dir is created."""
         monkeypatch.delenv("SPT_CACHE_DIR", raising=False)
+        get_config()._cache_dir = None
         assert get_config().cache_dir is None
 
         trainer = BoringTrainer(

@@ -236,6 +236,7 @@ print(spt.get_config())
 | `cleanup` | `dict` | keeps checkpoints & logs | Controls which artifact categories `CleanUpCallback` removes after training. Keys: `"checkpoints"`, `"logs"`, `"hydra"`, `"slurm"`, `"env_dump"`, `"callback_artifacts"`. Values are bools (`True` = keep, `False` = delete). |
 | `log_rank` | `int` or `"all"` | `0` | Which distributed rank(s) may produce log output. |
 | `default_callbacks` | `dict` | all enabled | Toggle individual default callbacks: `"progress_bar"`, `"registry"`, `"logging"`, `"env_dump"`, `"trainer_info"`, `"sklearn_checkpoint"`, `"wandb_checkpoint"`, `"module_summary"`, `"slurm_info"`, `"unused_params"`, `"hf_checkpoint"`. |
+| `default_loggers` | `dict` | all enabled | Toggle default loggers: `"registry"` (SQLite run registry + per-step CSV logger, added as a pair). |
 | `cache_dir` | `str` or `None` | `None` (or `SPT_CACHE_DIR` env var) | Root directory for all training outputs. See [Output Directory](#output-directory-cache_dir) below. |
 | `requeue_checkpoint` | `bool` | `True` | Auto-add a `last.ckpt` checkpoint every epoch for SLURM requeue. Set to `False` to save time/disk when preemption is not a concern. Only applies when `cache_dir` is set. |
 
@@ -315,6 +316,109 @@ If you don't pass `ckpt_path`, the system checks `run_dir/checkpoints/last.ckpt`
 ### Hydra compatibility
 
 When `cache_dir` is active, Hydra's `run.dir`, `sweep.dir`, and `job.chdir` settings are ignored for trainer outputs (a warning is logged). Hydra still manages its own `.hydra/` config dumps as usual. Note that SLURM `.out`/`.err` files are created by the scheduler before Python starts and cannot be redirected into the run directory.
+
+## Run Registry
+
+When `cache_dir` is set, `stable-pretraining` automatically maintains a **local SQLite registry** that indexes every run. Think of it as a local, offline, instant-query alternative to the wandb dashboard — designed for large sweeps on HPC clusters.
+
+There is **nothing to configure** — if `cache_dir` is set, the registry is active:
+
+```python
+import stable_pretraining as spt
+
+spt.set(cache_dir="/scratch/runs")
+# That's it. Every run is indexed in /scratch/runs/registry.db
+```
+
+### What gets stored
+
+The registry captures three categories of data per run, all automatically:
+
+- **Config / hparams** — the full Hydra config (trainer, module, data) is flattened into dot-separated keys (e.g. `module.optim.optimizer.lr`, `trainer.max_epochs`) and stored as both `config` and `hparams`. This works the same way as wandb's config: the Manager flattens the Hydra DictConfig and injects it into `module.save_hyperparameters()` before `trainer.fit()`, so Lightning's built-in `_log_hyperparams` sends it to **all** loggers (wandb, CSV, TensorBoard, and the registry) automatically.
+- **Summary** — every `self.log()` call in your LightningModule accumulates into a wandb-style summary dict (last value per metric key). At the end of training, the final summary (e.g. `{"val_acc": 0.85, "train_loss": 0.12}`) is written to the database.
+- **Metadata** — run ID, status (`running`/`completed`/`failed`), tags, notes, `run_dir` path, and best checkpoint path.
+
+### Grouping with tags
+
+All grouping is done through **tags** — a flat list of strings attached to each run. There is no separate "project" or "group" concept; `cache_dir` already acts as the project (one database file), and tags handle everything else.
+
+For SLURM array jobs, a `"sweep:<SLURM_ARRAY_JOB_ID>"` tag is automatically added so that all tasks in the same array are queryable as a group. You can add your own tags in YAML:
+
+```yaml
+logger:
+  - _target_: stable_pretraining.registry.RegistryLogger
+    tags: [resnet50, simclr, ablation-v2]
+    notes: "Testing higher learning rates"
+```
+
+### Querying runs
+
+Use `spt.open_registry()` from a notebook or script to query across all your runs:
+
+```python
+import stable_pretraining as spt
+
+spt.set(cache_dir="/scratch/runs")
+reg = spt.open_registry()
+
+# All completed runs from a SLURM array sweep
+best = reg.query(tag="sweep:12345", status="completed", sort_by="summary.val_acc", limit=5)
+for r in best:
+    print(f"{r.run_id}: val_acc={r.summary['val_acc']:.3f}  lr={r.hparams['module.optim.optimizer.lr']}")
+
+# Load the best checkpoint directly
+import torch
+ckpt = torch.load(best[0].checkpoint_path)
+
+# Filter by any Hydra config key (deeply nested keys work)
+lars_runs = reg.query(hparams={"module.optim.optimizer.type": "LARS"})
+
+# All resnet runs as a pandas DataFrame
+df = reg.to_dataframe(tag="resnet50")
+# Columns include flattened hparams and summary:
+#   run_id, status, tags, notes, checkpoint_path,
+#   hparams.module.optim.optimizer.lr, hparams.trainer.max_epochs,
+#   summary.val_acc, summary.train_loss, ...
+
+# Quick analysis
+df[["run_id", "hparams.module.optim.optimizer.lr", "summary.val_acc"]].sort_values(
+    "summary.val_acc", ascending=False
+).head(10)
+```
+
+### Concurrency and SLURM requeue
+
+The registry uses SQLite in WAL mode with exponential-backoff retries, so thousands of concurrent SLURM jobs can safely write to the same database file. On SLURM requeue, the run ID is deterministic (derived from `SLURM_JOB_ID`), so the requeued job reconnects to the same registry row and resumes seamlessly — the same mechanism used for wandb run resumption and checkpoint recovery.
+
+### CLI
+
+The `spt registry` command lets you query runs from the terminal:
+
+```bash
+# List all runs
+spt registry ls
+
+# Filter by tag or status
+spt registry ls --tag resnet50 --status completed
+
+# Top 5 runs by a metric (use --asc for losses)
+spt registry best val_acc
+spt registry best train_loss --asc -n 10
+
+# Show full details for a run (config, summary, tags)
+spt registry show <run_id>
+
+# Export to CSV or Parquet
+spt registry export sweep_results.csv --tag sweep:12345
+```
+
+By default the CLI uses `~/.cache/stable-pretraining/registry.db` (or `$SPT_CACHE_DIR/registry.db` if set). Pass `--db /path/to/registry.db` to query a different database.
+
+### Disabling the registry
+
+```python
+spt.set(default_loggers={"registry": False})
+```
 
 ## Built-in Methods
 

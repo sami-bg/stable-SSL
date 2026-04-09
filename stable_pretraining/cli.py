@@ -6,7 +6,6 @@ from pathlib import Path
 import subprocess
 import typer
 from typing import List, Optional
-import pandas as pd
 
 app = typer.Typer(
     name="spt",
@@ -138,6 +137,8 @@ def dump_csv_logs(
         raise typer.Exit(code=1)
 
     # ========== Define Aggregation Functions ==========
+    import pandas as pd
+
     def _agg_max(df: pd.DataFrame) -> pd.DataFrame:
         """Apply max to numeric columns, last value to others."""
         result = {}
@@ -196,6 +197,199 @@ def dump_csv_logs(
     except Exception as e:
         typer.echo(f"Error during processing: {e}", err=True)
         raise typer.Exit(code=1)
+
+
+# ========== REGISTRY COMMANDS ==========
+
+registry_app = typer.Typer(help="Query the local run registry.")
+app.add_typer(registry_app, name="registry")
+
+
+def _open_registry(db_path: Optional[str]):
+    """Open the registry DB without importing the full spt package.
+
+    Directly uses the lightweight registry._db and registry.query modules
+    (only sqlite3/json/pathlib) to avoid loading torch/lightning/hydra
+    on every CLI invocation.
+    """
+    from stable_pretraining.registry._db import RegistryDB
+    from stable_pretraining.registry.query import Registry
+
+    if db_path is None:
+        import os
+
+        cache_dir = os.environ.get("SPT_CACHE_DIR")
+        if cache_dir is None:
+            try:
+                from stable_pretraining._config import get_config
+
+                cache_dir = get_config().cache_dir
+            except Exception:
+                pass
+        if cache_dir is None:
+            typer.echo(
+                "Error: No --db path and no cache_dir configured. "
+                "Pass --db or set SPT_CACHE_DIR env var.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        db_path = str(Path(cache_dir).resolve() / "registry.db")
+
+    if not Path(db_path).is_file():
+        typer.echo(f"No runs yet (registry not found at {db_path}).")
+        typer.echo("Run a training job first, then query.")
+        raise typer.Exit()
+
+    return Registry(RegistryDB(db_path))
+
+
+@registry_app.command(name="ls")
+def registry_ls(
+    tag: Optional[str] = typer.Option(None, help="Filter by tag"),
+    status: Optional[str] = typer.Option(None, help="Filter by status"),
+    sort: Optional[str] = typer.Option(None, "--sort", help="Sort by column or summary.<key>"),
+    limit: Optional[int] = typer.Option(None, "-n", help="Max rows"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """List runs in the registry."""
+    reg = _open_registry(db)
+    runs = reg.query(
+        tag=tag,
+        status=status,
+        sort_by=sort,
+        descending=True,
+        limit=limit,
+    )
+
+    if not runs:
+        typer.echo("No runs found.")
+        raise typer.Exit()
+
+    # Simple table
+    rows = []
+    for r in runs:
+        row = {
+            "run_id": r.run_id,
+            "status": r.status,
+            "tags": ", ".join(r.tags) if r.tags else "",
+        }
+        # Add top summary metrics
+        for k, v in list(r.summary.items())[:5]:
+            if isinstance(v, float):
+                row[k] = f"{v:.4f}"
+            else:
+                row[k] = str(v)
+        rows.append(row)
+
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    typer.echo(df.to_string(index=False))
+    reg.close()
+
+
+@registry_app.command()
+def show(
+    run_id: str = typer.Argument(..., help="Run ID to display"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Show details for a single run."""
+    reg = _open_registry(db)
+    run = reg.get(run_id)
+    if run is None:
+        typer.echo(f"Run '{run_id}' not found.", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"run_id:          {run.run_id}")
+    typer.echo(f"status:          {run.status}")
+    typer.echo(f"run_dir:         {run.run_dir}")
+    typer.echo(f"checkpoint_path: {run.checkpoint_path}")
+    typer.echo(f"tags:            {run.tags}")
+    typer.echo(f"notes:           {run.notes}")
+
+    if run.summary:
+        typer.echo("\nSummary:")
+        for k, v in sorted(run.summary.items()):
+            typer.echo(f"  {k}: {v}")
+
+    if run.hparams:
+        typer.echo(f"\nHparams ({len(run.hparams)} keys):")
+        for k, v in sorted(run.hparams.items()):
+            typer.echo(f"  {k}: {v}")
+
+    reg.close()
+
+
+@registry_app.command()
+def best(
+    metric: str = typer.Argument(..., help="Summary metric to rank by (e.g. val_acc)"),
+    tag: Optional[str] = typer.Option(None, help="Filter by tag"),
+    n: int = typer.Option(5, "-n", help="Number of top runs"),
+    ascending: bool = typer.Option(False, "--asc", help="Sort ascending (for loss)"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Show top N runs ranked by a summary metric."""
+    reg = _open_registry(db)
+    runs = reg.query(
+        tag=tag,
+        status="completed",
+        sort_by=f"summary.{metric}",
+        descending=not ascending,
+        limit=n,
+    )
+
+    if not runs:
+        typer.echo("No completed runs found.")
+        raise typer.Exit()
+
+    # Filter out runs that don't have the metric
+    runs = [r for r in runs if metric in r.summary]
+    if not runs:
+        typer.echo(f"No runs have metric '{metric}' in summary.")
+        raise typer.Exit()
+
+    rows = []
+    for r in runs:
+        val = r.summary.get(metric, "N/A")
+        if isinstance(val, float):
+            val = f"{val:.6f}"
+        rows.append({
+            "run_id": r.run_id,
+            metric: val,
+            "tags": ", ".join(r.tags) if r.tags else "",
+            "run_dir": r.run_dir or "",
+        })
+
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    typer.echo(df.to_string(index=False))
+    reg.close()
+
+
+@registry_app.command()
+def export(
+    output: str = typer.Argument("runs.csv", help="Output file path (.csv or .parquet)"),
+    tag: Optional[str] = typer.Option(None, help="Filter by tag"),
+    status: Optional[str] = typer.Option(None, help="Filter by status"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Export runs to CSV or Parquet with flattened hparams/summary columns."""
+    reg = _open_registry(db)
+    df = reg.to_dataframe(tag=tag, status=status)
+
+    if df.empty:
+        typer.echo("No runs to export.")
+        raise typer.Exit()
+
+    output_path = Path(output)
+    if output_path.suffix == ".parquet":
+        df.to_parquet(output_path, index=False)
+    else:
+        df.to_csv(output_path, index=False)
+
+    typer.echo(f"Exported {len(df)} runs to {output_path}")
+    reg.close()
 
 
 if __name__ == "__main__":

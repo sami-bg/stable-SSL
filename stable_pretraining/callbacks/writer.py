@@ -75,9 +75,16 @@ class OnlineWriter(Callback):
             path.mkdir(parents=True, exist_ok=True)
 
     def setup(self, trainer, pl_module, stage=None):
-        # Resolve relative paths against trainer.default_root_dir
+        # Resolve relative paths against trainer.default_root_dir.
+        # Prefer cache_dir when default_root_dir is CWD (outside Manager).
         if not self.path.is_absolute():
-            self.path = Path(trainer.default_root_dir) / self.path
+            from stable_pretraining._config import get_config
+
+            root = trainer.default_root_dir
+            cfg = get_config()
+            if cfg.cache_dir is not None and root == str(Path().resolve()):
+                root = cfg.cache_dir
+            self.path = Path(root) / self.path
             if not self.path.is_dir():
                 self.path.mkdir(parents=True, exist_ok=True)
 

@@ -29,7 +29,7 @@ except ImportError:
 # Import global config first (no heavy deps)
 from ._config import get_config, set  # noqa: F401
 
-from . import backbone, callbacks, data, losses, module, optim, static, utils
+from . import backbone, callbacks, data, losses, module, optim, registry, static, utils
 from .__about__ import (
     __author__,
     __license__,
@@ -54,6 +54,7 @@ from .callbacks import (
 )
 from .callbacks.registry import log, log_dict
 from .manager import Manager
+from .registry import RegistryLogger, open_registry
 from .module import Module
 from .utils.lightning_patch import apply_manual_optimization_patch
 
@@ -98,6 +99,10 @@ __all__ = [
     "TeacherStudentWrapper",
     "log",
     "log_dict",
+    # Registry
+    "registry",
+    "RegistryLogger",
+    "open_registry",
     # Package info
     "__author__",
     "__license__",
