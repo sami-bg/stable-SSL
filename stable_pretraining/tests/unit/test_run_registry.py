@@ -73,6 +73,8 @@ def populated_db(db):
 
 
 class TestRegistryDB:
+    """Tests for the RegistryDB SQLite wrapper."""
+
     def test_insert_and_get(self, db):
         db.insert_run(
             "test-run",
@@ -185,6 +187,8 @@ class TestRegistryDB:
 
 
 class TestRegistryLogger:
+    """Tests for the RegistryLogger Lightning logger."""
+
     def test_name_and_version(self, tmp_db):
         logger = RegistryLogger(db_path=tmp_db)
         logger._run_id = "run-42"
@@ -323,6 +327,8 @@ class TestRegistryLogger:
 
 
 class TestRegistry:
+    """Tests for the Registry query API."""
+
     def test_query_all(self, populated_db):
         reg = Registry(populated_db)
         runs = reg.query()
@@ -405,6 +411,8 @@ class TestRegistry:
 
 
 class TestOpenRegistry:
+    """Tests for the open_registry() factory."""
+
     def test_open_with_explicit_path(self, tmp_db):
         db = RegistryDB(tmp_db)
         db.insert_run("test-run")
@@ -433,6 +441,8 @@ class TestOpenRegistry:
 
 
 class TestFlattenParams:
+    """Tests for the _flatten_params helper."""
+
     def test_flat_dict(self):
         result = _flatten_params({"lr": 0.01, "epochs": 100})
         assert result == {"lr": 0.01, "epochs": 100}
@@ -769,8 +779,7 @@ class TestEndToEndConfigToRegistry:
         return str(tmp_path / "registry.db")
 
     def test_config_flows_through_manager_to_registry(self, tmp_path):
-        """Full integration: Manager flattens Hydra config → module.hparams →
-        Lightning log_hyperparams → RegistryLogger → queryable in DB."""
+        """Full integration: Hydra config flows through Manager to the registry DB."""
         from omegaconf import OmegaConf
         from stable_pretraining.tests.utils import BoringModule, BoringDataModule
 

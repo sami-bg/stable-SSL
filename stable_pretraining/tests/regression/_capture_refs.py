@@ -3,7 +3,6 @@
 Run once, copy the output into REFERENCE_LOSSES in test_methods.py.
 """
 
-import sys
 import tempfile
 
 import torch

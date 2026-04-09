@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 import stable_pretraining as spt
 from stable_pretraining import forward, losses
 from stable_pretraining.manager import Manager
-from stable_pretraining.registry.query import Registry, open_registry
+from stable_pretraining.registry.query import Registry
 from stable_pretraining.registry._db import RegistryDB
 
 pytestmark = pytest.mark.regression
