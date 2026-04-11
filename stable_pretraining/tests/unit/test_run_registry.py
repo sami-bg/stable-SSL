@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from omegaconf import OmegaConf
 
-from stable_pretraining.registry._db import RegistryDB
+from stable_pretraining.registry import _db as _registry_db
 from stable_pretraining.registry.logger import RegistryLogger, _flatten_params
 from stable_pretraining.registry.query import Registry, RunRecord, open_registry
 
@@ -28,7 +28,7 @@ def tmp_db(tmp_path):
 @pytest.fixture
 def db(tmp_db):
     """Return an open RegistryDB instance."""
-    _db = RegistryDB(tmp_db)
+    _db = _registry_db.RegistryDB(tmp_db)
     yield _db
     _db.close()
 
@@ -163,18 +163,21 @@ class TestRegistryDB:
         assert len(runs) == 3
 
     def test_wal_mode_enabled(self, tmp_db):
-        db = RegistryDB(tmp_db)
-        conn = db._get_connection()
+        """WAL mode is a property of the SQLite backend, test it directly."""
+        from stable_pretraining.registry._local import LocalRegistryDB
+
+        local_db = LocalRegistryDB(tmp_db)
+        conn = local_db._get_connection()
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         assert mode == "wal"
-        db.close()
+        local_db.close()
 
     def test_close_and_reopen(self, tmp_db):
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         db.insert_run("persistent-run", config={"x": 1})
         db.close()
 
-        db2 = RegistryDB(tmp_db)
+        db2 = _registry_db.RegistryDB(tmp_db)
         run = db2.get_run("persistent-run")
         assert run is not None
         assert run["config"] == {"x": 1}
@@ -241,7 +244,7 @@ class TestRegistryLogger:
         logger.log_metrics({"val_acc": 0.9}, step=99)
         logger.finalize("success")
 
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         run = db.get_run("run-final")
         assert run["status"] == "completed"
         assert run["summary"]["val_acc"] == 0.9
@@ -255,7 +258,7 @@ class TestRegistryLogger:
         logger.log_hyperparams({"lr": 0.01})
         logger.finalize("failed")
 
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         run = db.get_run("run-fail")
         assert run["status"] == "failed"
         db.close()
@@ -268,7 +271,7 @@ class TestRegistryLogger:
         logger.log_metrics({"loss": 0.5}, step=0)
         logger.finalize("success")
 
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         run = db.get_run("run-no-hp")
         assert run is not None
         assert run["status"] == "completed"
@@ -414,7 +417,7 @@ class TestOpenRegistry:
     """Tests for the open_registry() factory."""
 
     def test_open_with_explicit_path(self, tmp_db):
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         db.insert_run("test-run")
         db.close()
 
@@ -472,21 +475,29 @@ class TestRegistryCLI:
     @pytest.fixture
     def cli_db(self, tmp_db):
         """Populate a DB with sample runs and return the path."""
-        db = RegistryDB(tmp_db)
+        db = _registry_db.RegistryDB(tmp_db)
         db.insert_run(
-            "cli-run-1", status="completed", run_dir="/tmp/r1",
-            config={"lr": 0.01}, hparams={"lr": 0.01},
+            "cli-run-1",
+            status="completed",
+            run_dir="/tmp/r1",
+            config={"lr": 0.01},
+            hparams={"lr": 0.01},
             tags=["resnet", "sweep:100"],
         )
         db.update_run("cli-run-1", summary={"val_acc": 0.85, "train_loss": 0.12})
         db.insert_run(
-            "cli-run-2", status="completed", run_dir="/tmp/r2",
-            config={"lr": 0.1}, hparams={"lr": 0.1},
+            "cli-run-2",
+            status="completed",
+            run_dir="/tmp/r2",
+            config={"lr": 0.1},
+            hparams={"lr": 0.1},
             tags=["resnet", "sweep:100"],
         )
         db.update_run("cli-run-2", summary={"val_acc": 0.92, "train_loss": 0.08})
         db.insert_run(
-            "cli-run-3", status="running", run_dir="/tmp/r3",
+            "cli-run-3",
+            status="running",
+            run_dir="/tmp/r3",
             tags=["vit"],
         )
         db.close()
@@ -506,7 +517,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "ls", "--db", cli_db, "--tag", "vit"])
+        result = CliRunner().invoke(
+            app, ["registry", "ls", "--db", cli_db, "--tag", "vit"]
+        )
         assert result.exit_code == 0
         assert "cli-run-3" in result.output
         assert "cli-run-1" not in result.output
@@ -515,7 +528,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "ls", "--db", cli_db, "--status", "completed"])
+        result = CliRunner().invoke(
+            app, ["registry", "ls", "--db", cli_db, "--status", "completed"]
+        )
         assert result.exit_code == 0
         assert "cli-run-1" in result.output
         assert "cli-run-3" not in result.output
@@ -524,7 +539,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "show", "cli-run-1", "--db", cli_db])
+        result = CliRunner().invoke(
+            app, ["registry", "show", "cli-run-1", "--db", cli_db]
+        )
         assert result.exit_code == 0
         assert "cli-run-1" in result.output
         assert "val_acc" in result.output
@@ -535,7 +552,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "show", "nonexistent", "--db", cli_db])
+        result = CliRunner().invoke(
+            app, ["registry", "show", "nonexistent", "--db", cli_db]
+        )
         assert result.exit_code == 1
         assert "not found" in result.output
 
@@ -543,7 +562,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "best", "val_acc", "--db", cli_db])
+        result = CliRunner().invoke(
+            app, ["registry", "best", "val_acc", "--db", cli_db]
+        )
         assert result.exit_code == 0
         # cli-run-2 has higher val_acc (0.92), should be first
         lines = result.output.strip().split("\n")
@@ -553,7 +574,9 @@ class TestRegistryCLI:
         from typer.testing import CliRunner
         from stable_pretraining.cli import app
 
-        result = CliRunner().invoke(app, ["registry", "best", "train_loss", "--asc", "--db", cli_db])
+        result = CliRunner().invoke(
+            app, ["registry", "best", "train_loss", "--asc", "--db", cli_db]
+        )
         assert result.exit_code == 0
         # cli-run-2 has lower loss (0.08), should be first with --asc
         lines = result.output.strip().split("\n")
@@ -569,6 +592,7 @@ class TestRegistryCLI:
         assert "Exported 3 runs" in result.output
 
         import pandas as pd
+
         df = pd.read_csv(output)
         assert len(df) == 3
         assert "summary.val_acc" in df.columns
@@ -681,9 +705,7 @@ class TestFlattenHydraConfig:
         )
 
         manager = Manager(
-            trainer=BoringTrainer(
-                enable_checkpointing=False, logger=False
-            ),
+            trainer=BoringTrainer(enable_checkpointing=False, logger=False),
             module=BoringModule(),
             data=BoringDataModule(),
         )
@@ -713,10 +735,12 @@ class TestInjectHydraHparams:
         from stable_pretraining.tests.utils import BoringModule, BoringDataModule
 
         manager = Manager(
-            trainer=OmegaConf.create({
-                "max_epochs": 100,
-                "accelerator": "cpu",
-            }),
+            trainer=OmegaConf.create(
+                {
+                    "max_epochs": 100,
+                    "accelerator": "cpu",
+                }
+            ),
             module=BoringModule(),
             data=BoringDataModule(),
         )
@@ -736,10 +760,12 @@ class TestInjectHydraHparams:
 
         # Build a Manager with deeply nested module config as DictConfig
         trainer_cfg = OmegaConf.create({"max_epochs": 10})
-        module_cfg = OmegaConf.create({
-            "optim": {"optimizer": {"lr": 0.01, "wd": 1e-4}},
-            "backbone": {"name": "resnet50", "layers": [3, 4, 6, 3]},
-        })
+        module_cfg = OmegaConf.create(
+            {
+                "optim": {"optimizer": {"lr": 0.01, "wd": 1e-4}},
+                "backbone": {"name": "resnet50", "layers": [3, 4, 6, 3]},
+            }
+        )
         manager = Manager(
             trainer=trainer_cfg,
             module=BoringModule(),
@@ -783,20 +809,22 @@ class TestEndToEndConfigToRegistry:
         from omegaconf import OmegaConf
         from stable_pretraining.tests.utils import BoringModule, BoringDataModule
 
-        trainer_cfg = OmegaConf.create({
-            "_target_": "lightning.Trainer",
-            "max_epochs": 1,
-            "accelerator": "cpu",
-            "enable_checkpointing": False,
-            "enable_progress_bar": False,
-            "enable_model_summary": False,
-        })
+        trainer_cfg = OmegaConf.create(
+            {
+                "_target_": "lightning.Trainer",
+                "max_epochs": 1,
+                "accelerator": "cpu",
+                "enable_checkpointing": False,
+                "enable_progress_bar": False,
+                "enable_model_summary": False,
+            }
+        )
 
         db_path = self._run_via_manager(
             tmp_path, trainer_cfg, BoringModule(), BoringDataModule()
         )
 
-        reg = Registry(RegistryDB(db_path))
+        reg = Registry(_registry_db.RegistryDB(db_path))
         assert len(reg) == 1
         run = reg.query()[0]
         assert run.status == "completed"
@@ -809,14 +837,16 @@ class TestEndToEndConfigToRegistry:
         from omegaconf import OmegaConf
         from stable_pretraining.tests.utils import BoringModule, BoringDataModule
 
-        trainer_cfg = OmegaConf.create({
-            "_target_": "lightning.Trainer",
-            "max_epochs": 1,
-            "accelerator": "cpu",
-            "enable_checkpointing": False,
-            "enable_progress_bar": False,
-            "enable_model_summary": False,
-        })
+        trainer_cfg = OmegaConf.create(
+            {
+                "_target_": "lightning.Trainer",
+                "max_epochs": 1,
+                "accelerator": "cpu",
+                "enable_checkpointing": False,
+                "enable_progress_bar": False,
+                "enable_model_summary": False,
+            }
+        )
         module = BoringModule()
         # Override module config with deeply nested structure
         # (Manager stores this as self.module DictConfig)
@@ -825,7 +855,7 @@ class TestEndToEndConfigToRegistry:
             tmp_path, trainer_cfg, module, BoringDataModule()
         )
 
-        reg = Registry(RegistryDB(db_path))
+        reg = Registry(_registry_db.RegistryDB(db_path))
         run = reg.query()[0]
         # Trainer config keys are flattened
         assert "trainer.max_epochs" in run.hparams
@@ -840,18 +870,18 @@ class TestEndToEndConfigToRegistry:
         # Snapshot CWD before
         cwd_before = set(glob.glob("*"))
 
-        trainer_cfg = OmegaConf.create({
-            "_target_": "lightning.Trainer",
-            "max_epochs": 1,
-            "accelerator": "cpu",
-            "enable_checkpointing": False,
-            "enable_progress_bar": False,
-            "enable_model_summary": False,
-        })
-
-        self._run_via_manager(
-            tmp_path, trainer_cfg, BoringModule(), BoringDataModule()
+        trainer_cfg = OmegaConf.create(
+            {
+                "_target_": "lightning.Trainer",
+                "max_epochs": 1,
+                "accelerator": "cpu",
+                "enable_checkpointing": False,
+                "enable_progress_bar": False,
+                "enable_model_summary": False,
+            }
         )
+
+        self._run_via_manager(tmp_path, trainer_cfg, BoringModule(), BoringDataModule())
 
         # Snapshot CWD after
         cwd_after = set(glob.glob("*"))
@@ -863,20 +893,22 @@ class TestEndToEndConfigToRegistry:
         from omegaconf import OmegaConf
         from stable_pretraining.tests.utils import BoringModule, BoringDataModule
 
-        trainer_cfg = OmegaConf.create({
-            "_target_": "lightning.Trainer",
-            "max_epochs": 1,
-            "accelerator": "cpu",
-            "enable_checkpointing": False,
-            "enable_progress_bar": False,
-            "enable_model_summary": False,
-        })
+        trainer_cfg = OmegaConf.create(
+            {
+                "_target_": "lightning.Trainer",
+                "max_epochs": 1,
+                "accelerator": "cpu",
+                "enable_checkpointing": False,
+                "enable_progress_bar": False,
+                "enable_model_summary": False,
+            }
+        )
 
         db_path = self._run_via_manager(
             tmp_path, trainer_cfg, BoringModule(), BoringDataModule()
         )
 
-        reg = Registry(RegistryDB(db_path))
+        reg = Registry(_registry_db.RegistryDB(db_path))
         df = reg.to_dataframe()
         assert len(df) == 1
         assert "hparams.trainer.max_epochs" in df.columns

@@ -97,6 +97,56 @@ class RegistryLogger(Logger):
     def save_dir(self) -> Optional[str]:
         return self._run_dir
 
+    # -- resilient DB calls ----------------------------------------------------
+
+    def _safe_db_call(self, fn, *args, **kwargs) -> bool:
+        """Call a DB method.  On failure (server died during preemption),
+        save a sidecar JSON file in the run directory so data can be
+        recovered later with ``spt registry sync``.
+
+        Returns True on success, False on failure."""
+        try:
+            fn(*args, **kwargs)
+            return True
+        except Exception as exc:
+            from loguru import logger as _log
+            _log.warning(f"! Registry server unreachable ({exc}), writing sidecar.")
+            self._write_sidecar()
+            return False
+
+    def _write_sidecar(self) -> None:
+        """Write the current run state as a JSON sidecar file in the
+        run directory.  ``spt registry sync`` picks these up later."""
+        if self._run_dir is None or self._run_id is None:
+            return
+        try:
+            sidecar_dir = Path(self._run_dir)
+            sidecar_dir.mkdir(parents=True, exist_ok=True)
+            sidecar = sidecar_dir / ".registry_sidecar.json"
+            data = {
+                "run_id": self._run_id,
+                "status": "interrupted",
+                "run_dir": self._run_dir,
+                "config": {},
+                "hparams": {},
+                "summary": dict(self._summary),
+                "tags": list(self._tags),
+                "notes": self._notes,
+            }
+            import json, tempfile, os
+            fd, tmp = tempfile.mkstemp(dir=str(sidecar_dir), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, str(sidecar))
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        except Exception:
+            pass  # best-effort — don't crash during teardown
+
     # -- logging ---------------------------------------------------------------
 
     @rank_zero_only
@@ -109,6 +159,8 @@ class RegistryLogger(Logger):
         # Flatten nested config to a simple dict
         flat = _flatten_params(params)
 
+        # log_hyperparams is called once at startup — let errors
+        # propagate so the user sees "server not running" immediately.
         self._db.insert_run(
             self._run_id,
             status="running",
@@ -152,16 +204,18 @@ class RegistryLogger(Logger):
 
         # Ensure the run exists even if log_hyperparams was never called
         if not self._registered:
-            self._db.insert_run(
+            ok = self._safe_db_call(
+                self._db.insert_run,
                 self._run_id,
                 status=db_status,
                 run_dir=self._run_dir,
                 tags=self._tags,
                 notes=self._notes,
             )
-            self._registered = True
+            if ok:
+                self._registered = True
 
-        self._db.update_run(self._run_id, **fields)
+        self._safe_db_call(self._db.update_run, self._run_id, **fields)
         self._db.close()
 
     def after_save_checkpoint(self, checkpoint_callback: Any) -> None:
@@ -172,7 +226,9 @@ class RegistryLogger(Logger):
         if not path:
             path = getattr(checkpoint_callback, "last_model_path", None)
         if path:
-            self._db.update_run(self._run_id, checkpoint_path=str(path))
+            self._safe_db_call(
+                self._db.update_run, self._run_id, checkpoint_path=str(path)
+            )
 
     # -- path resolution -------------------------------------------------------
 
@@ -193,7 +249,7 @@ class RegistryLogger(Logger):
     def _flush_summary(self) -> None:
         if self._run_id is None or not self._summary:
             return
-        self._db.update_run(self._run_id, summary=self._summary)
+        self._safe_db_call(self._db.update_run, self._run_id, summary=self._summary)
 
     def _find_checkpoint(self) -> Optional[str]:
         """Scan run_dir/checkpoints/ for the best or last checkpoint."""

@@ -1,221 +1,191 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Thread-safe SQLite wrapper with WAL mode for concurrent run tracking.
+"""Registry backend with client-server architecture.
 
-Designed for HPC environments where thousands of SLURM jobs write to the
-same database file concurrently.  Uses WAL mode for non-blocking reads and
-exponential backoff for write contention.
+The server runs on the login node (persistent, outside SLURM jobs).
+Training jobs connect via HTTP using the discovery file.
+
+Users add one line to their ``.bashrc``::
+
+    spt registry ensure
+
+This checks if the server is running and starts it if not.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
+import os
+import socket
+import subprocess
+import sys
+import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Union
 
-_SCHEMA_SQL = """\
-CREATE TABLE IF NOT EXISTS runs (
-    run_id          TEXT PRIMARY KEY,
-    status          TEXT DEFAULT 'running',
-    created_at      REAL,
-    updated_at      REAL,
-    run_dir         TEXT,
-    checkpoint_path TEXT,
-    config          TEXT DEFAULT '{}',
-    hparams         TEXT DEFAULT '{}',
-    summary         TEXT DEFAULT '{}',
-    tags            TEXT DEFAULT '[]',
-    notes           TEXT DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-"""
+from loguru import logger as logging
 
 
-class RegistryDB:
-    """Thread-safe SQLite database for run metadata.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    Each thread gets its own connection via ``threading.local()``.
-    WAL mode + ``busy_timeout`` handle concurrent readers/writers from
-    thousands of SLURM jobs hitting the same file.
-
-    Args:
-        db_path: Path to the SQLite database file.  Created if it does
-            not exist (parent directories must exist).
-    """
-
-    def __init__(self, db_path: str) -> None:
-        self.db_path = str(Path(db_path).resolve())
-        self._local = threading.local()
-
-    # -- connection management -------------------------------------------------
-
-    def _get_connection(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self.db_path, timeout=30)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=30000")
-            conn.row_factory = sqlite3.Row
-            conn.executescript(_SCHEMA_SQL)
-            self._local.conn = conn
-        return conn
-
-    def close(self) -> None:
-        conn = getattr(self._local, "conn", None)
-        if conn is not None:
-            conn.close()
-            self._local.conn = None
-
-    # -- retry wrapper ---------------------------------------------------------
-
-    def _execute_with_retry(
-        self,
-        sql: str,
-        params: tuple = (),
-        *,
-        max_retries: int = 10,
-    ) -> sqlite3.Cursor:
-        conn = self._get_connection()
-        delay = 0.1
-        for attempt in range(max_retries):
-            try:
-                cursor = conn.execute(sql, params)
-                conn.commit()
-                return cursor
-            except sqlite3.OperationalError as exc:
-                if "locked" in str(exc).lower() and attempt < max_retries - 1:
-                    time.sleep(delay)
-                    delay = min(delay * 2, 5.0)
-                else:
-                    raise
-        raise sqlite3.OperationalError("max retries exceeded")  # pragma: no cover
-
-    # -- public API ------------------------------------------------------------
-
-    def insert_run(
-        self,
-        run_id: str,
-        *,
-        status: str = "running",
-        run_dir: Optional[str] = None,
-        config: Optional[dict] = None,
-        hparams: Optional[dict] = None,
-        tags: Optional[List[str]] = None,
-        notes: Optional[str] = None,
-    ) -> None:
-        now = time.time()
-        # Use INSERT ... ON CONFLICT to preserve created_at on requeue
-        # (same run_id resubmitted after SLURM preemption).
-        self._execute_with_retry(
-            "INSERT INTO runs "
-            "(run_id, status, created_at, updated_at, "
-            " run_dir, config, hparams, summary, tags, notes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(run_id) DO UPDATE SET "
-            "  status=excluded.status, updated_at=excluded.updated_at, "
-            "  run_dir=excluded.run_dir, config=excluded.config, "
-            "  hparams=excluded.hparams, summary=excluded.summary, "
-            "  tags=excluded.tags, notes=excluded.notes",
-            (
-                run_id,
-                status,
-                now,
-                now,
-                run_dir,
-                json.dumps(config or {}),
-                json.dumps(hparams or {}),
-                json.dumps({}),
-                json.dumps(tags or []),
-                notes or "",
-            ),
-        )
-
-    def update_run(self, run_id: str, **fields: Any) -> None:
-        if not fields:
-            return
-        # Serialize dict/list values to JSON strings for JSON columns
-        json_dict_cols = {"config", "hparams", "summary"}
-        json_list_cols = {"tags"}
-        processed = {}
-        for k, v in fields.items():
-            if k in json_dict_cols and isinstance(v, dict):
-                processed[k] = json.dumps(v)
-            elif k in json_list_cols and isinstance(v, list):
-                processed[k] = json.dumps(v)
-            else:
-                processed[k] = v
-        processed["updated_at"] = time.time()
-        set_clause = ", ".join(f"{k} = ?" for k in processed)
-        values = tuple(processed.values()) + (run_id,)
-        self._execute_with_retry(
-            f"UPDATE runs SET {set_clause} WHERE run_id = ?",
-            values,
-        )
-
-    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        conn = self._get_connection()
-        row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-        if row is None:
-            return None
-        return _row_to_dict(row)
-
-    def query_runs(
-        self,
-        *,
-        status: Optional[str] = None,
-        tag: Optional[str] = None,
-        sort_by: Optional[str] = None,
-        descending: bool = True,
-        limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        clauses: list[str] = []
-        params: list[Any] = []
-        if status is not None:
-            clauses.append("status = ?")
-            params.append(status)
-        if tag is not None:
-            # Match tag inside JSON array: '["tag1","tag2"]' LIKE '%"tag1"%'
-            clauses.append("tags LIKE ?")
-            params.append(f'%"{tag}"%')
-        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-
-        # Sorting: support plain columns or 'summary.<key>'
-        order = ""
-        if sort_by is not None:
-            if sort_by.startswith("summary."):
-                key = sort_by[len("summary."):]
-                col_expr = f"json_extract(summary, '$.{key}')"
-            elif sort_by.startswith("hparams."):
-                key = sort_by[len("hparams."):]
-                col_expr = f"json_extract(hparams, '$.{key}')"
-            else:
-                col_expr = sort_by
-            direction = "DESC" if descending else "ASC"
-            order = f" ORDER BY {col_expr} {direction}"
-
-        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
-        sql = f"SELECT * FROM runs{where}{order}{limit_clause}"
-        conn = self._get_connection()
-        rows = conn.execute(sql, tuple(params)).fetchall()
-        return [_row_to_dict(r) for r in rows]
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
-def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
-    d = dict(row)
-    for col in ("config", "hparams", "summary"):
-        if col in d and isinstance(d[col], str):
-            try:
-                d[col] = json.loads(d[col])
-            except (json.JSONDecodeError, TypeError):
-                d[col] = {}
-    # Deserialize tags JSON array
-    if "tags" in d and isinstance(d["tags"], str):
+def _get_hostname() -> str:
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except socket.gaierror:
+        return "127.0.0.1"
+
+
+def _server_is_alive(url: str, timeout: float = 3.0) -> bool:
+    try:
+        req = urllib.request.Request(f"{url}/api/health")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _default_db_path() -> str:
+    """Resolve the default registry.db path from config or env."""
+    cache_dir = os.environ.get("SPT_CACHE_DIR")
+    if cache_dir is None:
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "stable-pretraining")
+    return str(Path(cache_dir).resolve() / "registry.db")
+
+
+def _discovery_path(db_path: str) -> Path:
+    return Path(db_path).with_suffix(".server.json")
+
+
+def _read_discovery(db_path: str) -> dict | None:
+    path = _discovery_path(db_path)
+    try:
+        data = json.loads(path.read_text())
+        if "url" in data:
+            return data
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+def _write_discovery(db_path: str, info: dict) -> None:
+    disc_path = _discovery_path(db_path)
+    disc_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(disc_path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(info, f, indent=2)
+        os.replace(tmp, str(disc_path))
+    except BaseException:
         try:
-            d["tags"] = json.loads(d["tags"])
-        except (json.JSONDecodeError, TypeError):
-            d["tags"] = []
-    return d
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+# ---------------------------------------------------------------------------
+# ensure_server — called from CLI / .bashrc
+# ---------------------------------------------------------------------------
+
+def ensure_server(db_path: str | None = None) -> str:
+    """Ensure a registry server is running.  Start one if not.
+
+    Designed to be called from ``.bashrc`` or interactively on the
+    login node.  Idempotent — safe to call multiple times.
+
+    Returns the server URL.
+    """
+    if db_path is None:
+        db_path = _default_db_path()
+
+    # Already running?
+    info = _read_discovery(db_path)
+    if info and _server_is_alive(info["url"]):
+        return info["url"]
+
+    # Start the server
+    port = _find_free_port()
+    hostname = _get_hostname()
+    url = f"http://{hostname}:{port}"
+
+    server_script = str(Path(__file__).parent / "_server.py")
+    cmd = [
+        sys.executable, server_script,
+        "--db", str(Path(db_path).resolve()),
+        "--port", str(port),
+    ]
+
+    log_file = Path(db_path).with_suffix(".server.log")
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+    try:
+        pid = subprocess.Popen(
+            cmd,
+            stdout=log_fd,
+            stderr=log_fd,
+            start_new_session=True,
+        ).pid
+    finally:
+        os.close(log_fd)
+
+    # Wait for readiness
+    deadline = time.time() + 15.0
+    while time.time() < deadline:
+        if _server_is_alive(url):
+            _write_discovery(db_path, {
+                "url": url,
+                "pid": pid,
+                "port": port,
+                "hostname": hostname,
+                "db_path": str(Path(db_path).resolve()),
+                "started_at": time.time(),
+            })
+            return url
+        time.sleep(0.3)
+
+    raise RuntimeError(
+        f"Registry server did not start within 15s. Check {log_file}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public factory — used by RegistryLogger, query API, CLI
+# ---------------------------------------------------------------------------
+
+_SERVER_NOT_RUNNING_MSG = """\
+Registry server is not running.
+
+Add this to your ~/.bashrc (run once on the login node):
+
+    spt registry ensure
+
+Then re-open your shell or run it manually."""
+
+
+def RegistryDB(db_path: str) -> "RegistryClient":  # noqa: N802
+    """Connect to the registry server for *db_path*.
+
+    The server must already be running (started via
+    ``spt registry ensure``).  If not, raises RuntimeError with
+    instructions.
+    """
+    from ._client import RegistryClient
+
+    info = _read_discovery(db_path)
+    if info and _server_is_alive(info["url"]):
+        return RegistryClient(info["url"])
+
+    raise RuntimeError(_SERVER_NOT_RUNNING_MSG)

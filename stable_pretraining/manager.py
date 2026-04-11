@@ -354,9 +354,9 @@ class Manager(submitit.helpers.Checkpointable):
                 logging.info(f"  Load checkpoint (user): {self.ckpt_path}")
                 return str(self.ckpt_path)
             logging.warning(
-                f"  {self.ckpt_path} specified but does not exist, using None"
+                f"  {self.ckpt_path} specified but does not exist, "
+                "falling back to auto-detection"
             )
-            return None
 
         # 2. Auto-detect requeue checkpoint in run_dir
         auto_ckpt = run_dir / "checkpoints" / "last.ckpt"
@@ -489,9 +489,7 @@ class Manager(submitit.helpers.Checkpointable):
             log_dir = str(self._run_dir)
             run_id = self._run_id
         else:
-            log_dir = str(
-                Path(self._trainer.default_root_dir).resolve()
-            )
+            log_dir = str(Path(self._trainer.default_root_dir).resolve())
             run_id = _generate_run_id()
 
         if cfg.cache_dir is not None:

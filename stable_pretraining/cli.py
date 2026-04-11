@@ -235,11 +235,6 @@ def _open_registry(db_path: Optional[str]):
             raise typer.Exit(code=1)
         db_path = str(Path(cache_dir).resolve() / "registry.db")
 
-    if not Path(db_path).is_file():
-        typer.echo(f"No runs yet (registry not found at {db_path}).")
-        typer.echo("Run a training job first, then query.")
-        raise typer.Exit()
-
     return Registry(RegistryDB(db_path))
 
 
@@ -390,6 +385,156 @@ def export(
 
     typer.echo(f"Exported {len(df)} runs to {output_path}")
     reg.close()
+
+
+@registry_app.command()
+def ensure(
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Ensure the registry server is running (start if needed).
+
+    Add this to your ~/.bashrc so the server auto-starts on login::
+
+        spt registry ensure
+
+    Idempotent — safe to call multiple times.
+    """
+    from stable_pretraining.registry._db import ensure_server, _default_db_path
+
+    db_path = db or _default_db_path()
+    try:
+        url = ensure_server(db_path)
+        typer.echo(f"✓ Registry server running at {url}")
+    except Exception as e:
+        typer.echo(f"✗ {e}", err=True)
+        raise typer.Exit(code=1)
+
+
+@registry_app.command()
+def status(
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Check if the registry server is running."""
+    from stable_pretraining.registry._db import _read_discovery, _server_is_alive, _default_db_path
+
+    db_path = db or _default_db_path()
+    info = _read_discovery(db_path)
+    if info and _server_is_alive(info["url"]):
+        typer.echo(f"✓ Running at {info['url']} (pid {info.get('pid', '?')})")
+    elif info:
+        typer.echo(f"✗ Discovery file exists but server at {info['url']} is not responding.")
+        typer.echo(f"  Run: spt registry ensure")
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"✗ No server found (no discovery file at {db_path}).")
+        typer.echo(f"  Run: spt registry ensure")
+        raise typer.Exit(code=1)
+
+
+@registry_app.command()
+def stop(
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Stop the registry server."""
+    import signal
+
+    from stable_pretraining.registry._db import _read_discovery, _discovery_path, _default_db_path
+
+    db_path = db or _default_db_path()
+    info = _read_discovery(db_path)
+    if not info:
+        typer.echo("No server found.")
+        return
+
+    pid = info.get("pid")
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            typer.echo(f"Sent SIGTERM to pid {pid}")
+        except ProcessLookupError:
+            typer.echo(f"Process {pid} already dead")
+        except PermissionError:
+            typer.echo(f"Cannot kill pid {pid} (permission denied)", err=True)
+
+    # Clean up discovery file
+    try:
+        _discovery_path(db_path).unlink()
+    except FileNotFoundError:
+        pass
+    typer.echo("✓ Server stopped")
+
+
+@registry_app.command()
+def sync(
+    scan_dir: Optional[str] = typer.Argument(None, help="Directory to scan (default: cache_dir)"),
+    db: Optional[str] = typer.Option(None, "--db", help="Path to registry.db"),
+):
+    """Sync sidecar files from interrupted runs into the registry.
+
+    When training jobs lose connection to the server (e.g. during SLURM
+    preemption), they save a ``.registry_sidecar.json`` in their run
+    directory.  This command finds and ingests those files.
+    """
+    from stable_pretraining.registry._db import RegistryDB, _default_db_path
+
+    db_path = db or _default_db_path()
+
+    try:
+        client = RegistryDB(db_path)
+    except RuntimeError as e:
+        typer.echo(f"✗ {e}", err=True)
+        raise typer.Exit(code=1)
+
+    # Determine scan root
+    if scan_dir is None:
+        import os
+        scan_dir = os.environ.get("SPT_CACHE_DIR")
+        if scan_dir is None:
+            try:
+                from stable_pretraining._config import get_config
+                scan_dir = get_config().cache_dir
+            except Exception:
+                pass
+        if scan_dir is None:
+            typer.echo("Error: No scan directory. Pass a path or set SPT_CACHE_DIR.", err=True)
+            raise typer.Exit(code=1)
+
+    import json
+
+    sidecars = list(Path(scan_dir).rglob(".registry_sidecar.json"))
+    if not sidecars:
+        typer.echo(f"No sidecar files found under {scan_dir}")
+        return
+
+    synced = 0
+    for path in sidecars:
+        try:
+            data = json.loads(path.read_text())
+            run_id = data.get("run_id")
+            if not run_id:
+                continue
+
+            # Insert or update
+            client.insert_run(
+                run_id,
+                status=data.get("status", "interrupted"),
+                run_dir=data.get("run_dir"),
+                config=data.get("config"),
+                hparams=data.get("hparams"),
+                tags=data.get("tags"),
+                notes=data.get("notes"),
+            )
+            if data.get("summary"):
+                client.update_run(run_id, summary=data["summary"])
+
+            # Remove sidecar after successful sync
+            path.unlink()
+            synced += 1
+            typer.echo(f"  ✓ {run_id}")
+        except Exception as exc:
+            typer.echo(f"  ✗ {path}: {exc}", err=True)
+
+    typer.echo(f"Synced {synced}/{len(sidecars)} sidecar files.")
 
 
 if __name__ == "__main__":

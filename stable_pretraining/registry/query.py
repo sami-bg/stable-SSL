@@ -147,9 +147,7 @@ class Registry:
         return pd.DataFrame(rows)
 
     def __len__(self) -> int:
-        conn = self._db._get_connection()
-        row = conn.execute("SELECT COUNT(*) FROM runs").fetchone()
-        return row[0]
+        return self._db.count()
 
     def __getitem__(self, run_id: str) -> RunRecord:
         record = self.get(run_id)
