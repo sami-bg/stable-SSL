@@ -1,7 +1,6 @@
 """Pytest configuration and shared fixtures."""
 
-import os
-import signal
+import shutil
 from pathlib import Path
 
 import pytest
@@ -49,6 +48,8 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 def device():
     """Fixture to get appropriate device for tests."""
+    import os
+
     if torch.cuda.is_available() and not os.environ.get("FORCE_CPU"):
         return torch.device("cuda")
     return torch.device("cpu")
@@ -73,56 +74,24 @@ def temp_dir(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _isolate_spt_config(tmp_path):
-    """Point spt cache_dir to a temp folder for every test.
+    """Point spt ``cache_dir`` at a fresh tmp folder for every test.
 
-    This ensures no test writes files (environment.json, registry.db,
-    CSV logs, etc.) to the working directory.  pytest auto-cleans
-    tmp_path after each test.
-
-    Some tests intentionally reset cache_dir to ``None`` (e.g. to test
-    the legacy code path).  When that happens, Hydra/Lightning may
-    create an empty ``outputs/`` directory in CWD.  We clean it up in
-    teardown so it never persists.
+    No more server lifecycle to manage — the registry is purely
+    filesystem-backed, so isolation just means pointing the cache at
+    a scratch dir.  The ``_scanner``'s in-process TTL is invalidated
+    too so successive tests never see each other's scans.
     """
-    import shutil
-
     from stable_pretraining._config import get_config
-    from stable_pretraining.registry import _db as _registry_db
-    from stable_pretraining.registry import logger as _registry_logger
+    from stable_pretraining.registry import _scanner
 
     cfg = get_config()
     original = cfg._cache_dir
     cfg._cache_dir = str(tmp_path)
-
-    # Wrap RegistryDB so that any path requested auto-starts a server first.
-    # This handles tests that change cache_dir after this fixture runs
-    # (e.g. the cache_dir fixture in test_cache_dir.py).
-    _original_RegistryDB = _registry_db.RegistryDB
-    _started_db_paths = []
-
-    def _auto_ensure_RegistryDB(db_path):  # noqa: N802
-        _registry_db.ensure_server(db_path)
-        _started_db_paths.append(db_path)
-        return _original_RegistryDB(db_path)
-
-    _registry_db.RegistryDB = _auto_ensure_RegistryDB
-    _registry_logger.RegistryDB = _auto_ensure_RegistryDB
+    _scanner.invalidate_ttl()
 
     yield
 
-    # Teardown: restore original RegistryDB
-    _registry_db.RegistryDB = _original_RegistryDB
-    _registry_logger.RegistryDB = _original_RegistryDB
-
-    # Kill any servers started during this test (never touches user's registry)
-    for db_path in _started_db_paths:
-        info = _registry_db._read_discovery(db_path)
-        if info and info.get("pid"):
-            try:
-                os.kill(info["pid"], signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-
+    _scanner.invalidate_ttl()
     cfg._cache_dir = original
     # Clean up empty outputs/ dir that Hydra creates when cache_dir is None
     outputs = Path("outputs")

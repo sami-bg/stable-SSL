@@ -456,73 +456,57 @@ class Manager(submitit.helpers.Checkpointable):
             pass  # Hydra not active
 
     def _inject_registry_logger(self) -> None:
-        """Auto-add :class:`RegistryLogger` and a :class:`CSVLogger`.
+        """Auto-add :class:`RegistryLogger`.
 
-        Always active by default so that every run is indexed and has
-        per-step CSV logs.  Works with or without ``cache_dir``:
+        ``RegistryLogger`` is a :class:`~lightning.pytorch.loggers.CSVLogger`
+        subclass — a single logger captures per-step CSV metrics and
+        writes a ``sidecar.json`` + ``heartbeat`` file for fast querying
+        via ``spt registry …``.  Works with or without ``cache_dir``:
 
-        - **With ``cache_dir``**: ``registry.db`` lives in ``cache_dir``,
-          CSV logs go to ``run_dir/``.
-        - **Without ``cache_dir``**: both fall back to the Trainer's
-          ``default_root_dir`` (typically the current working directory).
+        * **With ``cache_dir``**: run writes under
+          ``{cache_dir}/runs/YYYYMMDD/HHMMSS/{run_id}/``.
+        * **Without ``cache_dir``**: falls back to the Trainer's
+          ``default_root_dir``.
 
-        The RegistryLogger captures the run summary, config, and metadata
-        into a shared SQLite database for fast cross-run queries.
-
-        The CSVLogger records **per-step metrics** so that no detailed
-        training history is lost — the RegistryLogger only stores the
-        last value per metric key (like wandb's ``run.summary``), not the
-        full time series.
-
-        Can be disabled via ``spt.set(default_callbacks={"registry_logger": False})``.
+        Can be disabled via ``spt.set(default_loggers={"registry": False})``.
+        If a sibling :class:`CSVLogger` is already present, the
+        ``RegistryLogger`` replaces it to avoid two writers on the same
+        ``metrics.csv``.
         """
         cfg = get_config()
-
-        # Respect user opt-out
         if not cfg.default_loggers.get("registry", True):
             return
 
         from .registry.logger import RegistryLogger
 
-        # Resolve paths: cache_dir → run_dir, otherwise trainer's root dir
+        # Resolve run_dir + run_id.  Manager._resolve_run_dir already
+        # populated these when cache_dir is set.
         if hasattr(self, "_run_dir") and self._run_dir is not None:
-            log_dir = str(self._run_dir)
+            run_dir = str(self._run_dir)
             run_id = self._run_id
         else:
-            log_dir = str(Path(self._trainer.default_root_dir).resolve())
+            run_dir = str(Path(self._trainer.default_root_dir).resolve())
             run_id = _generate_run_id()
 
-        if cfg.cache_dir is not None:
-            db_path = str(Path(cfg.cache_dir).resolve() / "registry.db")
-        else:
-            db_path = str(Path(log_dir) / "registry.db")
+        # Drop any pre-existing CSVLogger — RegistryLogger *is* a
+        # CSVLogger and would otherwise race on metrics.csv.
+        self._trainer.loggers = [
+            lgr
+            for lgr in self._trainer.loggers
+            if not (
+                isinstance(lgr, lightning.pytorch.loggers.CSVLogger)
+                and not isinstance(lgr, RegistryLogger)
+            )
+        ]
 
-        registry_logger = RegistryLogger(db_path=db_path)
-        registry_logger._run_id = run_id
-        registry_logger._run_dir = log_dir
-
+        registry_logger = RegistryLogger(run_dir=run_dir, run_id=run_id)
         self._trainer.loggers.append(registry_logger)
 
         log_header("RegistryLogger")
-        logging.info(f"  db_path: {registry_logger._db.db_path}")
-        logging.info(f"  run_id:  {run_id}")
+        logging.info(f"  run_dir: {registry_logger.run_dir}")
+        logging.info(f"  run_id:  {registry_logger.run_id}")
         if registry_logger._tags:
             logging.info(f"  tags:    {registry_logger._tags}")
-
-        # Ensure a CSVLogger is present so per-step metrics are saved.
-        # The RegistryLogger only stores summary (last value per key);
-        # without a CSVLogger, the step-by-step history would be lost.
-        has_csv = any(
-            isinstance(lgr, lightning.pytorch.loggers.CSVLogger)
-            for lgr in self._trainer.loggers
-        )
-        if not has_csv:
-            csv_logger = lightning.pytorch.loggers.CSVLogger(
-                save_dir=log_dir, name="", version=""
-            )
-            self._trainer.loggers.append(csv_logger)
-            log_header("CSVLogger (auto)")
-            logging.info(f"  log_dir: {csv_logger.log_dir}")
 
     def _flatten_hydra_config(self) -> dict:
         """Build a flat dot-separated dict from the raw Hydra configs.
