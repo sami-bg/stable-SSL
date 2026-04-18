@@ -27,6 +27,10 @@ else:
     wandb = None
 
 from .callbacks.checkpoint_sklearn import find_wandb_logger, _WANDB_RESUME_FILENAME
+from .callbacks.checkpoint_trackio import _TRACKIO_RESUME_FILENAME
+from .callbacks.checkpoint_swanlab import _SWANLAB_RESUME_FILENAME
+from .loggers.trackio import find_trackio_logger
+from .loggers.swanlab import find_swanlab_logger
 from .utils import get_required_fn_parameters
 from stable_pretraining.callbacks.utils import log_header
 from stable_pretraining.utils.error_handling import catch_errors_class
@@ -55,7 +59,7 @@ def print_logger_info(logger):
     elif logger is None:
         logging.warning("! No logger used!")
     else:
-        # Check for RegistryLogger without importing at module level
+        # Check for known loggers without importing at module level
         cls_name = type(logger).__name__
         if cls_name == "RegistryLogger":
             log_header("RegistryLogger")
@@ -63,6 +67,26 @@ def print_logger_info(logger):
             logging.info(f"  run_id:  {logger.version}")
             if logger._tags:
                 logging.info(f"  tags:    {logger._tags}")
+        elif cls_name == "TrackioLogger":
+            log_header("TrackioLogger")
+            logging.info(f"  project: {logger._project}")
+            logging.info(f"  name:    {logger._name}")
+            if logger._group:
+                logging.info(f"  group:   {logger._group}")
+            logging.info(f"  resume:  {logger._resume}")
+        elif cls_name == "SwanLabLogger":
+            log_header("SwanLabLogger")
+            init_cfg = getattr(logger, "_swanlab_init", {}) or {}
+            logging.info(f"  project:         {init_cfg.get('project')}")
+            logging.info(
+                f"  experiment_name: {init_cfg.get('experiment_name')}"
+            )
+            if init_cfg.get("group"):
+                logging.info(f"  group:           {init_cfg.get('group')}")
+            if init_cfg.get("id"):
+                logging.info(f"  id:              {init_cfg.get('id')}")
+            if init_cfg.get("mode"):
+                logging.info(f"  mode:            {init_cfg.get('mode')}")
         else:
             logging.warning("! Unrecognized logger!")
 
@@ -227,6 +251,132 @@ class Manager(submitit.helpers.Checkpointable):
         log_header("WandbResume")
         logging.info(f"  Injected wandb run ID '{run_id}' from {sidecar}")
         logging.info(f"  project={saved_project}  entity={saved_entity}")
+
+    def _maybe_restore_trackio_run(self):
+        """Inject a previous Trackio run name into the logger BEFORE trackio.init().
+
+        Reads the sidecar ``trackio_resume.json`` written by
+        :class:`TrackioCheckpoint` and, if present, calls
+        ``set_resume(name)`` on the :class:`TrackioLogger` so that
+        ``trackio.init()`` resumes the correct run.
+
+        Must be called after the Trainer is created but before anything
+        accesses ``trainer.logger.experiment``.
+        """
+        trackio_logger = find_trackio_logger(self._trainer)
+        if trackio_logger is None:
+            return
+
+        has_run_dir = hasattr(self, "_run_dir")
+        has_ckpt = self.ckpt_path is not None and self.ckpt_path.is_file()
+        if not has_run_dir and not has_ckpt:
+            return
+
+        sidecar = None
+        if hasattr(self, "_run_dir"):
+            candidate = self._run_dir / _TRACKIO_RESUME_FILENAME
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
+            candidate = Path(_TRACKIO_RESUME_FILENAME)
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
+            logging.debug(
+                "  No trackio_resume.json found, skipping run name injection"
+            )
+            return
+
+        try:
+            resume_info = json.loads(sidecar.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(
+                f"! Failed to read {sidecar}: {e} — skipping trackio resume"
+            )
+            return
+
+        run_name = resume_info.get("name")
+        if not run_name:
+            logging.warning("! trackio_resume.json has no 'name' — skipping")
+            return
+
+        saved_project = resume_info.get("project")
+        current_project = trackio_logger._project
+        if saved_project and current_project and saved_project != current_project:
+            logging.error(
+                f"! trackio_resume.json project '{saved_project}' does not match "
+                f"current logger project '{current_project}'. "
+                "Skipping run name injection to avoid resuming into the wrong project."
+            )
+            return
+
+        trackio_logger.set_resume(run_name)
+        log_header("TrackioResume")
+        logging.info(f"  Injected trackio run name '{run_name}' from {sidecar}")
+        logging.info(f"  project={saved_project}")
+
+    def _maybe_restore_swanlab_run(self):
+        """Inject a previous SwanLab experiment ID into the logger BEFORE swanlab.init().
+
+        Reads the sidecar ``swanlab_resume.json`` written by
+        :class:`SwanLabCheckpoint` and, if present, calls
+        ``set_resume(id)`` on the :class:`SwanLabLogger` so that
+        ``swanlab.init()`` resumes the correct experiment.
+
+        Must be called after the Trainer is created but before anything
+        accesses ``trainer.logger.experiment``.
+        """
+        swanlab_logger = find_swanlab_logger(self._trainer)
+        if swanlab_logger is None:
+            return
+
+        has_run_dir = hasattr(self, "_run_dir")
+        has_ckpt = self.ckpt_path is not None and self.ckpt_path.is_file()
+        if not has_run_dir and not has_ckpt:
+            return
+
+        sidecar = None
+        if hasattr(self, "_run_dir"):
+            candidate = self._run_dir / _SWANLAB_RESUME_FILENAME
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
+            candidate = Path(_SWANLAB_RESUME_FILENAME)
+            if candidate.is_file():
+                sidecar = candidate
+        if sidecar is None:
+            logging.debug(
+                "  No swanlab_resume.json found, skipping experiment id injection"
+            )
+            return
+
+        try:
+            resume_info = json.loads(sidecar.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(
+                f"! Failed to read {sidecar}: {e} — skipping swanlab resume"
+            )
+            return
+
+        run_id = resume_info.get("id")
+        if not run_id:
+            logging.warning("! swanlab_resume.json has no 'id' — skipping")
+            return
+
+        saved_project = resume_info.get("project")
+        current_project = swanlab_logger._project
+        if saved_project and current_project and saved_project != current_project:
+            logging.error(
+                f"! swanlab_resume.json project '{saved_project}' does not match "
+                f"current logger project '{current_project}'. "
+                "Skipping id injection to avoid resuming into the wrong project."
+            )
+            return
+
+        swanlab_logger.set_resume(run_id)
+        log_header("SwanLabResume")
+        logging.info(f"  Injected swanlab experiment id '{run_id}' from {sidecar}")
+        logging.info(f"  project={saved_project}")
 
     # -- cache_dir / run_dir ----------------------------------------------------
 
@@ -682,6 +832,8 @@ class Manager(submitit.helpers.Checkpointable):
                 self._trainer.callbacks.append(TeacherStudentCallback())
 
         self._maybe_restore_wandb_run_id()
+        self._maybe_restore_trackio_run()
+        self._maybe_restore_swanlab_run()
         self.init_and_sync_wandb()
         print_logger_info(self._trainer.logger)
         print_signal_info()

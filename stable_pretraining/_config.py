@@ -186,6 +186,8 @@ class _GlobalConfig:
             "trainer_info",
             "sklearn_checkpoint",
             "wandb_checkpoint",
+            "trackio_checkpoint",
+            "swanlab_checkpoint",
             "module_summary",
             "slurm_info",
             "unused_params",
@@ -328,6 +330,7 @@ def set(
             on/off.  Keys: ``"progress_bar"``, ``"registry"``,
             ``"logging"``, ``"env_dump"``, ``"trainer_info"``,
             ``"sklearn_checkpoint"``, ``"wandb_checkpoint"``,
+            ``"trackio_checkpoint"``, ``"swanlab_checkpoint"``,
             ``"module_summary"``, ``"slurm_info"``, ``"unused_params"``,
             ``"hf_checkpoint"``.
         default_loggers: Dict toggling individual default loggers
