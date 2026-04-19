@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; stable-pretraining 0.1.dev1+ge5c81f6cc documentation</title>
+    <title>Index &#8212; stable-pretraining 0.1.dev1+g570c592d3 documentation</title>
   
   
   
@@ -15,39 +15,43 @@
     document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
     document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
   </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
   
   <!-- Loaded before other Sphinx assets -->
-  <link href="../_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-<link href="../_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-<link href="../_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-
-  
-  <link href="../_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
-<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
-<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
-    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=eba8b062" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
   
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
   <!-- Pre-loaded scripts that we'll load fully later -->
-  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
-<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
-  <script src="../_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../_static/documentation_options.js?v=c71507ff"></script>
+    <script src="../_static/documentation_options.js?v=9da81be6"></script>
     <script src="../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
-    <script src="../_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'genindex';</script>
     <link rel="index" title="Index" href="#" />
     <link rel="search" title="Search" href="../search/" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
   </head>
   
   
@@ -63,19 +67,8 @@
     <i class="fa-solid fa-arrow-up"></i>Back to top</button>
 
   
-  <input type="checkbox"
-          class="sidebar-toggle"
-          id="pst-primary-sidebar-checkbox"/>
-  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
-  
-  <input type="checkbox"
-          class="sidebar-toggle"
-          id="pst-secondary-sidebar-checkbox"/>
-  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
-  
-  <div class="search-button__wrapper">
-    <div class="search-button__overlay"></div>
-    <div class="search-button__search-container">
+  <dialog id="pst-search-dialog">
+    
 <form class="bd-search d-flex align-items-center"
       action="../search/"
       method="get">
@@ -83,7 +76,6 @@
   <input type="search"
          class="form-control"
          name="q"
-         id="search-input"
          placeholder="Search..."
          aria-label="Search..."
          autocomplete="off"
@@ -91,8 +83,8 @@
          autocapitalize="off"
          spellcheck="false"/>
   <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
-</form></div>
-  </div>
+</form>
+  </dialog>
 
   <div class="pst-async-banner-revealer d-none">
   <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
@@ -110,7 +102,8 @@
       
         
       
-      <div class="bd-sidebar-primary bd-sidebar">
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
         
 
   
@@ -135,20 +128,16 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+ge5c81f6cc documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+g570c592d3 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
 
- <script>
- document.write(`
-   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="fa-solid fa-magnifying-glass"></i>
-    <span class="search-button__default-text">Search</span>
-    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
-   </button>
- `);
- </script></div>
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">Contents:</span></p>
@@ -169,7 +158,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../api/gen_modules/stable_pretraining.backbone.set_embedding_dim/">set_embedding_dim</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../api/gen_modules/stable_pretraining.backbone.TeacherStudentWrapper/">TeacherStudentWrapper</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../api/gen_modules/stable_pretraining.backbone.EvalOnly/">EvalOnly</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../api/gen_modules/stable_pretraining.backbone.mae/">mae</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../api/data/">stable_pretraining.data</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -247,9 +235,14 @@
   
   
   <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
   </div>
-  
-  <div id="rtd-footer-container"></div>
 
 
       </div>
@@ -284,7 +277,7 @@
 
 
 <button onclick="toggleFullScreen()"
-  class="btn btn-sm btn-fullscreen-button"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
   title="Fullscreen mode"
   data-bs-placement="bottom" data-bs-toggle="tooltip"
 >
@@ -298,24 +291,16 @@
 
 
 
-<script>
-document.write(`
-  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
-    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
-    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
-    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
-  </button>
-`);
-</script>
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
 
 
-<script>
-document.write(`
-  <button class="btn btn-sm pst-navbar-icon search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
     <i class="fa-solid fa-magnifying-glass fa-lg"></i>
-  </button>
-`);
-</script>
+</button>
 
 </div></div>
       
@@ -392,12 +377,28 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.module.Module.after_manual_backward">(stable_pretraining.module.Module method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.after_save_checkpoint">after_save_checkpoint() (stable_pretraining.registry.logger.RegistryLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.after_save_checkpoint">(stable_pretraining.registry.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.after_save_checkpoint">(stable_pretraining.RegistryLogger method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.alive">alive (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.alive">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.all_gather">all_gather() (in module stable_pretraining.utils)</a>
 
       <ul>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.distributed.all_gather">(in module stable_pretraining.utils.distributed)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.all_reduce">all_reduce() (in module stable_pretraining.utils)</a>
 
       <ul>
@@ -406,8 +407,6 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.alphanum_key">alphanum_key() (in module stable_pretraining.utils.log_reader)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.OrderedQueue.append">append() (stable_pretraining.utils.nn_modules.OrderedQueue method)</a>
 
       <ul>
@@ -462,14 +461,16 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.BatchNorm1dNoBias">(class in stable_pretraining.utils.nn_modules)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.best">best() (in module stable_pretraining.cli)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.broadcast_param_to_list">broadcast_param_to_list() (in module stable_pretraining.utils)</a>
 
       <ul>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.inspection_utils.broadcast_param_to_list">(in module stable_pretraining.utils.inspection_utils)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.flops.BudgetedFlopCounterMode">BudgetedFlopCounterMode (class in stable_pretraining.utils.flops)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.bulk_download/#stable_pretraining.data.bulk_download">bulk_download() (in module stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.bulk_download">[1]</a>
@@ -508,6 +509,12 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.CenterCrop">CenterCrop (class in stable_pretraining.data.transforms)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.checkpoint_path">checkpoint_path (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.checkpoint_path">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback">CleanUpCallback (class in stable_pretraining.callbacks.cleanup)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.clear">clear() (stable_pretraining.static.MetaStatic method)</a>
@@ -522,6 +529,12 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.clip_zero_shot.CLIPZeroShot">CLIPZeroShot (class in stable_pretraining.callbacks.clip_zero_shot)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.Registry.close">close() (stable_pretraining.registry.query.Registry method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.Registry.close">(stable_pretraining.registry.Registry method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.config.collapse_nested_dict">collapse_nested_dict() (in module stable_pretraining.config)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.Collator/#stable_pretraining.data.Collator">Collator (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.Collator">[1]</a>
@@ -541,19 +554,15 @@ document.write(`
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.FromTorchDataset.column_names">column_names (stable_pretraining.data.datasets.FromTorchDataset property)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFDataset.column_names">(stable_pretraining.data.datasets.HFDataset property)</a>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFIterableDataset.column_names">(stable_pretraining.data.datasets.HFIterableDataset property)</a>
 </li>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.Subset.column_names">(stable_pretraining.data.datasets.Subset property)</a>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFMapDataset.column_names">(stable_pretraining.data.datasets.HFMapDataset property)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.FromTorchDataset.column_names">(stable_pretraining.data.FromTorchDataset property)</a>
-</li>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.HFDataset.column_names">(stable_pretraining.data.HFDataset property)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.MinariEpisodeDataset.column_names">(stable_pretraining.data.MinariEpisodeDataset property)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.MinariStepsDataset.column_names">(stable_pretraining.data.MinariStepsDataset property)</a>
-</li>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.Subset.column_names">(stable_pretraining.data.Subset property)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.MinariEpisodeDataset.column_names">(stable_pretraining.data.synthetic_data.MinariEpisodeDataset property)</a>
 </li>
@@ -580,6 +589,12 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Conditional">Conditional (class in stable_pretraining.data.transforms)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.config">config (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.config">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineProbe/#stable_pretraining.callbacks.OnlineProbe.configure_model">configure_model() (stable_pretraining.callbacks.OnlineProbe method)</a>
 
       <ul>
@@ -616,8 +631,6 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.count_parameters">count_parameters() (in module stable_pretraining.static)</a>
 </li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback">CPUOffloadCallback (class in stable_pretraining.callbacks.cpu_offload)</a>
-</li>
       <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.utils.create_optimizer">create_optimizer() (in module stable_pretraining.optim.utils)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.create_results_table">create_results_table() (in module stable_pretraining.utils.log_reader)</a>
@@ -626,6 +639,12 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.TableFormatter.create_table">create_table() (stable_pretraining.utils.log_reader.TableFormatter static method)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.created_at">created_at (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.created_at">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.dino.cross_entropy_loss">cross_entropy_loss() (in module stable_pretraining.losses.dino)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.CrossAttention">CrossAttention (class in stable_pretraining.backbone.vit)</a>
@@ -651,7 +670,7 @@ document.write(`
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.queue.OnlineQueue.data">data (stable_pretraining.callbacks.queue.OnlineQueue attribute)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.callbacks/#id21">(stable_pretraining.callbacks.queue.OnlineQueue property)</a>
+        <li><a href="../stable_pretraining.callbacks/#id1">(stable_pretraining.callbacks.queue.OnlineQueue property)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.static.HF_EMBEDDINGS.data">(stable_pretraining.static.HF_EMBEDDINGS attribute)</a>
 </li>
@@ -680,6 +699,8 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.Subset.dataset">(stable_pretraining.data.Subset attribute)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.DatasetMixin">DatasetMixin (class in stable_pretraining.data.datasets)</a>
+</li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.default">default() (in module stable_pretraining.callbacks.factories)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.detach_tensors">detach_tensors() (in module stable_pretraining.utils)</a>
@@ -759,6 +780,8 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.lejepa.LeJEPAOutput.embedding">(stable_pretraining.methods.lejepa.LeJEPAOutput attribute)</a>
 </li>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.embedding">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
+</li>
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache">EmbeddingCache (class in stable_pretraining.callbacks.embedding_cache)</a>
 </li>
@@ -776,8 +799,6 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.visualization.escape_labels">escape_labels() (in module stable_pretraining.utils.visualization)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.EULER">EULER (stable_pretraining.utils.solver.ODESolver attribute)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.EvalOnly/#stable_pretraining.backbone.EvalOnly">EvalOnly (class in stable_pretraining.backbone)</a>
@@ -786,10 +807,20 @@ document.write(`
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.EvalOnly">(class in stable_pretraining.backbone.utils)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.execute_from_config">execute_from_config() (in module stable_pretraining.utils)</a>
 
       <ul>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.config.execute_from_config">(in module stable_pretraining.utils.config)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.experiment">experiment (stable_pretraining.loggers.trackio.TrackioLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.experiment">(stable_pretraining.loggers.TrackioLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.experiment">(stable_pretraining.TrackioLogger property)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.online_topk.StreamingTopKEigen.explained_variance_ratio">explained_variance_ratio (stable_pretraining.utils.online_topk.StreamingTopKEigen property)</a>
@@ -810,9 +841,13 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.ExponentialNormalNoiseModel">(class in stable_pretraining.data.synthetic_data)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.export">export() (in module stable_pretraining.cli)</a>
+</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.IJEPAMasking.extra_repr">extra_repr() (stable_pretraining.backbone.patch_masking.IJEPAMasking method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.MultiBlockMasking.extra_repr">(stable_pretraining.backbone.patch_masking.MultiBlockMasking method)</a>
+</li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.PatchMasking.extra_repr">(stable_pretraining.backbone.patch_masking.PatchMasking method)</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.Attention.extra_repr">(stable_pretraining.backbone.vit.Attention method)</a>
@@ -840,6 +875,20 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.FeaturesConcat">FeaturesConcat (class in stable_pretraining.backbone.utils)</a>
 </li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.finalize">finalize() (stable_pretraining.loggers.trackio.TrackioLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.finalize">(stable_pretraining.loggers.TrackioLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.finalize">(stable_pretraining.registry.logger.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.finalize">(stable_pretraining.registry.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.finalize">(stable_pretraining.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.finalize">(stable_pretraining.TrackioLogger method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.find_module">find_module() (in module stable_pretraining.utils)</a>
 
       <ul>
@@ -847,6 +896,12 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.queue.find_or_create_queue_callback">find_or_create_queue_callback() (in module stable_pretraining.callbacks.queue)</a>
+</li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.swanlab.find_swanlab_logger">find_swanlab_logger() (in module stable_pretraining.loggers.swanlab)</a>
+</li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.find_trackio_logger">find_trackio_logger() (in module stable_pretraining.loggers.trackio)</a>
+</li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_sklearn.find_wandb_logger">find_wandb_logger() (in module stable_pretraining.callbacks.checkpoint_sklearn)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.flatten_config">flatten_config() (in module stable_pretraining.utils.log_reader)</a>
 </li>
@@ -881,9 +936,9 @@ document.write(`
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.backbone.EvalOnly/#stable_pretraining.backbone.EvalOnly.forward">(stable_pretraining.backbone.EvalOnly method)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.forward">(stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.IJEPAMasking.forward">(stable_pretraining.backbone.patch_masking.IJEPAMasking method)</a>
+</li>
+        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.MultiBlockMasking.forward">(stable_pretraining.backbone.patch_masking.MultiBlockMasking method)</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.PatchMasking.forward">(stable_pretraining.backbone.patch_masking.PatchMasking method)</a>
 </li>
@@ -971,6 +1026,10 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.utils.NegativeCosineSimilarity.forward">(stable_pretraining.losses.utils.NegativeCosineSimilarity method)</a>
 </li>
+        <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.utils.VCRegLoss.forward">(stable_pretraining.losses.utils.VCRegLoss method)</a>
+</li>
+        <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.VCRegLoss.forward">(stable_pretraining.losses.VCRegLoss method)</a>
+</li>
         <li><a href="../api/gen_modules/stable_pretraining.losses.VICRegLoss/#stable_pretraining.losses.VICRegLoss.forward">(stable_pretraining.losses.VICRegLoss method)</a>, <a href="../stable_pretraining.losses/#stable_pretraining.losses.VICRegLoss.forward">[1]</a>
 </li>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.IJEPA.forward">(stable_pretraining.methods.IJEPA method)</a>
@@ -992,6 +1051,10 @@ document.write(`
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.NEPA.forward">(stable_pretraining.methods.NEPA method)</a>
 </li>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.nepa.NEPA.forward">(stable_pretraining.methods.nepa.NEPA method)</a>
+</li>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.SALT.forward">(stable_pretraining.methods.SALT method)</a>
+</li>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALT.forward">(stable_pretraining.methods.salt.SALT method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.Module.forward">(stable_pretraining.Module method)</a>
 </li>
@@ -1030,10 +1093,6 @@ document.write(`
       </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.forward_decoder">forward_decoder() (stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.forward_encoder">forward_encoder() (stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MaskedEncoder.forward_features">forward_features() (stable_pretraining.backbone.vit.MaskedEncoder method)</a>
 
       <ul>
@@ -1064,6 +1123,12 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.nepa.NEPA.freeze_patch_embed">(stable_pretraining.methods.nepa.NEPA method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.SALT.from_checkpoint">from_checkpoint() (stable_pretraining.methods.SALT class method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALT.from_checkpoint">(stable_pretraining.methods.salt.SALT class method)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.from_huggingface">from_huggingface() (in module stable_pretraining.backbone.utils)</a>
@@ -1099,6 +1164,8 @@ document.write(`
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.GaussianBlur">GaussianBlur (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.GaussianNoise">GaussianNoise (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.GDriveUploader">GDriveUploader (class in stable_pretraining.utils)</a>
 
@@ -1136,9 +1203,13 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.data_generation.generate_sup_samples">(in module stable_pretraining.utils.data_generation)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.get">get() (stable_pretraining.static.MetaStatic method)</a>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.Registry.get">get() (stable_pretraining.registry.query.Registry method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.Registry.get">(stable_pretraining.registry.Registry method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.get">(stable_pretraining.static.MetaStatic method)</a>
+</li>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.OrderedQueue.get">(stable_pretraining.utils.nn_modules.OrderedQueue method)</a>
 </li>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.UnsortedQueue.get">(stable_pretraining.utils.nn_modules.UnsortedQueue method)</a>
@@ -1150,15 +1221,7 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.pos_embed.get_1d_sincos_pos_embed">get_1d_sincos_pos_embed() (in module stable_pretraining.backbone.pos_embed)</a>
 </li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.get_1d_sincos_pos_embed_from_grid">get_1d_sincos_pos_embed_from_grid() (in module stable_pretraining.backbone.mae)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.get_2d_sincos_pos_embed">get_2d_sincos_pos_embed() (in module stable_pretraining.backbone.mae)</a>
-
-      <ul>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.pos_embed.get_2d_sincos_pos_embed">(in module stable_pretraining.backbone.pos_embed)</a>
-</li>
-      </ul></li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.get_2d_sincos_pos_embed_from_grid">get_2d_sincos_pos_embed_from_grid() (in module stable_pretraining.backbone.mae)</a>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.pos_embed.get_2d_sincos_pos_embed">get_2d_sincos_pos_embed() (in module stable_pretraining.backbone.pos_embed)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.AutoTuneMLP.get_best_variant">get_best_variant() (stable_pretraining.backbone.probe.AutoTuneMLP method)</a>
 </li>
@@ -1170,6 +1233,8 @@ document.write(`
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.nepa.NEPA.get_classifier_features">(stable_pretraining.methods.nepa.NEPA method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.get_config">get_config() (in module stable_pretraining)</a>
+</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.get_data_from_batch_or_outputs">get_data_from_batch_or_outputs() (in module stable_pretraining.utils)</a>
 
       <ul>
@@ -1215,7 +1280,13 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.GaussianBlur.get_params">(stable_pretraining.data.transforms.GaussianBlur static method)</a>
 </li>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomAffine.get_params">(stable_pretraining.data.transforms.RandomAffine static method)</a>
+</li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomCrop.get_params">(stable_pretraining.data.transforms.RandomCrop static method)</a>
+</li>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomErasing.get_params">(stable_pretraining.data.transforms.RandomErasing static method)</a>
+</li>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomPerspective.get_params">(stable_pretraining.data.transforms.RandomPerspective static method)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomResizedCrop.get_params">(stable_pretraining.data.transforms.RandomResizedCrop static method)</a>
 </li>
@@ -1272,19 +1343,31 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.HF_PARAMETERS">HF_PARAMETERS (class in stable_pretraining.static)</a>
 </li>
-      <li><a href="../api/gen_modules/stable_pretraining.data.HFDataset/#stable_pretraining.data.HFDataset">HFDataset (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.HFDataset">[1]</a>
+      <li><a href="../api/gen_modules/stable_pretraining.data.HFDataset/#stable_pretraining.data.HFDataset">HFDataset (class in stable_pretraining.data)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.HFDataset">HFDataset() (in module stable_pretraining.data)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFDataset">(class in stable_pretraining.data.datasets)</a>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFDataset">(in module stable_pretraining.data.datasets)</a>
 </li>
       </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFIterableDataset">HFIterableDataset (class in stable_pretraining.data.datasets)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFMapDataset">HFMapDataset (class in stable_pretraining.data.datasets)</a>
+</li>
       <li><a href="../stable_pretraining.backbone/#id0">hidden_states (stable_pretraining.backbone.utils.EmbeddingOutput attribute)</a>, <a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.EmbeddingOutput.hidden_states">[1]</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.HiddenStateExtractor">HiddenStateExtractor (class in stable_pretraining.backbone.utils)</a>
 </li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.human_size">human_size() (in module stable_pretraining.callbacks.cleanup)</a>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.hparams">hparams (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.hparams">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.hf_models.HuggingFaceCheckpointCallback">HuggingFaceCheckpointCallback (class in stable_pretraining.callbacks.hf_models)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1340,18 +1423,16 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.Subset.indices">(stable_pretraining.data.Subset attribute)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.joint_embedding.InfoNCELoss">InfoNCELoss (class in stable_pretraining.losses.joint_embedding)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.joint_embedding.InfoNCELoss">InfoNCELoss (class in stable_pretraining.losses.joint_embedding)</a>
+</li>
       <li><a href="../stable_pretraining/#stable_pretraining.Manager.init_and_sync_wandb">init_and_sync_wandb() (stable_pretraining.Manager method)</a>
 
       <ul>
         <li><a href="../api/gen_modules/stable_pretraining.manager.Manager/#stable_pretraining.manager.Manager.init_and_sync_wandb">(stable_pretraining.manager.Manager method)</a>, <a href="../stable_pretraining/#stable_pretraining.manager.Manager.init_and_sync_wandb">[1]</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.initialize_weights">initialize_weights() (stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
       <li><a href="../stable_pretraining/#stable_pretraining.config.instantiate_from_config">instantiate_from_config() (in module stable_pretraining.config)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.Manager.instantiated_data">instantiated_data (stable_pretraining.Manager property)</a>
@@ -1382,12 +1463,6 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.error_handling.is_main_process">is_main_process() (in module stable_pretraining.utils.error_handling)</a>
 </li>
-      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFDataset.is_saved_with_save_to_disk">is_saved_with_save_to_disk() (stable_pretraining.data.datasets.HFDataset method)</a>
-
-      <ul>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.HFDataset.is_saved_with_save_to_disk">(stable_pretraining.data.HFDataset method)</a>
-</li>
-      </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.is_writing_epoch">is_writing_epoch() (stable_pretraining.callbacks.writer.OnlineWriter method)</a>
 
       <ul>
@@ -1395,6 +1470,8 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.items">items() (stable_pretraining.static.MetaStatic method)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.IterableDataset">IterableDataset (class in stable_pretraining.data.datasets)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1405,8 +1482,6 @@ document.write(`
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.AutoTuneMLP.keys">keys() (stable_pretraining.backbone.probe.AutoTuneMLP method)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.EmbeddingOutput.keys">(stable_pretraining.backbone.utils.EmbeddingOutput method)</a>
-</li>
         <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.keys">(stable_pretraining.static.MetaStatic method)</a>
 </li>
       </ul></li>
@@ -1430,7 +1505,7 @@ document.write(`
         <li><a href="../stable_pretraining.optim/#stable_pretraining.optim.lars.LARS">(class in stable_pretraining.optim.lars)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.backbone/#id8">last_hidden_state (stable_pretraining.backbone.utils.EmbeddingOutput attribute)</a>, <a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.EmbeddingOutput.last_hidden_state">[1]</a>
+      <li><a href="../stable_pretraining.backbone/#id4">last_hidden_state (stable_pretraining.backbone.utils.EmbeddingOutput attribute)</a>, <a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.EmbeddingOutput.last_hidden_state">[1]</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.latent_viz.LatentViz">LatentViz (class in stable_pretraining.callbacks.latent_viz)</a>
 </li>
@@ -1474,8 +1549,6 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.MultiHeadAttentiveProbe.ln">ln (stable_pretraining.backbone.probe.MultiHeadAttentiveProbe attribute)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.read_csv_logger.load_best_compressed">load_best_compressed() (in module stable_pretraining.utils.read_csv_logger)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.load_hparams_from_ckpt">load_hparams_from_ckpt() (in module stable_pretraining.utils)</a>
@@ -1484,11 +1557,15 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.config.load_hparams_from_ckpt">(in module stable_pretraining.utils.config)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.load_state_dict">load_state_dict() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.load_project_df">load_project_df() (in module stable_pretraining.loggers)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater.load_state_dict">(stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater method)</a>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.load_project_df">(in module stable_pretraining.loggers.trackio)</a>
 </li>
+      </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater.load_state_dict">load_state_dict() (stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater method)</a>
+
+      <ul>
         <li><a href="../api/gen_modules/stable_pretraining.data.DataModule/#stable_pretraining.data.DataModule.load_state_dict">(stable_pretraining.data.DataModule method)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.DataModule.load_state_dict">[1]</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.module.DataModule.load_state_dict">(stable_pretraining.data.module.DataModule method)</a>
@@ -1498,6 +1575,8 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.OrderedQueue.load_state_dict">(stable_pretraining.utils.OrderedQueue method)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.LocalLogReader">LocalLogReader (class in stable_pretraining.utils.log_reader)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.log">log() (in module stable_pretraining)</a>
@@ -1510,6 +1589,36 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.log_dict">(in module stable_pretraining.callbacks.registry)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.utils.log_header">log_header() (in module stable_pretraining.callbacks.utils)</a>
+</li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.log_hyperparams">log_hyperparams() (stable_pretraining.loggers.trackio.TrackioLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.log_hyperparams">(stable_pretraining.loggers.TrackioLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.log_hyperparams">(stable_pretraining.registry.logger.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.log_hyperparams">(stable_pretraining.registry.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.log_hyperparams">(stable_pretraining.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.log_hyperparams">(stable_pretraining.TrackioLogger method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.log_metrics">log_metrics() (stable_pretraining.loggers.trackio.TrackioLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.log_metrics">(stable_pretraining.loggers.TrackioLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.log_metrics">(stable_pretraining.registry.logger.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.log_metrics">(stable_pretraining.registry.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.log_metrics">(stable_pretraining.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.log_metrics">(stable_pretraining.TrackioLogger method)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.LoggingCallback">LoggingCallback (class in stable_pretraining)</a>
@@ -1533,6 +1642,8 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.nepa.NEPAOutput.loss">(stable_pretraining.methods.nepa.NEPAOutput attribute)</a>
 </li>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.loss">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
+</li>
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.LOSS_TYPES">LOSS_TYPES (stable_pretraining.utils.mae_loss.MAELoss attribute)</a>
 
@@ -1552,8 +1663,6 @@ document.write(`
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.mae.MAE">(class in stable_pretraining.methods.mae)</a>
 </li>
       </ul></li>
-      <li><a href="../api/gen_modules/stable_pretraining.backbone.mae/#stable_pretraining.backbone.mae">mae (in module stable_pretraining.backbone)</a>
-</li>
       <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.mae">mae() (in module stable_pretraining.losses)</a>
 
       <ul>
@@ -1588,8 +1697,6 @@ document.write(`
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.mae.MAEOutput.mask">(stable_pretraining.methods.mae.MAEOutput attribute)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT">MaskedAutoencoderViT (class in stable_pretraining.backbone.mae)</a>
-</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MaskedEncoder">MaskedEncoder (class in stable_pretraining.backbone.vit)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.MaskedEncoderOutput">MaskedEncoderOutput (class in stable_pretraining.backbone.vit)</a>
@@ -1617,6 +1724,8 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.MIDPOINT">MIDPOINT (stable_pretraining.utils.solver.ODESolver attribute)</a>
+</li>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.migrate">migrate() (in module stable_pretraining.cli)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.MinariEpisodeDataset/#stable_pretraining.data.MinariEpisodeDataset">MinariEpisodeDataset (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.MinariEpisodeDataset">[1]</a>
 
@@ -1652,8 +1761,6 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.backbone/#module-stable_pretraining.backbone.convmixer">stable_pretraining.backbone.convmixer</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#module-stable_pretraining.backbone.mae">stable_pretraining.backbone.mae</a>
-</li>
         <li><a href="../stable_pretraining.backbone/#module-stable_pretraining.backbone.mlp">stable_pretraining.backbone.mlp</a>
 </li>
         <li><a href="../stable_pretraining.backbone/#module-stable_pretraining.backbone.patch_masking">stable_pretraining.backbone.patch_masking</a>
@@ -1672,11 +1779,13 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.checkpoint_sklearn">stable_pretraining.callbacks.checkpoint_sklearn</a>
 </li>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.checkpoint_swanlab">stable_pretraining.callbacks.checkpoint_swanlab</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.checkpoint_trackio">stable_pretraining.callbacks.checkpoint_trackio</a>
+</li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.cleanup">stable_pretraining.callbacks.cleanup</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.clip_zero_shot">stable_pretraining.callbacks.clip_zero_shot</a>
-</li>
-        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.cpu_offload">stable_pretraining.callbacks.cpu_offload</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.earlystop">stable_pretraining.callbacks.earlystop</a>
 </li>
@@ -1685,6 +1794,8 @@ document.write(`
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.env_info">stable_pretraining.callbacks.env_info</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.factories">stable_pretraining.callbacks.factories</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.hf_models">stable_pretraining.callbacks.hf_models</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.image_retrieval">stable_pretraining.callbacks.image_retrieval</a>
 </li>
@@ -1742,6 +1853,12 @@ document.write(`
 </li>
         <li><a href="../api/forward/#module-stable_pretraining.forward">stable_pretraining.forward</a>, <a href="../stable_pretraining/#module-stable_pretraining.forward">[1]</a>
 </li>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers">stable_pretraining.loggers</a>
+</li>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers.swanlab">stable_pretraining.loggers.swanlab</a>
+</li>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers.trackio">stable_pretraining.loggers.trackio</a>
+</li>
         <li><a href="../api/losses/#module-stable_pretraining.losses">stable_pretraining.losses</a>, <a href="../stable_pretraining.losses/#module-stable_pretraining.losses">[1]</a>
 </li>
         <li><a href="../stable_pretraining.losses/#module-stable_pretraining.losses.dino">stable_pretraining.losses.dino</a>
@@ -1766,6 +1883,8 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.methods/#module-stable_pretraining.methods.nepa">stable_pretraining.methods.nepa</a>
 </li>
+        <li><a href="../stable_pretraining.methods/#module-stable_pretraining.methods.salt">stable_pretraining.methods.salt</a>
+</li>
         <li><a href="../api/module/#module-stable_pretraining.module">stable_pretraining.module</a>, <a href="../stable_pretraining/#module-stable_pretraining.module">[1]</a>
 </li>
         <li><a href="../api/optim/#module-stable_pretraining.optim">stable_pretraining.optim</a>, <a href="../stable_pretraining.optim/#module-stable_pretraining.optim">[1]</a>
@@ -1775,6 +1894,12 @@ document.write(`
         <li><a href="../stable_pretraining.optim/#module-stable_pretraining.optim.lr_scheduler">stable_pretraining.optim.lr_scheduler</a>
 </li>
         <li><a href="../stable_pretraining.optim/#module-stable_pretraining.optim.utils">stable_pretraining.optim.utils</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry">stable_pretraining.registry</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry.logger">stable_pretraining.registry.logger</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry.query">stable_pretraining.registry.query</a>
 </li>
         <li><a href="../stable_pretraining/#module-stable_pretraining.run">stable_pretraining.run</a>
 </li>
@@ -1841,6 +1966,8 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.masking.multi_block_mask">multi_block_mask() (in module stable_pretraining.data.masking)</a>
 </li>
+      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.MultiBlockMasking">MultiBlockMasking (class in stable_pretraining.backbone.patch_masking)</a>
+</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.MultiHeadAttentiveProbe">MultiHeadAttentiveProbe (class in stable_pretraining.backbone.probe)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.MultiViewTransform">MultiViewTransform (class in stable_pretraining.data.transforms)</a>
@@ -1857,6 +1984,14 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.ImageRetrieval.NAME">NAME (stable_pretraining.ImageRetrieval attribute)</a>
 </li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.name">name (stable_pretraining.loggers.trackio.TrackioLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.name">(stable_pretraining.loggers.TrackioLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.name">(stable_pretraining.TrackioLogger property)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.Module.named_parameters">named_parameters() (stable_pretraining.Module method)</a>
 
       <ul>
@@ -1893,10 +2028,10 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.nepa.NEPAOutput">NEPAOutput (class in stable_pretraining.methods.nepa)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Transform.nested_get">nested_get() (stable_pretraining.data.transforms.Transform method)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.Transform.nested_set">nested_set() (stable_pretraining.data.transforms.Transform method)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.MinariEpisodeDataset.nested_step">nested_step() (stable_pretraining.data.MinariEpisodeDataset method)</a>
@@ -1923,6 +2058,12 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.nn_modules.Normalize">(class in stable_pretraining.utils.nn_modules)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.notes">notes (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.notes">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../api/gen_modules/stable_pretraining.losses.NTXEntLoss/#stable_pretraining.losses.NTXEntLoss">NTXEntLoss (class in stable_pretraining.losses)</a>, <a href="../stable_pretraining.losses/#stable_pretraining.losses.NTXEntLoss">[1]</a>
 
       <ul>
@@ -1930,11 +2071,19 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.ijepa.IJEPAOutput.num_context">num_context (stable_pretraining.methods.ijepa.IJEPAOutput attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.num_context">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
 </li>
+      </ul></li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.mae.MAEOutput.num_masked">num_masked (stable_pretraining.methods.mae.MAEOutput attribute)</a>
 </li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.ijepa.IJEPAOutput.num_targets">num_targets (stable_pretraining.methods.ijepa.IJEPAOutput attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.num_targets">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
 </li>
+      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.probe.AutoTuneMLP.num_variants">num_variants() (stable_pretraining.backbone.probe.AutoTuneMLP method)</a>
 </li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.mae.MAEOutput.num_visible">num_visible (stable_pretraining.methods.mae.MAEOutput attribute)</a>
@@ -1964,11 +2113,7 @@ document.write(`
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater.on_before_optimizer_step">on_before_optimizer_step() (stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater method)</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback.on_exception">on_exception() (stable_pretraining.callbacks.cleanup.CleanUpCallback method)</a>
-
-      <ul>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_exception">(stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
 </li>
-      </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback.on_fit_end">on_fit_end() (stable_pretraining.callbacks.cleanup.CleanUpCallback method)</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.teacher_student.TeacherStudentCallback.on_fit_start">on_fit_start() (stable_pretraining.callbacks.teacher_student.TeacherStudentCallback method)</a>
@@ -1986,6 +2131,10 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint.on_load_checkpoint">(stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint method)</a>
 </li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint.on_load_checkpoint">(stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint method)</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint.on_load_checkpoint">(stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint method)</a>
+</li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.SklearnCheckpoint/#stable_pretraining.callbacks.SklearnCheckpoint.on_load_checkpoint">(stable_pretraining.callbacks.SklearnCheckpoint method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.SklearnCheckpoint.on_load_checkpoint">(stable_pretraining.SklearnCheckpoint method)</a>
@@ -1994,11 +2143,15 @@ document.write(`
       <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineWriter/#stable_pretraining.callbacks.OnlineWriter.on_predict_batch_end">on_predict_batch_end() (stable_pretraining.callbacks.OnlineWriter method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_predict_batch_end">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.on_predict_batch_end">(stable_pretraining.callbacks.writer.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.OnlineWriter.on_predict_batch_end">(stable_pretraining.OnlineWriter method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_predict_batch_start">on_predict_batch_start() (stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
       <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineWriter/#stable_pretraining.callbacks.OnlineWriter.on_sanity_check_end">on_sanity_check_end() (stable_pretraining.callbacks.OnlineWriter method)</a>
 
       <ul>
@@ -2020,7 +2173,11 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint.on_save_checkpoint">(stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint method)</a>
 </li>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_save_checkpoint">(stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint.on_save_checkpoint">(stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint method)</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint.on_save_checkpoint">(stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint method)</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.hf_models.HuggingFaceCheckpointCallback.on_save_checkpoint">(stable_pretraining.callbacks.hf_models.HuggingFaceCheckpointCallback method)</a>
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.SklearnCheckpoint/#stable_pretraining.callbacks.SklearnCheckpoint.on_save_checkpoint">(stable_pretraining.callbacks.SklearnCheckpoint method)</a>
 </li>
@@ -2030,19 +2187,29 @@ document.write(`
       <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineWriter/#stable_pretraining.callbacks.OnlineWriter.on_test_batch_end">on_test_batch_end() (stable_pretraining.callbacks.OnlineWriter method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_test_batch_end">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.on_test_batch_end">(stable_pretraining.callbacks.writer.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.OnlineWriter.on_test_batch_end">(stable_pretraining.OnlineWriter method)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.on_test_batch_start">on_test_batch_start() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
-</li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.latent_viz.LatentViz.on_train_batch_end">on_train_batch_end() (stable_pretraining.callbacks.latent_viz.LatentViz method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_test_batch_start">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.PrintProgressBar.on_train_batch_end">on_train_batch_end() (stable_pretraining.callbacks.factories.PrintProgressBar method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.latent_viz.LatentViz.on_train_batch_end">(stable_pretraining.callbacks.latent_viz.LatentViz method)</a>
+</li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineWriter/#stable_pretraining.callbacks.OnlineWriter.on_train_batch_end">(stable_pretraining.callbacks.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.queue.OnlineQueue.on_train_batch_end">(stable_pretraining.callbacks.queue.OnlineQueue method)</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_train_batch_end">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.teacher_student.TeacherStudentCallback.on_train_batch_end">(stable_pretraining.callbacks.teacher_student.TeacherStudentCallback method)</a>
 </li>
@@ -2055,19 +2222,21 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentCallback.on_train_batch_end">(stable_pretraining.TeacherStudentCallback method)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.on_train_batch_start">on_train_batch_start() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
 
       <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_train_batch_start">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce.on_train_batch_start">(stable_pretraining.callbacks.unused_parameters.LogUnusedParametersOnce method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_train_end">on_train_end() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.PrintProgressBar.on_train_epoch_end">on_train_epoch_end() (stable_pretraining.callbacks.factories.PrintProgressBar method)</a>
 </li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cleanup.CleanUpCallback.on_train_epoch_end">on_train_epoch_end() (stable_pretraining.callbacks.cleanup.CleanUpCallback method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.PrintProgressBar.on_train_epoch_start">on_train_epoch_start() (stable_pretraining.callbacks.factories.PrintProgressBar method)</a>
 </li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.on_train_start">on_train_start() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.hf_models.HuggingFaceCheckpointCallback.on_train_start">on_train_start() (stable_pretraining.callbacks.hf_models.HuggingFaceCheckpointCallback method)</a>
 
       <ul>
         <li><a href="../stable_pretraining/#stable_pretraining.Module.on_train_start">(stable_pretraining.Module method)</a>
@@ -2094,6 +2263,8 @@ document.write(`
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.rankme.RankMe.on_validation_batch_end">(stable_pretraining.callbacks.rankme.RankMe method)</a>
 </li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_validation_batch_end">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
+</li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.on_validation_batch_end">(stable_pretraining.callbacks.writer.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.LiDAR.on_validation_batch_end">(stable_pretraining.LiDAR method)</a>
@@ -2106,7 +2277,11 @@ document.write(`
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.on_validation_batch_start">on_validation_batch_start() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.on_validation_batch_start">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
 </li>
+      </ul></li>
       <li><a href="../api/gen_modules/stable_pretraining.callbacks.LoggingCallback/#stable_pretraining.callbacks.LoggingCallback.on_validation_end">on_validation_end() (stable_pretraining.callbacks.LoggingCallback method)</a>
 
       <ul>
@@ -2165,6 +2340,14 @@ document.write(`
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter">(class in stable_pretraining.callbacks.writer)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.open_registry">open_registry() (in module stable_pretraining)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.open_registry">(in module stable_pretraining.registry)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.open_registry">(in module stable_pretraining.registry.query)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.OrderedQueue">OrderedQueue (class in stable_pretraining.utils)</a>
 
       <ul>
@@ -2187,8 +2370,6 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.patchify">(in module stable_pretraining.utils.mae_loss)</a>
-</li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.patchify">(stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
 </li>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.MAELoss.patchify">(stable_pretraining.utils.mae_loss.MAELoss method)</a>
 </li>
@@ -2236,6 +2417,8 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.mae.MAEOutput.predictions">(stable_pretraining.methods.mae.MAEOutput attribute)</a>
 </li>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.predictions">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
+</li>
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.run.print_config">print_config() (in module stable_pretraining.run)</a>
 </li>
@@ -2243,12 +2426,10 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.manager.print_signal_info">print_signal_info() (in module stable_pretraining.manager)</a>
 </li>
-      <li><a href="../stable_pretraining.data/#stable_pretraining.data.Dataset.process_sample">process_sample() (stable_pretraining.data.Dataset method)</a>
-
-      <ul>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.Dataset.process_sample">(stable_pretraining.data.datasets.Dataset method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.PrintProgressBar">PrintProgressBar (class in stable_pretraining.callbacks.factories)</a>
 </li>
-      </ul></li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.DatasetMixin.process_sample">process_sample() (stable_pretraining.data.datasets.DatasetMixin method)</a>
+</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.online_topk.StreamingTopKEigen.project">project() (stable_pretraining.utils.online_topk.StreamingTopKEigen method)</a>
 
       <ul>
@@ -2266,14 +2447,20 @@ document.write(`
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.vit.QKNorm">QKNorm (class in stable_pretraining.backbone.vit)</a>
 </li>
   </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.Registry.query">query() (stable_pretraining.registry.query.Registry method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.Registry.query">(stable_pretraining.registry.Registry method)</a>
+</li>
+      </ul></li>
+  </ul></td>
 </tr></table>
 
 <h2 id="R">R</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.random_masking">random_masking() (stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
-      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.random_seed">random_seed() (in module stable_pretraining.data.transforms)</a>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.random_seed">random_seed (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.random_split/#stable_pretraining.data.random_split">random_split() (in module stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.random_split">[1]</a>
 
@@ -2281,6 +2468,12 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.utils.random_split">(in module stable_pretraining.data.utils)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomAdjustSharpness">RandomAdjustSharpness (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomAffine">RandomAffine (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomAutocontrast">RandomAutocontrast (class in stable_pretraining.data.transforms)</a>
+</li>
       <li><a href="../api/gen_modules/stable_pretraining.data.RandomBatchSampler/#stable_pretraining.data.RandomBatchSampler">RandomBatchSampler (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.RandomBatchSampler">[1]</a>
 
       <ul>
@@ -2293,17 +2486,29 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomCrop">RandomCrop (class in stable_pretraining.data.transforms)</a>
 </li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomEqualize">RandomEqualize (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomErasing">RandomErasing (class in stable_pretraining.data.transforms)</a>
+</li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomGrayscale">RandomGrayscale (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomHorizontalFlip">RandomHorizontalFlip (class in stable_pretraining.data.transforms)</a>
 </li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomInvert">RandomInvert (class in stable_pretraining.data.transforms)</a>
+</li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomMask">RandomMask (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomPerspective">RandomPerspective (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomPosterize">RandomPosterize (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomResizedCrop">RandomResizedCrop (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomRotation">RandomRotation (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomSolarize">RandomSolarize (class in stable_pretraining.data.transforms)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RandomVerticalFlip">RandomVerticalFlip (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.RankMe">RankMe (class in stable_pretraining)</a>
 
@@ -2335,8 +2540,6 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.read_wandb_project">read_wandb_project() (in module stable_pretraining.utils.log_reader)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.read_wandb_run">read_wandb_run() (in module stable_pretraining.utils.log_reader)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.online_topk.StreamingTopKEigen.reconstruct">reconstruct() (stable_pretraining.utils.online_topk.StreamingTopKEigen method)</a>
@@ -2355,6 +2558,24 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.register_lr_scale_hook">register_lr_scale_hook() (in module stable_pretraining.backbone.utils)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.Registry">Registry (class in stable_pretraining.registry)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.Registry">(class in stable_pretraining.registry.query)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.registry_ls">registry_ls() (in module stable_pretraining.cli)</a>
+</li>
+      <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger">RegistryLogger (class in stable_pretraining)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger">(class in stable_pretraining.registry)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger">(class in stable_pretraining.registry.logger)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.HiddenStateExtractor.remove_hooks">remove_hooks() (stable_pretraining.backbone.utils.HiddenStateExtractor method)</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.RepeatedRandomSampler/#stable_pretraining.data.RepeatedRandomSampler">RepeatedRandomSampler (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.RepeatedRandomSampler">[1]</a>
@@ -2385,8 +2606,18 @@ document.write(`
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.resnet9.Resnet9">(class in stable_pretraining.backbone.resnet9)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.utils.resolve_verbose">resolve_verbose() (in module stable_pretraining.callbacks.utils)</a>
+</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.lightning_patch.restore_original_validation">restore_original_validation() (in module stable_pretraining.utils.lightning_patch)</a>
 </li>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.resume_info">resume_info (stable_pretraining.loggers.trackio.TrackioLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.resume_info">(stable_pretraining.loggers.TrackioLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.resume_info">(stable_pretraining.TrackioLogger property)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RGB">RGB (class in stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.rgetattr">rgetattr() (in module stable_pretraining.utils)</a>
@@ -2395,6 +2626,8 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.config.rgetattr">(in module stable_pretraining.utils.config)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.factories.RichProgressBar">RichProgressBar (class in stable_pretraining.callbacks.factories)</a>
+</li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.solver.ODESolver.RK4">RK4 (stable_pretraining.utils.solver.ODESolver attribute)</a>
 </li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.RoundRobinMultiViewTransform">RoundRobinMultiViewTransform (class in stable_pretraining.data.transforms)</a>
@@ -2409,12 +2642,50 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.cli.run">run() (in module stable_pretraining.cli)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.run_dir">run_dir (stable_pretraining.registry.logger.RegistryLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.run_dir">(stable_pretraining.registry.query.RunRecord attribute)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.run_dir">(stable_pretraining.registry.RegistryLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.run_dir">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.run_dir">(stable_pretraining.RegistryLogger property)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.run_id">run_id (stable_pretraining.registry.logger.RegistryLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.run_id">(stable_pretraining.registry.query.RunRecord attribute)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.run_id">(stable_pretraining.registry.RegistryLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.run_id">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.run_id">(stable_pretraining.RegistryLogger property)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord">RunRecord (class in stable_pretraining.registry)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord">(class in stable_pretraining.registry.query)</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
 <h2 id="S">S</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.SALT">SALT (class in stable_pretraining.methods)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALT">(class in stable_pretraining.methods.salt)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput">SALTOutput (class in stable_pretraining.methods.salt)</a>
+</li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.Categorical.sample">sample() (stable_pretraining.data.Categorical method)</a>
 
       <ul>
@@ -2429,6 +2700,14 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.ExponentialNormalNoiseModel.sample">(stable_pretraining.data.synthetic_data.ExponentialNormalNoiseModel method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.logger.RegistryLogger.save">save() (stable_pretraining.registry.logger.RegistryLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RegistryLogger.save">(stable_pretraining.registry.RegistryLogger method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.RegistryLogger.save">(stable_pretraining.RegistryLogger method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.read_csv_logger.save_best_compressed">save_best_compressed() (in module stable_pretraining.utils.read_csv_logger)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.Manager.save_checkpoint">save_checkpoint() (stable_pretraining.Manager method)</a>
@@ -2437,12 +2716,16 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.manager.Manager.save_checkpoint">(stable_pretraining.manager.Manager method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.scan">scan() (in module stable_pretraining.cli)</a>
+</li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.GMM.score">score() (stable_pretraining.data.GMM method)</a>
 
       <ul>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.GMM.score">(stable_pretraining.data.synthetic_data.GMM method)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.set">set() (in module stable_pretraining)</a>
+</li>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.set_embedding_dim/#stable_pretraining.backbone.set_embedding_dim">set_embedding_dim() (in module stable_pretraining.backbone)</a>
 
       <ul>
@@ -2452,9 +2735,7 @@ document.write(`
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.DataModule.set_pl_trainer">set_pl_trainer() (stable_pretraining.data.DataModule method)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.Dataset.set_pl_trainer">(stable_pretraining.data.Dataset method)</a>
-</li>
-        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.Dataset.set_pl_trainer">(stable_pretraining.data.datasets.Dataset method)</a>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.DatasetMixin.set_pl_trainer">(stable_pretraining.data.datasets.DatasetMixin method)</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.MinariEpisodeDataset.set_pl_trainer">(stable_pretraining.data.MinariEpisodeDataset method)</a>
 </li>
@@ -2463,16 +2744,24 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.synthetic_data.MinariEpisodeDataset.set_pl_trainer">(stable_pretraining.data.synthetic_data.MinariEpisodeDataset method)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.set_seed">set_seed() (in module stable_pretraining.data.transforms)</a>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.set_resume">set_resume() (stable_pretraining.loggers.trackio.TrackioLogger method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.set_resume">(stable_pretraining.loggers.TrackioLogger method)</a>
 </li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.set_resume">(stable_pretraining.TrackioLogger method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_sklearn.SklearnCheckpoint.setup">setup() (stable_pretraining.callbacks.checkpoint_sklearn.SklearnCheckpoint method)</a>
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint.setup">(stable_pretraining.callbacks.checkpoint_sklearn.WandbCheckpoint method)</a>
 </li>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.clip_zero_shot.CLIPZeroShot.setup">(stable_pretraining.callbacks.clip_zero_shot.CLIPZeroShot method)</a>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint.setup">(stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint method)</a>
 </li>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.setup">(stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint.setup">(stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint method)</a>
+</li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.clip_zero_shot.CLIPZeroShot.setup">(stable_pretraining.callbacks.clip_zero_shot.CLIPZeroShot method)</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.setup">(stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
 </li>
@@ -2489,6 +2778,8 @@ document.write(`
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.ModuleSummary/#stable_pretraining.callbacks.ModuleSummary.setup">(stable_pretraining.callbacks.ModuleSummary method)</a>
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineKNN/#stable_pretraining.callbacks.OnlineKNN.setup">(stable_pretraining.callbacks.OnlineKNN method)</a>
+</li>
+        <li><a href="../api/gen_modules/stable_pretraining.callbacks.OnlineWriter/#stable_pretraining.callbacks.OnlineWriter.setup">(stable_pretraining.callbacks.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.queue.OnlineQueue.setup">(stable_pretraining.callbacks.queue.OnlineQueue method)</a>
 </li>
@@ -2508,6 +2799,8 @@ document.write(`
 </li>
         <li><a href="../api/gen_modules/stable_pretraining.callbacks.TrainerInfo/#stable_pretraining.callbacks.TrainerInfo.setup">(stable_pretraining.callbacks.TrainerInfo method)</a>
 </li>
+        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.writer.OnlineWriter.setup">(stable_pretraining.callbacks.writer.OnlineWriter method)</a>
+</li>
         <li><a href="../api/gen_modules/stable_pretraining.data.DataModule/#stable_pretraining.data.DataModule.setup">(stable_pretraining.data.DataModule method)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.DataModule.setup">[1]</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.module.DataModule.setup">(stable_pretraining.data.module.DataModule method)</a>
@@ -2517,6 +2810,8 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.ModuleSummary.setup">(stable_pretraining.ModuleSummary method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.OnlineKNN.setup">(stable_pretraining.OnlineKNN method)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.OnlineWriter.setup">(stable_pretraining.OnlineWriter method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.RankMe.setup">(stable_pretraining.RankMe method)</a>
 </li>
@@ -2537,6 +2832,14 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining/#stable_pretraining.EarlyStopping.should_stop">(stable_pretraining.EarlyStopping method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining/#stable_pretraining.cli.show">show() (in module stable_pretraining.cli)</a>
+</li>
+      <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFIterableDataset.shuffle">shuffle() (stable_pretraining.data.datasets.HFIterableDataset method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.HFMapDataset.shuffle">(stable_pretraining.data.datasets.HFMapDataset method)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.lejepa.LeJEPAOutput.sigreg_loss">sigreg_loss (stable_pretraining.methods.lejepa.LeJEPAOutput attribute)</a>
@@ -2614,13 +2917,6 @@ document.write(`
 </li>
       </ul></li>
       <li>
-    stable_pretraining.backbone.mae
-
-      <ul>
-        <li><a href="../stable_pretraining.backbone/#module-stable_pretraining.backbone.mae">module</a>
-</li>
-      </ul></li>
-      <li>
     stable_pretraining.backbone.mlp
 
       <ul>
@@ -2684,6 +2980,20 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    stable_pretraining.callbacks.checkpoint_swanlab
+
+      <ul>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.checkpoint_swanlab">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.callbacks.checkpoint_trackio
+
+      <ul>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.checkpoint_trackio">module</a>
+</li>
+      </ul></li>
+      <li>
     stable_pretraining.callbacks.cleanup
 
       <ul>
@@ -2695,13 +3005,6 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.clip_zero_shot">module</a>
-</li>
-      </ul></li>
-      <li>
-    stable_pretraining.callbacks.cpu_offload
-
-      <ul>
-        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.cpu_offload">module</a>
 </li>
       </ul></li>
       <li>
@@ -2730,6 +3033,13 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.factories">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.callbacks.hf_models
+
+      <ul>
+        <li><a href="../stable_pretraining.callbacks/#module-stable_pretraining.callbacks.hf_models">module</a>
 </li>
       </ul></li>
       <li>
@@ -2931,6 +3241,27 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    stable_pretraining.loggers
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.loggers.swanlab
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers.swanlab">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.loggers.trackio
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#module-stable_pretraining.loggers.trackio">module</a>
+</li>
+      </ul></li>
+      <li>
     stable_pretraining.losses
 
       <ul>
@@ -3015,6 +3346,13 @@ document.write(`
 </li>
       </ul></li>
       <li>
+    stable_pretraining.methods.salt
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#module-stable_pretraining.methods.salt">module</a>
+</li>
+      </ul></li>
+      <li>
     stable_pretraining.module
 
       <ul>
@@ -3047,6 +3385,27 @@ document.write(`
 
       <ul>
         <li><a href="../stable_pretraining.optim/#module-stable_pretraining.optim.utils">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.registry
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.registry.logger
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry.logger">module</a>
+</li>
+      </ul></li>
+      <li>
+    stable_pretraining.registry.query
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#module-stable_pretraining.registry.query">module</a>
 </li>
       </ul></li>
       <li>
@@ -3196,11 +3555,9 @@ document.write(`
         <li><a href="../stable_pretraining.utils/#module-stable_pretraining.utils.visualization">module</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.state_dict">state_dict() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater.state_dict">state_dict() (stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater method)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater.state_dict">(stable_pretraining.callbacks.wd_schedule.WeightDecayUpdater method)</a>
-</li>
         <li><a href="../api/gen_modules/stable_pretraining.data.DataModule/#stable_pretraining.data.DataModule.state_dict">(stable_pretraining.data.DataModule method)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.DataModule.state_dict">[1]</a>
 </li>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.module.DataModule.state_dict">(stable_pretraining.data.module.DataModule method)</a>
@@ -3234,6 +3591,12 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.RankMe.state_key">(stable_pretraining.RankMe property)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.status">status (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.status">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../api/gen_modules/stable_pretraining.optim.LARS/#stable_pretraining.optim.LARS.step">step() (stable_pretraining.optim.LARS method)</a>
 
       <ul>
@@ -3254,12 +3617,28 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.datasets.Subset">(class in stable_pretraining.data.datasets)</a>
 </li>
       </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.summary">summary (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.summary">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../api/forward/#stable_pretraining.forward.supervised_forward">supervised_forward() (in module stable_pretraining.forward)</a>, <a href="../stable_pretraining/#stable_pretraining.forward.supervised_forward">[1]</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.data.SupervisedBatchSampler/#stable_pretraining.data.SupervisedBatchSampler">SupervisedBatchSampler (class in stable_pretraining.data)</a>, <a href="../stable_pretraining.data/#stable_pretraining.data.SupervisedBatchSampler">[1]</a>
 
       <ul>
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.sampler.SupervisedBatchSampler">(class in stable_pretraining.data.sampler)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_swanlab.SwanLabCheckpoint">SwanLabCheckpoint (class in stable_pretraining.callbacks.checkpoint_swanlab)</a>
+</li>
+      <li><a href="../stable_pretraining/#stable_pretraining.SwanLabLogger">SwanLabLogger (class in stable_pretraining)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.SwanLabLogger">(class in stable_pretraining.loggers)</a>
+</li>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.swanlab.SwanLabLogger">(class in stable_pretraining.loggers.swanlab)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.joint_embedding.SwAVLoss.swapped_prediction">swapped_prediction() (stable_pretraining.losses.joint_embedding.SwAVLoss method)</a>
@@ -3286,12 +3665,22 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.log_reader.TableFormatter.tabulate_runs">tabulate_runs() (stable_pretraining.utils.log_reader.TableFormatter static method)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.tags">tags (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.tags">(stable_pretraining.registry.RunRecord attribute)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.IJEPAMaskOutput.target_block_masks">target_block_masks (stable_pretraining.backbone.patch_masking.IJEPAMaskOutput attribute)</a>
 </li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.IJEPAMaskOutput.target_idx">target_idx (stable_pretraining.backbone.patch_masking.IJEPAMaskOutput attribute)</a>
 </li>
       <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.ijepa.IJEPAOutput.targets">targets (stable_pretraining.methods.ijepa.IJEPAOutput attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.methods/#stable_pretraining.methods.salt.SALTOutput.targets">(stable_pretraining.methods.salt.SALTOutput attribute)</a>
 </li>
+      </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentCallback">TeacherStudentCallback (class in stable_pretraining)</a>
 
       <ul>
@@ -3306,11 +3695,9 @@ document.write(`
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.TeacherStudentWrapper">(class in stable_pretraining.backbone.utils)</a>
 </li>
       </ul></li>
-      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback.teardown">teardown() (stable_pretraining.callbacks.cpu_offload.CPUOffloadCallback method)</a>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.teardown">teardown() (stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
 
       <ul>
-        <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.embedding_cache.EmbeddingCache.teardown">(stable_pretraining.callbacks.embedding_cache.EmbeddingCache method)</a>
-</li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.env_info.EnvironmentDumpCallback.teardown">(stable_pretraining.callbacks.env_info.EnvironmentDumpCallback method)</a>
 </li>
         <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.registry.ModuleRegistryCallback.teardown">(stable_pretraining.callbacks.registry.ModuleRegistryCallback method)</a>
@@ -3334,18 +3721,24 @@ document.write(`
         <li><a href="../stable_pretraining.data/#stable_pretraining.data.module.DataModule.test_dataloader">(stable_pretraining.data.module.DataModule method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining/#stable_pretraining.Module.test_step">test_step() (stable_pretraining.Module method)</a>
 
       <ul>
         <li><a href="../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.test_step">(stable_pretraining.module.Module method)</a>, <a href="../stable_pretraining/#stable_pretraining.module.Module.test_step">[1]</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining/#stable_pretraining.static.TIMM_EMBEDDINGS">TIMM_EMBEDDINGS (class in stable_pretraining.static)</a>
 </li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.TIMM_PARAMETERS">TIMM_PARAMETERS (class in stable_pretraining.static)</a>
 </li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.Registry.to_dataframe">to_dataframe() (stable_pretraining.registry.query.Registry method)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.Registry.to_dataframe">(stable_pretraining.registry.Registry method)</a>
+</li>
+      </ul></li>
       <li><a href="../stable_pretraining.data/#stable_pretraining.data.transforms.to_image">to_image() (in module stable_pretraining.data.transforms)</a>
 </li>
       <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.earlystop.to_scalar">to_scalar() (in module stable_pretraining.callbacks.earlystop)</a>
@@ -3354,6 +3747,16 @@ document.write(`
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.flops.BudgetedFlopCounterMode.total_flops">total_flops (stable_pretraining.utils.flops.BudgetedFlopCounterMode property)</a>
 </li>
+      <li><a href="../stable_pretraining.callbacks/#stable_pretraining.callbacks.checkpoint_trackio.TrackioCheckpoint">TrackioCheckpoint (class in stable_pretraining.callbacks.checkpoint_trackio)</a>
+</li>
+      <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger">TrackioLogger (class in stable_pretraining)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger">(class in stable_pretraining.loggers)</a>
+</li>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger">(class in stable_pretraining.loggers.trackio)</a>
+</li>
+      </ul></li>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.EvalOnly/#stable_pretraining.backbone.EvalOnly.train">train() (stable_pretraining.backbone.EvalOnly method)</a>
 
       <ul>
@@ -3399,8 +3802,6 @@ document.write(`
       <ul>
         <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.mae_loss.unpatchify">(in module stable_pretraining.utils.mae_loss)</a>
 </li>
-        <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.MaskedAutoencoderViT.unpatchify">(stable_pretraining.backbone.mae.MaskedAutoencoderViT method)</a>
-</li>
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.UnsortedQueue">UnsortedQueue (class in stable_pretraining.utils)</a>
 
@@ -3416,8 +3817,6 @@ document.write(`
         <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.DINOv1Loss.update_center">(stable_pretraining.losses.DINOv1Loss method)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.TeacherStudentModule/#stable_pretraining.backbone.TeacherStudentWrapper.update_ema_coefficient">update_ema_coefficient() (stable_pretraining.backbone.TeacherStudentWrapper method)</a>, <a href="../api/gen_modules/stable_pretraining.backbone.TeacherStudentWrapper/#stable_pretraining.backbone.TeacherStudentWrapper.update_ema_coefficient">[1]</a>
 
       <ul>
@@ -3426,12 +3825,20 @@ document.write(`
         <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentWrapper.update_ema_coefficient">(stable_pretraining.TeacherStudentWrapper method)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../api/gen_modules/stable_pretraining.backbone.TeacherStudentModule/#stable_pretraining.backbone.TeacherStudentWrapper.update_teacher">update_teacher() (stable_pretraining.backbone.TeacherStudentWrapper method)</a>, <a href="../api/gen_modules/stable_pretraining.backbone.TeacherStudentWrapper/#stable_pretraining.backbone.TeacherStudentWrapper.update_teacher">[1]</a>
 
       <ul>
         <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.TeacherStudentWrapper.update_teacher">(stable_pretraining.backbone.utils.TeacherStudentWrapper method)</a>
 </li>
         <li><a href="../stable_pretraining/#stable_pretraining.TeacherStudentWrapper.update_teacher">(stable_pretraining.TeacherStudentWrapper method)</a>
+</li>
+      </ul></li>
+      <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.query.RunRecord.updated_at">updated_at (stable_pretraining.registry.query.RunRecord attribute)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.registry/#stable_pretraining.registry.RunRecord.updated_at">(stable_pretraining.registry.RunRecord attribute)</a>
 </li>
       </ul></li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.gdrive_utils.GDriveUploader.upload_file">upload_file() (stable_pretraining.utils.gdrive_utils.GDriveUploader method)</a>
@@ -3466,6 +3873,22 @@ document.write(`
       </ul></li>
       <li><a href="../stable_pretraining/#stable_pretraining.static.MetaStatic.values">values() (stable_pretraining.static.MetaStatic method)</a>
 </li>
+      <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.VCRegLoss">VCRegLoss (class in stable_pretraining.losses)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.utils.VCRegLoss">(class in stable_pretraining.losses.utils)</a>
+</li>
+      </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.trackio.TrackioLogger.version">version (stable_pretraining.loggers.trackio.TrackioLogger property)</a>
+
+      <ul>
+        <li><a href="../stable_pretraining.loggers/#stable_pretraining.loggers.TrackioLogger.version">(stable_pretraining.loggers.TrackioLogger property)</a>
+</li>
+        <li><a href="../stable_pretraining/#stable_pretraining.TrackioLogger.version">(stable_pretraining.TrackioLogger property)</a>
+</li>
+      </ul></li>
       <li><a href="../api/forward/#stable_pretraining.forward.vicreg_forward">vicreg_forward() (in module stable_pretraining.forward)</a>, <a href="../stable_pretraining/#stable_pretraining.forward.vicreg_forward">[1]</a>
 </li>
       <li><a href="../api/gen_modules/stable_pretraining.losses.VICRegLoss/#stable_pretraining.losses.VICRegLoss">VICRegLoss (class in stable_pretraining.losses)</a>, <a href="../stable_pretraining.losses/#stable_pretraining.losses.VICRegLoss">[1]</a>
@@ -3474,25 +3897,11 @@ document.write(`
         <li><a href="../stable_pretraining.losses/#stable_pretraining.losses.joint_embedding.VICRegLoss">(class in stable_pretraining.losses.joint_embedding)</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.patch_masking.MaskingOutput.visible">visible (stable_pretraining.backbone.patch_masking.MaskingOutput attribute)</a>
 </li>
       <li><a href="../stable_pretraining.utils/#stable_pretraining.utils.visualization.visualize_images_graph">visualize_images_graph() (in module stable_pretraining.utils.visualization)</a>
 </li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_base_patch16">vit_base_patch16() (in module stable_pretraining.backbone.mae)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_base_patch16_dec512d8b">vit_base_patch16_dec512d8b() (in module stable_pretraining.backbone.mae)</a>
-</li>
       <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.utils.vit_hf">vit_hf() (in module stable_pretraining.backbone.utils)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_huge_patch14">vit_huge_patch14() (in module stable_pretraining.backbone.mae)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_huge_patch14_dec512d8b">vit_huge_patch14_dec512d8b() (in module stable_pretraining.backbone.mae)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_large_patch16">vit_large_patch16() (in module stable_pretraining.backbone.mae)</a>
-</li>
-      <li><a href="../stable_pretraining.backbone/#stable_pretraining.backbone.mae.vit_large_patch16_dec512d8b">vit_large_patch16_dec512d8b() (in module stable_pretraining.backbone.mae)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -3605,8 +4014,8 @@ By stable-pretraining team
   </div>
   
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
-  <script src="../_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
-<script src="../_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
 
   <footer class="bd-footer">
   </footer>

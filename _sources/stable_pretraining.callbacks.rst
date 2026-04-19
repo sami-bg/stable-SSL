@@ -12,6 +12,22 @@ stable\_pretraining.callbacks.checkpoint\_sklearn module
    :show-inheritance:
    :undoc-members:
 
+stable\_pretraining.callbacks.checkpoint\_swanlab module
+--------------------------------------------------------
+
+.. automodule:: stable_pretraining.callbacks.checkpoint_swanlab
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+stable\_pretraining.callbacks.checkpoint\_trackio module
+--------------------------------------------------------
+
+.. automodule:: stable_pretraining.callbacks.checkpoint_trackio
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
 stable\_pretraining.callbacks.cleanup module
 --------------------------------------------
 
@@ -24,14 +40,6 @@ stable\_pretraining.callbacks.clip\_zero\_shot module
 -----------------------------------------------------
 
 .. automodule:: stable_pretraining.callbacks.clip_zero_shot
-   :members:
-   :show-inheritance:
-   :undoc-members:
-
-stable\_pretraining.callbacks.cpu\_offload module
--------------------------------------------------
-
-.. automodule:: stable_pretraining.callbacks.cpu_offload
    :members:
    :show-inheritance:
    :undoc-members:
@@ -64,6 +72,14 @@ stable\_pretraining.callbacks.factories module
 ----------------------------------------------
 
 .. automodule:: stable_pretraining.callbacks.factories
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+stable\_pretraining.callbacks.hf\_models module
+-----------------------------------------------
+
+.. automodule:: stable_pretraining.callbacks.hf_models
    :members:
    :show-inheritance:
    :undoc-members:
