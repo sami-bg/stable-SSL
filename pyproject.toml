@@ -55,6 +55,10 @@ write_to = "stable_pretraining/_version.py"
 write_to_template = "version = \"{version}\"\n"
 
 [project.optional-dependencies]
+# Trackio experiment tracking
+trackio = ["trackio"]
+# SwanLab experiment tracking
+swanlab = ["swanlab"]
 # Development and documentation tools
 dev = [
     "pytest",

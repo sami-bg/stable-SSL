@@ -1,14 +1,17 @@
 import os
-import shutil
-import pytest
-import torch
-import torch.nn as nn
-import multiprocessing as mp
-from pathlib import Path
-from loguru import logger
-from transformers import PretrainedConfig, PreTrainedModel
-import lightning.pytorch as pl
-import stable_pretraining as spt
+
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
+
+import shutil  # noqa: E402
+import pytest  # noqa: E402
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
+import multiprocessing as mp  # noqa: E402
+from pathlib import Path  # noqa: E402
+from loguru import logger  # noqa: E402
+from transformers import PretrainedConfig, PreTrainedModel  # noqa: E402
+import lightning.pytorch as pl  # noqa: E402
+import stable_pretraining as spt  # noqa: E402
 
 # =============================================================================
 # 1. Mock HF Model & Config

@@ -209,9 +209,7 @@ class RandomAutocontrast(Transform, v2.RandomAutocontrast):
         if self.p < 1 and torch.rand(1) >= self.p:
             x[self.get_name(x)] = False
             return x
-        self.nested_set(
-            x, F.autocontrast(self.nested_get(x, self.source)), self.target
-        )
+        self.nested_set(x, F.autocontrast(self.nested_get(x, self.source)), self.target)
         x[self.get_name(x)] = True
         return x
 
@@ -228,9 +226,7 @@ class RandomEqualize(Transform, v2.RandomEqualize):
         if self.p < 1 and torch.rand(1) >= self.p:
             x[self.get_name(x)] = False
             return x
-        self.nested_set(
-            x, F.equalize(self.nested_get(x, self.source)), self.target
-        )
+        self.nested_set(x, F.equalize(self.nested_get(x, self.source)), self.target)
         x[self.get_name(x)] = True
         return x
 
@@ -247,9 +243,7 @@ class RandomInvert(Transform, v2.RandomInvert):
         if self.p < 1 and torch.rand(1) >= self.p:
             x[self.get_name(x)] = False
             return x
-        self.nested_set(
-            x, F.invert(self.nested_get(x, self.source)), self.target
-        )
+        self.nested_set(x, F.invert(self.nested_get(x, self.source)), self.target)
         x[self.get_name(x)] = True
         return x
 
@@ -289,9 +283,7 @@ class RandomAdjustSharpness(Transform, v2.RandomAdjustSharpness):
             return x
         self.nested_set(
             x,
-            F.adjust_sharpness(
-                self.nested_get(x, self.source), self.sharpness_factor
-            ),
+            F.adjust_sharpness(self.nested_get(x, self.source), self.sharpness_factor),
             self.target,
         )
         x[self.get_name(x)] = torch.Tensor([self.sharpness_factor])
@@ -849,7 +841,9 @@ class PatchMasking(Transform):
 
         # Determine fill value
         fill_value = self.fill_value if self.fill_value is not None else 0.0
-        fill = torch.tensor(fill_value, dtype=img_tensor.dtype, device=img_tensor.device)
+        fill = torch.tensor(
+            fill_value, dtype=img_tensor.dtype, device=img_tensor.device
+        )
 
         # Efficient masking via reshape + broadcast (no full-resolution mask needed)
         ps = self.patch_size
