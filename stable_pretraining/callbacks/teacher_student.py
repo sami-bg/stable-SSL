@@ -35,12 +35,14 @@ class TeacherStudentCallback(Callback):
         self,
         update_frequency: int = 1,
         update_after_backward: bool = False,
-        verbose: bool = True,
+        verbose: bool = None,
     ):
         super().__init__()
+        from .utils import resolve_verbose
+
         self.update_frequency = update_frequency
         self.update_after_backward = update_after_backward
-        self.verbose = verbose
+        self.verbose = resolve_verbose(verbose)
         self._wrapper_found = False
         # Track optimizer-step progress and accumulation steps
         self._last_global_step = -1

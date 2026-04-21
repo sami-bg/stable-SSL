@@ -17,6 +17,22 @@ def log_header(name: str, width: int = _HEADER_WIDTH) -> None:
     logging.info(f"── {name} " + "─" * pad)
 
 
+def resolve_verbose(verbose: Optional[bool]) -> bool:
+    """Resolve a callback's ``verbose`` flag.
+
+    * ``True`` / ``False`` — honour the explicit choice.
+    * ``None`` — derive from the global config: verbose if the global
+      log level is INFO or lower (i.e. more detailed).
+    """
+    if verbose is not None:
+        return verbose
+    from .._config import get_config, _VALID_LOG_LEVELS
+
+    level = get_config().verbose
+    # INFO is index 2; anything <= INFO means "chatty enough for verbose"
+    return _VALID_LOG_LEVELS.index(level) <= _VALID_LOG_LEVELS.index("INFO")
+
+
 class TrainableCallback(Callback):
     """Base callback class with optimizer and scheduler management.
 

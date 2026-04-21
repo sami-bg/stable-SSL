@@ -91,7 +91,11 @@ class BarlowTwinsLoss(torch.nn.Module):
     def __init__(self, lambd: float = 5e-3):
         super().__init__()
         self.lambd = lambd
-        self.bn = torch.nn.LazyBatchNorm1d()
+
+    @staticmethod
+    def _normalize(z: torch.Tensor) -> torch.Tensor:
+        """Standardize along the batch dimension (zero mean, unit std)."""
+        return (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-5)
 
     def forward(self, z_i, z_j):
         """Compute the loss of the Barlow Twins model.
@@ -103,7 +107,9 @@ class BarlowTwinsLoss(torch.nn.Module):
         Returns:
             float: The computed loss.
         """
-        c = self.bn(z_i).T @ self.bn(z_j)  # normalize along the batch dimension
+        c = self._normalize(z_i).T @ self._normalize(
+            z_j
+        )  # normalize along the batch dimension
         c = c / z_i.size(0)
         all_reduce(c)
 

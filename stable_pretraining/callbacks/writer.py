@@ -74,6 +74,20 @@ class OnlineWriter(Callback):
             logging.warning(f"! path {path} does not exist, creating it")
             path.mkdir(parents=True, exist_ok=True)
 
+    def setup(self, trainer, pl_module, stage=None):
+        # Resolve relative paths against trainer.default_root_dir.
+        # Prefer cache_dir when default_root_dir is CWD (outside Manager).
+        if not self.path.is_absolute():
+            from stable_pretraining._config import get_config
+
+            root = trainer.default_root_dir
+            cfg = get_config()
+            if cfg.cache_dir is not None and root == str(Path().resolve()):
+                root = cfg.cache_dir
+            self.path = Path(root) / self.path
+            if not self.path.is_dir():
+                self.path.mkdir(parents=True, exist_ok=True)
+
     def on_sanity_check_start(self, trainer, pl_module):
         self.is_sanity_check = True
 

@@ -54,7 +54,7 @@ class OnlineQueue(Callback):
         dim: Optional[Union[int, tuple]] = None,
         dtype: Optional[torch.dtype] = None,
         gather_distributed: bool = False,
-        verbose: bool = True,
+        verbose: bool = None,
     ) -> None:
         super().__init__()
 
@@ -63,7 +63,9 @@ class OnlineQueue(Callback):
         self.dim = dim
         self.dtype = dtype
         self.gather_distributed = gather_distributed
-        self.verbose = verbose
+        from .utils import resolve_verbose
+
+        self.verbose = resolve_verbose(verbose)
         self._snapshot = None
 
         log_header("OnlineQueue")

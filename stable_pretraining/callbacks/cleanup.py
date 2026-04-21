@@ -92,25 +92,49 @@ class CleanUpCallback(Callback):
         dry_run: If ``True``, only log what would be deleted.
     """
 
+    # Sentinel to distinguish "not passed" from an explicit ``True``/``False``.
+    _UNSET = object()
+
     def __init__(
         self,
-        keep_checkpoints: bool = True,
-        keep_logs: bool = True,
-        keep_hydra: bool = False,
-        keep_slurm: bool = False,
-        keep_env_dump: bool = False,
-        keep_callback_artifacts: bool = True,
+        keep_checkpoints: bool = _UNSET,
+        keep_logs: bool = _UNSET,
+        keep_hydra: bool = _UNSET,
+        keep_slurm: bool = _UNSET,
+        keep_env_dump: bool = _UNSET,
+        keep_callback_artifacts: bool = _UNSET,
         slurm_patterns: Optional[Sequence[str]] = None,
         extra_patterns: Optional[Sequence[str]] = None,
         dry_run: bool = False,
     ) -> None:
         super().__init__()
-        self.keep_checkpoints = keep_checkpoints
-        self.keep_logs = keep_logs
-        self.keep_hydra = keep_hydra
-        self.keep_slurm = keep_slurm
-        self.keep_env_dump = keep_env_dump
-        self.keep_callback_artifacts = keep_callback_artifacts
+        from .._config import get_config
+
+        cfg_cleanup = get_config().cleanup
+        self.keep_checkpoints = (
+            keep_checkpoints
+            if keep_checkpoints is not self._UNSET
+            else cfg_cleanup["checkpoints"]
+        )
+        self.keep_logs = (
+            keep_logs if keep_logs is not self._UNSET else cfg_cleanup["logs"]
+        )
+        self.keep_hydra = (
+            keep_hydra if keep_hydra is not self._UNSET else cfg_cleanup["hydra"]
+        )
+        self.keep_slurm = (
+            keep_slurm if keep_slurm is not self._UNSET else cfg_cleanup["slurm"]
+        )
+        self.keep_env_dump = (
+            keep_env_dump
+            if keep_env_dump is not self._UNSET
+            else cfg_cleanup["env_dump"]
+        )
+        self.keep_callback_artifacts = (
+            keep_callback_artifacts
+            if keep_callback_artifacts is not self._UNSET
+            else cfg_cleanup["callback_artifacts"]
+        )
         self.slurm_patterns = list(slurm_patterns or ["slurm-*.out", "slurm-*.err"])
         self.extra_patterns = list(extra_patterns or [])
         self.dry_run = dry_run
@@ -171,6 +195,8 @@ class CleanUpCallback(Callback):
                 # LatentViz: saves to save_dir or latent_viz_{name}
                 if hasattr(cb, "save_dir") and hasattr(cb, "name"):
                     d = cb.save_dir if cb.save_dir else f"latent_viz_{cb.name}"
+                    if not os.path.isabs(d):
+                        d = os.path.join(trainer.default_root_dir, d)
                     if os.path.isdir(d):
                         targets.append(("callback", d))
                 # OnlineWriter: saves to cb.path

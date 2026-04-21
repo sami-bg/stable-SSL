@@ -58,7 +58,7 @@ class EpochMilestones(pl.Callback):
         direction: str = "max",
         after_validation: bool = True,
         strict: bool = True,
-        verbose: bool = True,
+        verbose: bool = None,
     ):
         if monitor is None and contains is None:
             raise ValueError("`monitor` and `contains` can't both be None")
@@ -74,7 +74,9 @@ class EpochMilestones(pl.Callback):
         self.milestones = milestones
         self.direction = direction
         self.after_validation = after_validation
-        self.verbose = verbose
+        from .utils import resolve_verbose
+
+        self.verbose = resolve_verbose(verbose)
 
     def _check_condition(self, trainer):
         # Get the current epoch

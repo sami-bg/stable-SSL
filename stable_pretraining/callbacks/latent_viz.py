@@ -81,7 +81,7 @@ class LatentViz(TrainableCallback):
         plot_interval: int = 10,
         save_dir: Optional[str] = None,
         input_dim: Optional[Union[int, tuple, list]] = None,
-        verbose: bool = True,
+        verbose: bool = None,
     ):
         super().__init__(
             name=name,
@@ -108,8 +108,10 @@ class LatentViz(TrainableCallback):
             input_dim = int(np.prod(input_dim))
         self.input_dim = input_dim
 
+        from .utils import resolve_verbose
+
         self._projection_config = projection
-        self.verbose = verbose
+        self.verbose = resolve_verbose(verbose)
 
         # Will be initialized in setup
         self._input_queue = None
@@ -391,6 +393,18 @@ class LatentViz(TrainableCallback):
             save_dir = self.save_dir
         else:
             save_dir = f"latent_viz_{self.name}"
+        # Resolve relative paths against trainer.default_root_dir.
+        # Prefer cache_dir when default_root_dir is CWD (outside Manager).
+        if not os.path.isabs(save_dir):
+            from pathlib import Path as _Path
+
+            from stable_pretraining._config import get_config
+
+            root = trainer.default_root_dir
+            cfg = get_config()
+            if cfg.cache_dir is not None and root == str(_Path().resolve()):
+                root = cfg.cache_dir
+            save_dir = os.path.join(root, save_dir)
         os.makedirs(save_dir, exist_ok=True)
 
         save_path = os.path.join(save_dir, f"epoch_{epoch:04d}.npz")
@@ -401,38 +415,10 @@ class LatentViz(TrainableCallback):
 
         logging.info(f"  saved 2D coordinates to {save_path}")
 
-        # Log to experiment tracker if available
-        try:
-            from lightning.pytorch.loggers import WandbLogger
-
-            if isinstance(trainer.logger, WandbLogger):
-                import wandb
-
-                # Create WandB-specific table only (no direct scatter logging)
-                if labels_np is not None:
-                    data = np.column_stack([z_2d_np, labels_np.astype(int)])
-                    columns = ["x", "y", "class"]
-                else:
-                    data = z_2d_np
-                    columns = ["x", "y"]
-
-                table = wandb.Table(columns=columns, data=data.tolist())
-
-                # Log table - will overwrite previous epoch's table
-                wandb.log(
-                    {
-                        f"{self.name}/2d_latent_table": table,
-                        f"{self.name}/current_epoch": epoch,
-                    }
-                )
-
-                logging.info(
-                    f"  logged latent table to experiment tracker at epoch {epoch}"
-                )
-        except ImportError:
-            logging.debug("  WandB not installed, skipping visualization logging")
-        except Exception as e:
-            logging.error(f"  failed to log visualization: {e}")
+        logging.info(
+            f"  2D coordinates saved to disk at epoch {epoch} "
+            f"(visualization data in {save_path})"
+        )
 
     @property
     def projection_module(self):

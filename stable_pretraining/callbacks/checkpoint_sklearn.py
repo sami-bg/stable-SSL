@@ -227,24 +227,40 @@ class StrictCheckpointCallback(Callback):
         )
 
 
+_WANDB_RESUME_FILENAME = "wandb_resume.json"
+
+
+def find_wandb_logger(trainer: Trainer) -> Optional[WandbLogger]:
+    """Find the unique WandbLogger among all trainer loggers.
+
+    Returns:
+        The WandbLogger instance, or ``None`` if no WandbLogger is configured.
+
+    Raises:
+        RuntimeError: If more than one WandbLogger is attached (ambiguous resume target).
+    """
+    found = [lg for lg in trainer.loggers if isinstance(lg, WandbLogger)]
+    if len(found) == 0:
+        return None
+    if len(found) > 1:
+        raise RuntimeError(
+            f"Found {len(found)} WandbLoggers attached to the Trainer. "
+            "Only one is supported for run resume across requeues."
+        )
+    return found[0]
+
+
 class WandbCheckpoint(Callback):
-    """Callback for saving and loading sklearn models in PyTorch Lightning checkpoints.
+    """Persist the wandb run ID across checkpoint save/load for seamless requeue resume.
 
-    This callback automatically detects sklearn models (Regressors and Classifiers)
-    attached to the Lightning module and handles their serialization/deserialization
-    during checkpoint save/load operations. This is necessary because sklearn models
-    are not natively supported by PyTorch's checkpoint system.
+    On save:
+        - Stores ``{"id": ..., "project": ..., "entity": ...}`` in the checkpoint dict.
+        - Writes a small ``wandb_resume.json`` sidecar in CWD so the Manager can
+          inject the run ID *before* ``wandb.init()`` fires on the next job.
 
-    The callback will:
-    1. Automatically discover sklearn models attached to the Lightning module
-    2. Save them to the checkpoint dictionary during checkpoint saving
-    3. Restore them from the checkpoint during checkpoint loading
-    4. Log information about discovered sklearn modules during setup
-
-    Note:
-        - Only attributes that are sklearn RegressorMixin or ClassifierMixin instances are saved
-        - Private attributes (starting with '_') are ignored
-        - The callback will raise an error if a sklearn model name conflicts with existing checkpoint keys
+    On load:
+        - Verifies the active wandb run matches the checkpoint (early injection in
+          the Manager should have already set the correct ID).
     """
 
     def setup(
@@ -253,63 +269,64 @@ class WandbCheckpoint(Callback):
         log_header("WandbCheckpoint")
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("  Checking for Wandb params to save")
-        if isinstance(trainer.logger, WandbLogger):
-            checkpoint["wandb"] = {"id": trainer.logger.version}
-            # checkpoint["wandb_checkpoint_name"] = trainer.logger._checkpoint_name
-            logging.info(f"  Saving Wandb params {checkpoint['wandb']}")
-        logging.success("✓ Wandb params save check complete")
+        import json
+        from pathlib import Path
+
+        wandb_logger = find_wandb_logger(trainer)
+        if wandb_logger is None:
+            return
+
+        run_id = wandb_logger.version
+        project = wandb_logger._wandb_init.get("project")
+        entity = wandb_logger._wandb_init.get("entity")
+
+        resume_info = {"id": run_id, "project": project, "entity": entity}
+        checkpoint["wandb"] = resume_info
+        logging.info(f"  Saved wandb resume info to checkpoint: {resume_info}")
+
+        # Write sidecar so the Manager can inject the ID before wandb.init()
+        # Prefer trainer.default_root_dir (cache_dir mode), also write to CWD for compat
+        if trainer.is_global_zero:
+            root = Path(trainer.default_root_dir)
+            sidecar = root / _WANDB_RESUME_FILENAME
+            sidecar.parent.mkdir(parents=True, exist_ok=True)
+            sidecar.write_text(json.dumps(resume_info))
+            logging.info(f"  Wrote {sidecar.resolve()}")
+            # Also write to CWD if it differs (backward compat),
+            # but skip when cache_dir is active to avoid polluting CWD.
+            from stable_pretraining._config import get_config
+
+            if get_config().cache_dir is None:
+                cwd_sidecar = Path(_WANDB_RESUME_FILENAME)
+                if cwd_sidecar.resolve() != sidecar.resolve():
+                    cwd_sidecar.write_text(json.dumps(resume_info))
+                    logging.info(f"  Wrote {cwd_sidecar.resolve()} (compat)")
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
-        logging.info("  Checking for Wandb init params")
-        if "wandb" in checkpoint:
-            logging.info("  Wandb info in checkpoint, restoring same run")
-            if not hasattr(trainer, "logger"):
-                logging.warning("! Expected Trainer to have a logger, leaving")
-                return
-            elif not isinstance(trainer.logger, WandbLogger):
-                logging.warning(
-                    f"! Expected WandbLogger, got {trainer.logger}, leaving"
-                )
-                return
-            else:
-                logging.info("  Trainer has a WandbLogger")
-            import wandb
+        if "wandb" not in checkpoint:
+            return
 
-            if wandb.run is None and trainer.global_rank > 0:
-                logging.info(
-                    "  Run not initialized yet, skipping since this is a slave process"
-                )
-                return
-            if wandb.run is not None and wandb.run.id == checkpoint["wandb"]["id"]:
-                logging.info(
-                    "  Run already properly initialized, skipping deletion and setup"
-                )
-                return
-            logging.info(
-                f"  Deleting current run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}"
+        expected_id = checkpoint["wandb"]["id"]
+        wandb_logger = find_wandb_logger(trainer)
+        if wandb_logger is None:
+            logging.warning(
+                f"! Checkpoint contains wandb run ID '{expected_id}' but no "
+                "WandbLogger is configured — wandb resume will not happen."
             )
-            api = wandb.Api()
-            run = api.run(f"{wandb.run.entity}/{wandb.run.project}/{wandb.run.id}")
-            wandb.finish()
-            run.delete()
-            trainer.logger._experiment = None
-            wandb_id = checkpoint["wandb"]["id"]
-            trainer.logger._wandb_init["id"] = wandb_id
-            trainer.logger._id = wandb_id
-            # to reset the run
-            trainer.logger.experiment
-            logging.info(
-                f"  New run {wandb.run.entity}/{wandb.run.project}/{wandb.run.id}"
-            )
+            return
 
-            # trainer.logger._wandb_init = wandb_init
-            # trainer.logger._project = trainer.logger._wandb_init.get("project")
-            # trainer.logger._save_dir = trainer.logger._wandb_init.get("dir")
-            # trainer.logger._name = trainer.logger._wandb_init.get("name")
-            # trainer.logger._checkpoint_name = checkpoint["wandb_checkpoint_name"]
-            # logging.info("Updated Wandb parameters: ")
-            # logging.info(f"\t- project={trainer.logger._project}")
-            # logging.info(f"\t- _save_dir={trainer.logger._save_dir}")
-            # logging.info(f"\t- name={trainer.logger._name}")
-            # logging.info(f"\t- id={trainer.logger._id}")
+        # At this point the Manager should have already injected the ID via
+        # _maybe_restore_wandb_run_id, so the logger's _wandb_init["id"]
+        # should match.  We verify here as a safety net.
+        configured_id = wandb_logger._wandb_init.get("id")
+        if configured_id == expected_id:
+            logging.info(
+                f"  Wandb run ID '{expected_id}' matches — resume is set up correctly."
+            )
+        else:
+            logging.error(
+                f"! Wandb run ID mismatch: checkpoint expects '{expected_id}' "
+                f"but the logger is configured with '{configured_id}'. "
+                "The run may not resume correctly. This can happen if wandb.init() "
+                "was called before the Manager had a chance to inject the ID."
+            )

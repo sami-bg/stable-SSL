@@ -58,9 +58,16 @@ class EnvironmentDumpCallback(Callback):
         self._start_time = time.time()
 
         # CRITICAL: Get log_dir in main thread BEFORE starting background thread
-        # Use trainer.log_dir for the run-specific versioned directory
-        # Falls back to default_root_dir if no logger is configured
-        log_dir = Path(trainer.default_root_dir)
+        # Prefer the trainer's default_root_dir (set by Manager from cache_dir).
+        # When running outside the Manager, default_root_dir may be CWD — in
+        # that case fall back to cache_dir if configured so we never pollute CWD.
+        from stable_pretraining._config import get_config
+
+        cfg = get_config()
+        root = trainer.default_root_dir
+        if cfg.cache_dir is not None and root == str(Path().resolve()):
+            root = cfg.cache_dir
+        log_dir = Path(root)
         logger.info(f"  log_dir: {log_dir}")
 
         if self.async_dump:
