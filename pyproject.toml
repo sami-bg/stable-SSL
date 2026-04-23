@@ -36,6 +36,8 @@ dependencies = [
     "scikit-learn>=1.7.0",
     "richuru",
     "opt-einsum",
+    "lance",
+    "opencv-python",
 ]
 
 dynamic = ["version"]
