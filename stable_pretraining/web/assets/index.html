@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>spt web</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">spt&nbsp;web</div>
+    <div id="status-row"><span id="run-count">0 runs</span></div>
+    <div class="spacer"></div>
+    <label class="control">smoothing
+      <input id="smoothing" type="range" min="0" max="0.99" step="0.01" value="0">
+      <span id="smoothing-val">0.00</span>
+    </label>
+    <label class="control">x-axis
+      <select id="x-axis">
+        <option value="step" selected>step</option>
+        <option value="epoch">epoch</option>
+      </select>
+    </label>
+    <label class="control"><input id="log-y" type="checkbox"> log&nbsp;y</label>
+    <button id="theme-toggle" class="icon-btn" type="button" title="toggle light/dark theme" aria-label="toggle theme"></button>
+  </header>
+  <aside id="sidebar">
+    <input id="run-search" placeholder="search runs / tags / hparams" autocomplete="off" spellcheck="false">
+    <div id="filters-section">
+      <div class="filters-header">
+        <span>filters</span>
+        <button id="add-filter-btn" type="button" title="add filter">+</button>
+      </div>
+      <div id="filters-list"></div>
+      <div id="filter-draft" hidden></div>
+    </div>
+    <div id="group-sort">
+      <label>group by
+        <select id="group-by"><option value="">none</option></select>
+      </label>
+      <label>sort by
+        <div class="sort-row">
+          <select id="sort-by"></select>
+          <button id="sort-dir" title="toggle direction">↓</button>
+        </div>
+      </label>
+    </div>
+    <div id="sidebar-actions">
+      <button id="select-all">select all</button>
+      <button id="clear-all">clear</button>
+    </div>
+    <div id="run-list"></div>
+  </aside>
+  <main id="charts"><div class="empty-state">select a run on the left to plot its metrics</div></main>
+</div>
+<div id="detail-overlay" hidden>
+  <div id="detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="detail-header">
+      <span id="detail-dot" class="detail-dot"></span>
+      <div id="detail-title"></div>
+      <button id="detail-close" title="close (Esc)" aria-label="close">×</button>
+    </div>
+    <input id="detail-filter" placeholder="filter keys" autocomplete="off" spellcheck="false">
+    <div id="detail-body"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script src="/assets/app.js"></script>
+</body>
+</html>
