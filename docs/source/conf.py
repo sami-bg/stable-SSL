@@ -51,6 +51,12 @@ autosummary_generate = True
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 
+# myst-parser: register markdown headings (level 1-3) as cross-ref targets so
+# in-document anchor links like ``[Foo](#foo)`` resolve. Without this, MyST
+# emits ``myst.xref_missing`` warnings even though the rendered HTML *does*
+# contain the auto-generated id.
+myst_heading_anchors = 3
+
 copybutton_exclude = ".linenos, .gp"
 
 intersphinx_mapping = {
@@ -104,21 +110,13 @@ html_theme = "sphinx_book_theme"
 html_static_path = []
 # html_favicon =
 # html_logo =
+# Options accepted by sphinx_book_theme. The earlier list also held a
+# bunch of sphinx_rtd_theme options (analytics_anonymize_ip, logo_only,
+# prev_next_buttons_location, …) which the book theme silently rejected
+# with a warning per option — removed.
 html_theme_options = {
-    # "analytics_id": "",  # Provided by Google in your dashboard G-
-    "analytics_anonymize_ip": False,
-    "logo_only": True,
-    "display_version": True,
-    "prev_next_buttons_location": "bottom",
-    "style_external_links": False,
-    "vcs_pageview_mode": "",
-    "style_nav_header_background": "white",
-    # Toc options
     "collapse_navigation": True,
-    "sticky_navigation": True,
     "navigation_depth": 4,
-    "includehidden": True,
-    "titles_only": False,
 }
 
 # Separator substitution : Writing |sep| in the rst file will display a horizontal line.

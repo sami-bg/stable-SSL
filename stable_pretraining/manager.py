@@ -3,6 +3,7 @@ import inspect
 import json
 import os
 import signal
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -101,24 +102,99 @@ _RUN_META_FILENAME = "run_meta.json"
 
 
 def _generate_run_id() -> str:
-    """Generate a deterministic run ID that all ranks in the same job agree on.
+    """Always return a fresh uuid4 hex (12 chars).
 
-    Priority:
-        1. ``SLURM_JOB_ID`` (+ ``SLURM_ARRAY_TASK_ID`` if array job) — same
-           for every rank in the same SLURM job/task.
-        2. ``TORCHELASTIC_RUN_ID`` — same for every rank under ``torchrun``.
-        3. Random ``uuid4`` hex (12 chars) — single-process fallback.
+    Run dirs are now uniquely identified by uuid regardless of execution
+    context (interactive shell, batch, array task, torchrun, ...). SLURM
+    preempt/requeue resume is handled separately by ``_resolve_run_dir``,
+    which records ``SLURM_JOB_ID[_SLURM_ARRAY_TASK_ID] → run_dir`` in
+    ``cache_dir/.slurm_index/`` and looks the value up when
+    ``SLURM_RESTART_COUNT > 0`` on a re-run.
+
+    This sidesteps the historical trap where every consecutive ``python``
+    invocation inside ``srun --pty`` would land in the same run dir
+    because ``SLURM_JOB_ID`` is shared across them.
     """
-    slurm_job = os.environ.get("SLURM_JOB_ID")
-    if slurm_job is not None:
-        array_task = os.environ.get("SLURM_ARRAY_TASK_ID")
-        if array_task is not None:
-            return f"{slurm_job}_{array_task}"
-        return slurm_job
-    elastic_run = os.environ.get("TORCHELASTIC_RUN_ID")
-    if elastic_run is not None:
-        return elastic_run
     return uuid.uuid4().hex[:12]
+
+
+def _slurm_session_key() -> Optional[str]:
+    """Stable per-SLURM-task key for requeue lookup, or ``None`` outside SLURM.
+
+    Form: ``"<SLURM_JOB_ID>"`` or ``"<SLURM_JOB_ID>_<SLURM_ARRAY_TASK_ID>"``.
+    Same value across preempt/requeue cycles (SLURM keeps job/task ids
+    stable on requeue), so a requeued process can find the run_dir of
+    the original invocation.
+    """
+    job = os.environ.get("SLURM_JOB_ID")
+    if not job:
+        return None
+    task = os.environ.get("SLURM_ARRAY_TASK_ID")
+    return f"{job}_{task}" if task is not None else job
+
+
+def _is_slurm_requeue() -> bool:
+    """SLURM exports ``SLURM_RESTART_COUNT >= 1`` only on requeue.
+
+    Interactive ``srun --pty`` reruns share ``SLURM_JOB_ID`` but never bump
+    ``SLURM_RESTART_COUNT`` — so checking it lets us distinguish a real
+    preempt-resume from an interactive re-invocation.
+    """
+    try:
+        return int(os.environ.get("SLURM_RESTART_COUNT", "0")) >= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _ddp_launch_key() -> Optional[str]:
+    """Identifier shared by every rank in the same DDP launch, or ``None``.
+
+    Used as the filename under ``{cache_dir}/.rank_handoff/`` so rank-0 can
+    publish its chosen ``run_dir`` and other ranks can read the same value
+    instead of each generating their own.
+
+    Returns ``None`` for single-process invocations (no DDP env vars set) —
+    in that case no handoff is needed.
+
+    The key is intentionally identical for every rank in the same launch
+    AND distinct between concurrent launches:
+
+    * SLURM (batch / array) — keyed on ``SLURM_JOB_ID[_TASK_ID]``.
+    * ``torchrun`` / torchelastic — keyed on ``TORCHELASTIC_RUN_ID``.
+    * Local DDP via Lightning's ``SubprocessScriptLauncher`` — keyed on
+      ``MASTER_ADDR:MASTER_PORT`` plus the launcher's process group id, so
+      two parallel local-DDP launches on the same machine don't collide
+      even if they happen to pick the same MASTER_PORT.
+    """
+    job = os.environ.get("SLURM_JOB_ID")
+    if job:
+        task = os.environ.get("SLURM_ARRAY_TASK_ID")
+        return f"slurm-{job}_{task}" if task is not None else f"slurm-{job}"
+    er = os.environ.get("TORCHELASTIC_RUN_ID")
+    if er:
+        return f"elastic-{er}"
+    addr = os.environ.get("MASTER_ADDR")
+    port = os.environ.get("MASTER_PORT")
+    if addr and port:
+        try:
+            pgid = str(os.getpgid(0))
+        except OSError:
+            pgid = "nopgid"
+        return f"local-{addr}-{port}-{pgid}"
+    return None
+
+
+# Rank-N waits up to this many seconds for rank-0 to publish run_dir before
+# falling back to local resolution. Generous to absorb slow NFS mkdir + the
+# actual time rank-0 spends in `_try_restore_run_dir`. Override via env var
+# `SPT_RANK_HANDOFF_TIMEOUT_S` if the cluster's NFS is unusually slow.
+try:
+    _RANK_HANDOFF_TIMEOUT_S = float(
+        os.environ.get("SPT_RANK_HANDOFF_TIMEOUT_S", "60.0")
+    )
+except ValueError:
+    _RANK_HANDOFF_TIMEOUT_S = 60.0
+_RANK_HANDOFF_POLL_S = 0.05
 
 
 class _RunDirCallback(Callback):
@@ -391,11 +467,57 @@ class Manager(submitit.helpers.Checkpointable):
         """
         cfg = get_config()
         if cfg.cache_dir is None:
+            logging.info(
+                "  cache_dir is not configured — falling back to "
+                "Trainer.default_root_dir for run_dir."
+            )
             return None
 
         cache_dir = Path(os.path.expanduser(cfg.cache_dir)).resolve()
+        log_header("RunDirectory")
+        logging.info(f"  cache_dir = {cache_dir}")
 
-        # Try to restore from a previous run (requeue)
+        # ----- DDP coordination ------------------------------------------------
+        # `_resolve_run_dir` runs once per rank (each rank is its own process at
+        # this point — Trainer/Strategy aren't built yet). To avoid every rank
+        # generating its own uuid (and writing its own .slurm_index entry,
+        # last-writer-wins), rank-0 picks the dir and publishes it to a shared
+        # handoff file; non-zero ranks block on that file and adopt it.
+        #
+        # Lightning's `rank_zero_only.rank` is the source of truth: it's
+        # initialised at import time from the same env vars (`RANK`,
+        # `SLURM_PROCID`, ...) that DDP launchers set, and reused by every
+        # `@rank_zero_only`-gated logger we ship — keeping detection consistent.
+        launch_key = _ddp_launch_key()
+        rank = int(getattr(rank_zero_only, "rank", 0) or 0)
+        is_rank_zero = rank == 0
+        logging.info(
+            f"  ddp: launch_key={launch_key or '(single-process)'} "
+            f"rank={rank} is_rank_zero={is_rank_zero}"
+        )
+
+        if launch_key is not None and not is_rank_zero:
+            adopted = self._wait_for_rank_zero_handoff(cache_dir, launch_key)
+            if adopted is not None:
+                self._run_dir = adopted
+                self._run_id = adopted.name
+                log_header(f"RunDirectory (rank {rank}, adopted from rank-0)")
+                logging.info(f"  run_dir: {self._run_dir}")
+                logging.info(f"  run_id:  {self._run_id}")
+                return self._run_dir
+            # Timeout — fall through. We log loudly inside the helper. Falling
+            # back to local resolution is safer than crashing because only
+            # rank-0 actually writes via @rank_zero_only loggers; the worst
+            # case is an orphaned empty rank-N dir.
+            logging.warning(
+                f"! Falling back to local run_dir resolution on rank {rank} — "
+                "metrics/sidecar/media won't write here (rank-0 handles those) "
+                "but ModelCheckpoint paths may diverge."
+            )
+
+        # Try to restore from a previous run. Raises RuntimeError if SLURM
+        # signals a requeue but the index is missing or stale (caller should
+        # propagate — silent fallback would lose history).
         restored = self._try_restore_run_dir(cache_dir)
         if restored is not None:
             self._run_dir = restored
@@ -403,9 +525,11 @@ class Manager(submitit.helpers.Checkpointable):
             log_header("RunDirectory (restored)")
             logging.info(f"  run_dir: {self._run_dir}")
             logging.info(f"  run_id:  {self._run_id}")
+            if launch_key is not None and is_rank_zero:
+                self._publish_rank_zero_handoff(cache_dir, launch_key, restored)
             return self._run_dir
 
-        # Fresh run
+        # Fresh run — generate a new uuid and create the dir.
         now = datetime.now()
         run_id = _generate_run_id()
         run_dir = (
@@ -417,45 +541,211 @@ class Manager(submitit.helpers.Checkpointable):
         )
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write sidecar so requeue can find this directory later
+        # Write sidecar so a future invocation that explicitly receives
+        # the ckpt_path can find this directory via Strategy 1.
         meta = {"run_dir": str(run_dir), "run_id": run_id}
         (run_dir / _RUN_META_FILENAME).write_text(json.dumps(meta))
 
+        # Record SLURM-key → run_dir mapping so a SLURM-requeued process
+        # finds us via Strategy 2. The index is overwritten on each fresh
+        # run, but the LOOKUP is gated on SLURM_RESTART_COUNT ≥ 1, so
+        # interactive re-invocations write but never read — and therefore
+        # always get fresh dirs.
+        slurm_key = _slurm_session_key()
+        index_msg = "(no SLURM, skipped)"
+        if slurm_key is not None:
+            idx_dir = cache_dir / ".slurm_index"
+            try:
+                idx_dir.mkdir(parents=True, exist_ok=True)
+                (idx_dir / slurm_key).write_text(str(run_dir))
+                index_msg = f"{idx_dir / slurm_key} → {run_dir}"
+            except OSError as exc:
+                index_msg = f"FAILED to write index: {exc}"
+                logging.warning(f"! Could not record SLURM index: {exc}")
+
         self._run_dir = run_dir
         self._run_id = run_id
-        log_header("RunDirectory")
-        logging.info(f"  run_dir: {self._run_dir}")
-        logging.info(f"  run_id:  {self._run_id}")
+
+        # Publish for non-zero ranks waiting on us. Done LAST so the published
+        # path is fully usable (mkdir done, run_meta.json written, .slurm_index
+        # updated) by the time another rank picks it up.
+        if launch_key is not None and is_rank_zero:
+            self._publish_rank_zero_handoff(cache_dir, launch_key, run_dir)
+
+        log_header("RunDirectory: fresh")
+        logging.info(f"  run_dir          = {self._run_dir}")
+        logging.info(f"  run_id (uuid)    = {self._run_id}")
+        logging.info(f"  SLURM index      = {index_msg}")
+        logging.info(
+            "  → future SLURM requeue (SLURM_RESTART_COUNT ≥ 1) for the same "
+            "job/task will resume into this directory."
+        )
         return self._run_dir
+
+    # -- DDP rank-0 handoff (used by `_resolve_run_dir`) -----------------------
+
+    @staticmethod
+    def _handoff_path(cache_dir: Path, launch_key: str) -> Path:
+        return cache_dir / ".rank_handoff" / launch_key
+
+    def _publish_rank_zero_handoff(
+        self, cache_dir: Path, launch_key: str, run_dir: Path
+    ) -> None:
+        """Atomically write rank-0's chosen ``run_dir`` for non-zero ranks.
+
+        Atomic via temp+``replace`` so a rank-N reader never observes a
+        partially-written file. The target path is naturally idempotent: if a
+        previous launch with the same key crashed, this rewrite stomps it.
+        """
+        handoff = self._handoff_path(cache_dir, launch_key)
+        try:
+            handoff.parent.mkdir(parents=True, exist_ok=True)
+            tmp = handoff.with_name(handoff.name + ".tmp")
+            tmp.write_text(str(run_dir))
+            tmp.replace(handoff)
+            logging.info(f"  rank-0 published handoff → {handoff}")
+        except OSError as exc:
+            logging.warning(f"! Could not publish rank-handoff to {handoff}: {exc}")
+
+    def _wait_for_rank_zero_handoff(
+        self, cache_dir: Path, launch_key: str
+    ) -> Optional[Path]:
+        """Block (poll) until rank-0 has published a usable ``run_dir``.
+
+        Returns the published path, or ``None`` on timeout. The validity check
+        (``is_dir()``) means rank-N never adopts a dangling pointer left over
+        from a stale prior launch with the same key.
+        """
+        handoff = self._handoff_path(cache_dir, launch_key)
+        deadline = time.monotonic() + _RANK_HANDOFF_TIMEOUT_S
+        logged_waiting = False
+        while time.monotonic() < deadline:
+            try:
+                if handoff.is_file():
+                    candidate = handoff.read_text().strip()
+                    if candidate and Path(candidate).is_dir():
+                        return Path(candidate)
+                    # Pointer present but invalid (rank-0 still mid-write or
+                    # stale crashed launch). Keep polling — rank-0 may rewrite.
+            except OSError:
+                pass
+            if not logged_waiting:
+                logging.info(
+                    f"  waiting for rank-0 handoff at {handoff} "
+                    f"(timeout {_RANK_HANDOFF_TIMEOUT_S:.0f}s)"
+                )
+                logged_waiting = True
+            time.sleep(_RANK_HANDOFF_POLL_S)
+        logging.warning(
+            f"! rank-0 handoff timed out after {_RANK_HANDOFF_TIMEOUT_S:.0f}s "
+            f"({handoff} never appeared with a valid dir)"
+        )
+        return None
 
     def _try_restore_run_dir(self, cache_dir: Path) -> Optional[Path]:
         """Attempt to find a previous run directory for this job.
 
-        Checks two strategies:
+        Two strategies, each loudly logged so the user can follow exactly
+        what's happening at startup:
+
             1. Sidecar next to ``ckpt_path`` (explicit checkpoint from user).
-            2. Glob for the deterministic run_id in the cache_dir (requeue
-               with SLURM_JOB_ID / TORCHELASTIC_RUN_ID — no ckpt_path needed).
+            2. SLURM requeue lookup, fires only when ``SLURM_RESTART_COUNT ≥ 1``.
+               The lookup key is the SLURM job/array-task id; the value is
+               the run dir recorded by the original invocation in
+               ``cache_dir/.slurm_index/<key>``. Interactive ``srun --pty``
+               reruns never bump RESTART_COUNT so they don't even consult
+               the index — each invocation gets a fresh dir.
+
+        Raises ``RuntimeError`` if SLURM signals a requeue
+        (``SLURM_RESTART_COUNT ≥ 1``) but the index file is missing or
+        points at a directory that no longer exists. Silently falling back
+        to a fresh dir in this case would lose the prior training history
+        and produce surprising re-trains, so we surface it loudly instead.
         """
+        log_header("RunDirectory: restoration probe")
+        slurm_key = _slurm_session_key()
+        restart = os.environ.get("SLURM_RESTART_COUNT", "0")
+        logging.info(f"  SLURM_RESTART_COUNT = {restart}")
+        logging.info(f"  SLURM session key   = {slurm_key or '(no SLURM)'}")
+        logging.info(f"  ckpt_path           = {self.ckpt_path}")
+
         # Strategy 1: sidecar next to ckpt_path
         if self.ckpt_path is not None and self.ckpt_path.is_file():
             meta_path = self.ckpt_path.parent / _RUN_META_FILENAME
             if meta_path.is_file():
+                logging.info(f"  Strategy 1: ckpt-sidecar found at {meta_path}")
                 try:
                     meta = json.loads(meta_path.read_text())
                     run_dir = Path(meta["run_dir"])
                     if run_dir.is_dir():
+                        logging.success(
+                            f"  → reusing run_dir from ckpt sidecar: {run_dir}"
+                        )
                         return run_dir
+                    logging.warning(
+                        f"  ! Sidecar pointed at {run_dir} but the directory "
+                        "is gone; falling through to next strategy."
+                    )
                 except Exception as exc:
-                    logging.warning(f"! Could not read {meta_path}: {exc}")
+                    logging.warning(
+                        f"  ! Could not parse {meta_path}: {exc}; "
+                        "falling through to next strategy."
+                    )
+            else:
+                logging.info(
+                    "  Strategy 1: no run_meta.json next to ckpt_path; skipping."
+                )
+        else:
+            logging.info("  Strategy 1: no usable ckpt_path; skipping.")
 
-        # Strategy 2: search by deterministic run_id (SLURM/torchrun requeue)
-        run_id = _generate_run_id()
-        matches = sorted(cache_dir.glob(f"runs/*/*/{run_id}"))
-        if matches:
-            # Take the most recent (last sorted by date/time path)
-            return matches[-1]
+        # Strategy 2: SLURM requeue index lookup
+        if not _is_slurm_requeue():
+            logging.info(
+                "  Strategy 2: skipped — SLURM_RESTART_COUNT < 1, this is a "
+                "fresh invocation (or non-SLURM)."
+            )
+            return None
 
-        return None
+        if slurm_key is None:
+            logging.warning(
+                "  Strategy 2: SLURM_RESTART_COUNT ≥ 1 but SLURM_JOB_ID is "
+                "not set. Cannot resolve a requeue without a session key — "
+                "treating as fresh run."
+            )
+            return None
+
+        idx_file = cache_dir / ".slurm_index" / slurm_key
+        logging.info(f"  Strategy 2: checking SLURM index → {idx_file}")
+        if not idx_file.is_file():
+            raise RuntimeError(
+                f"SLURM reports this is a requeue (SLURM_RESTART_COUNT="
+                f"{restart}) for job key '{slurm_key}', but no index file "
+                f"exists at {idx_file}. The original run's index entry was "
+                "never written (or was deleted). Refusing to silently start "
+                "a fresh run — that would lose the prior training history. "
+                "If you intended a fresh run, manually clear "
+                "SLURM_RESTART_COUNT or remove the requeue checkpoint."
+            )
+        try:
+            recorded = Path(idx_file.read_text().strip())
+        except OSError as exc:
+            raise RuntimeError(
+                f"SLURM requeue (key='{slurm_key}'): index file {idx_file} "
+                f"exists but could not be read: {exc}."
+            ) from exc
+
+        if not recorded.is_dir():
+            raise RuntimeError(
+                f"SLURM requeue (key='{slurm_key}'): index points at "
+                f"{recorded}, but that directory no longer exists. Manual "
+                "deletion or a stale index entry. Either restore the dir "
+                f"or delete the index entry ({idx_file}) to start fresh."
+            )
+
+        logging.success(
+            f"  → reusing run_dir from SLURM index ({slurm_key}): {recorded}"
+        )
+        return recorded
 
     def _inject_run_dir_into_trainer_config(self, run_dir: Path) -> None:
         """Set ``default_root_dir`` in the trainer config before instantiation.

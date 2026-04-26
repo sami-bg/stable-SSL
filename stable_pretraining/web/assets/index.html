@@ -55,6 +55,13 @@
   </aside>
   <main id="charts"><div class="empty-state">select a run on the left to plot its metrics</div></main>
 </div>
+<div id="scan-progress" hidden>
+  <div class="scan-progress-card">
+    <div class="scan-progress-title">loading runs<span id="scan-progress-dots"></span></div>
+    <div class="scan-progress-bar"><div id="scan-progress-fill"></div></div>
+    <div id="scan-progress-text">discovering...</div>
+  </div>
+</div>
 <div id="detail-overlay" hidden>
   <div id="detail-card" role="dialog" aria-modal="true" aria-labelledby="detail-title">
     <div class="detail-header">

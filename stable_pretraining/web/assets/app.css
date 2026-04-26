@@ -245,6 +245,13 @@ body {
   border: 1px solid var(--dot-border);
 }
 .run-item:not(.visible) .run-dot { opacity: 0.35; }
+.run-item.loading .run-dot {
+  animation: spt-pulse 1s ease-in-out infinite;
+}
+@keyframes spt-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1.0; }
+}
 .run-name {
   flex: 1; overflow: hidden;
   white-space: nowrap; text-overflow: ellipsis;
@@ -669,3 +676,39 @@ body {
 .kv-val.num { color: var(--warn); }
 .kv-val.bool { color: var(--info); }
 .kv-val.null { color: var(--muted-2); font-style: italic; }
+
+/* --- initial-scan loading overlay -------------------------------------- */
+#scan-progress {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+}
+/* HTML's `hidden` attribute normally implies `display: none`, but the id
+ * selector above wins on specificity. Re-assert the hidden semantics. */
+#scan-progress[hidden] { display: none; }
+.scan-progress-card {
+  background: var(--panel, #1a1a1f);
+  color: var(--text, #eee);
+  border: 1px solid var(--border, #2a2a30);
+  border-radius: 8px;
+  padding: 18px 22px;
+  min-width: 320px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+.scan-progress-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.scan-progress-bar {
+  height: 8px;
+  background: var(--border, #2a2a30);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+#scan-progress-fill {
+  height: 100%;
+  background: var(--accent, #3a8dde);
+  width: 0%;
+  transition: width 200ms ease-out;
+}
+#scan-progress-text { font-size: 12px; color: var(--muted, #999); font-variant-numeric: tabular-nums; }

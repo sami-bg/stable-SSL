@@ -118,12 +118,69 @@
     renderRunList();
   }
 
+  // Stream-fetch metrics via NDJSON. The server emits one JSON object per
+  // line; each object is either a chunk of new points or {done:true}.
+  // We append into state.metrics as chunks arrive and re-render every few
+  // chunks, so the chart paints within a few hundred ms even for runs with
+  // huge metrics.csv files.
   async function fetchMetrics(runId) {
+    // Reset any prior data for this run; we'll rebuild as chunks stream in.
+    state.metrics.set(runId, { metrics: {} });
+    let resp;
     try {
-      const m = await fetchJSON(`/api/metrics?run_id=${encodeURIComponent(runId)}`);
-      state.metrics.set(runId, m);
+      resp = await fetch(
+        `/api/metrics-stream?run_id=${encodeURIComponent(runId)}`,
+        { cache: 'no-store' },
+      );
     } catch (e) {
-      console.warn('fetch metrics failed', runId, e);
+      console.warn('metrics-stream fetch failed', runId, e);
+      return;
+    }
+    if (!resp.ok || !resp.body) {
+      console.warn('metrics-stream not ok', runId, resp.status);
+      return;
+    }
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder();
+    const target  = state.metrics.get(runId).metrics;
+    let buf  = '';
+    let chunksSinceRender = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          let obj;
+          try { obj = JSON.parse(line); } catch (e) { continue; }
+          if (obj.done) continue;
+          if (!obj.metrics) continue;
+          for (const [name, m] of Object.entries(obj.metrics)) {
+            const t = target[name] || (target[name] = { step: [], epoch: [], y: [] });
+            // Use direct loops (not push-spread) so we don't blow the stack
+            // for very large chunks.
+            const ms = m.step  || [];
+            const me = m.epoch || [];
+            const my = m.y     || [];
+            for (let i = 0; i < my.length; i++) {
+              t.step.push(ms[i]);
+              t.epoch.push(me[i]);
+              t.y.push(my[i]);
+            }
+          }
+          chunksSinceRender++;
+          if (chunksSinceRender >= 1) {
+            chunksSinceRender = 0;
+            scheduleRerender();
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('metrics-stream read failed', runId, e);
     }
   }
 
@@ -437,7 +494,9 @@
   function makeRunRow(r) {
     const row = document.createElement('div');
     const visible = state.visible.has(r.run_id);
-    row.className = 'run-item' + (visible ? ' visible' : '');
+    const loading = _loading.has(r.run_id);
+    row.className =
+      'run-item' + (visible ? ' visible' : '') + (loading ? ' loading' : '');
     row.dataset.runId = r.run_id;
 
     const dot = document.createElement('div');
@@ -511,19 +570,36 @@
     el.replaceChildren(frag);
   }
 
+  // Run rows currently fetching their metrics/media. Used to render a
+  // 'loading' visual state synchronously on click — otherwise users get
+  // no feedback during the seconds-long fetch of a multi-MiB metrics CSV.
+  const _loading = new Set();
+
   async function toggleRun(id) {
     if (state.visible.has(id)) {
       state.visible.delete(id);
-    } else {
-      state.visible.add(id);
-      const tasks = [];
-      if (!state.metrics.has(id)) tasks.push(fetchMetrics(id));
-      if (!state.media.has(id)) {
-        const r = state.runs.get(id);
-        if (r && r.has_media) tasks.push(fetchMedia(id));
-        else state.media.set(id, []);
+      renderRunList();
+      scheduleRerender();
+      return;
+    }
+    state.visible.add(id);
+    const tasks = [];
+    if (!state.metrics.has(id)) tasks.push(fetchMetrics(id));
+    if (!state.media.has(id)) {
+      const r = state.runs.get(id);
+      if (r && r.has_media) tasks.push(fetchMedia(id));
+      else state.media.set(id, []);
+    }
+    if (tasks.length) {
+      _loading.add(id);
+      // Re-render synchronously so the row gets the 'loading' class
+      // before the await suspends the function.
+      renderRunList();
+      try {
+        await Promise.all(tasks);
+      } finally {
+        _loading.delete(id);
       }
-      if (tasks.length) await Promise.all(tasks);
     }
     renderRunList();
     scheduleRerender();
@@ -1598,6 +1674,17 @@
 
   function startSSE() {
     const es = new EventSource('/api/stream');
+    es.addEventListener('progress', async (ev) => {
+      let p;
+      try { p = JSON.parse(ev.data); } catch { return; }
+      applyScanStatus(p);
+      // The phase flips to 'idle' once the initial scan finishes; that's
+      // our cue to fetch the now-populated run list and render the overview.
+      if (p && p.initial_done) {
+        try { await refreshRuns(); } catch (e) { console.warn(e); }
+        scheduleRerender();
+      }
+    });
     es.addEventListener('update', async (ev) => {
       let payload;
       try { payload = JSON.parse(ev.data); } catch { return; }
@@ -1725,13 +1812,66 @@
     window.addEventListener('resize', onResize);
   }
 
+  // ---- scan progress overlay -------------------------------------------
+  // The backend's initial walk over a large NFS run tree can take many
+  // seconds. We render a small overlay so the page is interactive and the
+  // user has feedback. The overlay is driven by:
+  //   - GET /api/scan-status   (polled once on load)
+  //   - SSE 'progress' events  (pushed during the initial scan)
+  // When phase === 'idle' (scan finished) we hide the overlay and call
+  // refreshRuns() to populate the list.
+  function applyScanStatus(p) {
+    const overlay = document.getElementById('scan-progress');
+    if (!overlay) return;
+    if (!p || p.phase === 'idle' || p.initial_done) {
+      overlay.hidden = true;
+      return;
+    }
+    overlay.hidden = false;
+    const fill = document.getElementById('scan-progress-fill');
+    const txt  = document.getElementById('scan-progress-text');
+    if (p.phase === 'discovering') {
+      // The total directory count is unknown during discovery, so we use an
+      // indeterminate-but-growing bar. Show the running count of sidecars
+      // already found so the user knows it isn't stuck.
+      fill.style.width = '5%';
+      const found = (p.total || 0).toLocaleString();
+      txt.textContent  = `discovering runs (walking directory tree)... ${found} found so far`;
+    } else if (p.phase === 'loading') {
+      const pct = p.total > 0 ? Math.min(100, (100 * p.done) / p.total) : 0;
+      fill.style.width = pct.toFixed(1) + '%';
+      txt.textContent  = `loading ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct.toFixed(0)}%)`;
+    } else {
+      fill.style.width = '100%';
+      txt.textContent  = `${p.phase}...`;
+    }
+  }
+
   // ---- init -------------------------------------------------------------
 
   async function main() {
     wireControls();
     initTheme();
-    await refreshRuns();
+    // Start SSE first so we don't miss progress events emitted between the
+    // status fetch and the first scan-tick.
     startSSE();
+    try {
+      const status = await fetchJSON('/api/scan-status');
+      applyScanStatus(status);
+      if (status && status.initial_done) {
+        await refreshRuns();
+      }
+      // If still scanning, the SSE 'progress' handler will hide the overlay
+      // and refresh the run list when phase flips to 'idle'.
+    } catch (e) {
+      // Older servers without /api/scan-status: fall back to old behaviour.
+      console.warn('scan-status unavailable, falling back', e);
+      await refreshRuns();
+    }
+    // Render the stat-card overview immediately. Without this, #charts keeps
+    // the static fallback empty-state from the HTML until the user toggles
+    // a run on/off — which makes the landing screen look broken.
+    scheduleRerender();
   }
 
   main();
