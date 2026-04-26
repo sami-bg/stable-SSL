@@ -124,8 +124,22 @@
   // chunks, so the chart paints within a few hundred ms even for runs with
   // huge metrics.csv files.
   async function fetchMetrics(runId) {
-    // Reset any prior data for this run; we'll rebuild as chunks stream in.
-    state.metrics.set(runId, { metrics: {} });
+    // Build the new payload in a *separate* dict and only commit it to
+    // ``state.metrics`` once the stream completes. If we wipe ``state.metrics``
+    // up-front, the chart blanks for the duration of the stream — the user
+    // sees the page flash on every SSE update during training.
+    // For the first-ever fetch (no existing data) we still commit early so
+    // progressive paint works; the live-fill UX is only relevant when we
+    // have nothing to show yet.
+    const isFirst = !state.metrics.has(runId);
+    let target;
+    if (isFirst) {
+      state.metrics.set(runId, { metrics: {} });
+      target = state.metrics.get(runId).metrics;
+    } else {
+      // Re-stream into a buffer; replace at the end.
+      target = {};
+    }
     let resp;
     try {
       resp = await fetch(
@@ -142,7 +156,6 @@
     }
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
-    const target  = state.metrics.get(runId).metrics;
     let buf  = '';
     let chunksSinceRender = 0;
     try {
@@ -161,8 +174,8 @@
           if (!obj.metrics) continue;
           for (const [name, m] of Object.entries(obj.metrics)) {
             const t = target[name] || (target[name] = { step: [], epoch: [], y: [] });
-            // Use direct loops (not push-spread) so we don't blow the stack
-            // for very large chunks.
+            // Direct push loop — push-spread blows the stack for very
+            // large chunks (5k+ points × N metrics).
             const ms = m.step  || [];
             const me = m.epoch || [];
             const my = m.y     || [];
@@ -173,7 +186,8 @@
             }
           }
           chunksSinceRender++;
-          if (chunksSinceRender >= 1) {
+          if (isFirst && chunksSinceRender >= 1) {
+            // First fetch: live-fill the chart as chunks arrive.
             chunksSinceRender = 0;
             scheduleRerender();
           }
@@ -181,6 +195,11 @@
       }
     } catch (e) {
       console.warn('metrics-stream read failed', runId, e);
+    }
+    if (!isFirst) {
+      // Commit the buffered payload atomically so the chart doesn't blink.
+      state.metrics.set(runId, { metrics: target });
+      scheduleRerender();
     }
   }
 
@@ -545,6 +564,29 @@
       `${state.runs.size} run${state.runs.size === 1 ? '' : 's'}` +
       (filtered.length !== state.runs.size ? ` (${filtered.length} shown)` : '');
 
+    // Skip rebuilding the sidebar DOM when the *structure* (group keys,
+    // run order, run count) hasn't changed. Background SSE updates fire
+    // every few seconds during training; rebuilding 2 000+ rows on every
+    // tick is what causes the visible page-flash. Per-row state changes
+    // that affect appearance (visibility, loading-pulse) are repainted by
+    // touching only the affected row's classList below.
+    const layoutKey = JSON.stringify({
+      groupKeys: groups.map(g => [g.key, g.runs.map(r => r.run_id)]),
+      ungrouped: ungrouped.map(r => r.run_id),
+      open: [...state.openSidebarGroups].sort(),
+    });
+    if (state._lastListKey === layoutKey) {
+      // Same layout — just sync the per-row visible/loading classes.
+      for (const r of filtered) {
+        const row = el.querySelector(`.run-item[data-run-id="${CSS.escape(r.run_id)}"]`);
+        if (!row) continue;
+        row.classList.toggle('visible', state.visible.has(r.run_id));
+        row.classList.toggle('loading', _loading.has(r.run_id));
+      }
+      return;
+    }
+    state._lastListKey = layoutKey;
+
     const frag = document.createDocumentFragment();
     // Real groups first, collapsed by default unless the user opened them.
     for (const { key, runs } of groups) {
@@ -767,6 +809,7 @@
       state.charts.clear();
       for (const { panel } of state.mediaPanels.values()) panel.remove();
       state.mediaPanels.clear();
+      state._lastTreeKey = null; // force rebuild next time we leave overview
       renderOverview(root);
       return;
     }
@@ -788,20 +831,31 @@
       }
     }
 
-    // Build a fresh tree DOM each render — panels are reused (state.charts
-    // and state.mediaPanels own them), so this is just a re-parenting walk.
-    const tree = buildMetricTree(allTags);
-    const container = document.createElement('div');
-    container.className = 'metric-tree';
-    attachMetricTree(container, tree, '', mediaTags);
-    root.replaceChildren(container);
+    // Skip the full tree rebuild when nothing structurally changed.
+    // Streaming-metrics chunks fire scheduleRerender many times per
+    // second; re-parenting a playing ``<video>`` (or just shifting page
+    // layout) confuses the browser's scroll anchoring and makes the page
+    // jump to the top while the user is interacting with media.
+    // Only rebuild when the *set* of tags or grouping changed.
+    const treeKey = JSON.stringify({
+      tags: allTags.slice().sort(),
+      groups: state.groupBy ?? null,
+    });
+    if (state._lastTreeKey !== treeKey) {
+      const tree = buildMetricTree(allTags);
+      const container = document.createElement('div');
+      container.className = 'metric-tree';
+      attachMetricTree(container, tree, '', mediaTags);
+      root.replaceChildren(container);
+      state._lastTreeKey = treeKey;
 
-    // After re-parenting, sizes may have changed. Resize each plot.
-    for (const entry of state.charts.values()) {
-      if (entry.plot) {
-        const body = entry.panel.querySelector('.chart-body');
-        const w = body.clientWidth;
-        if (w) entry.plot.setSize({ width: w, height: 240 });
+      // After re-parenting, sizes may have changed. Resize each plot.
+      for (const entry of state.charts.values()) {
+        if (entry.plot) {
+          const body = entry.panel.querySelector('.chart-body');
+          const w = body.clientWidth;
+          if (w) entry.plot.setSize({ width: w, height: 240 });
+        }
       }
     }
 
@@ -916,10 +970,19 @@
   }
 
   function renderMediaBody(entry, perRun) {
+    // Update row DOM **in place** wherever possible. Recreating the
+    // ``<img>`` / ``<video>`` element on every slider tick caused the
+    // browser to drop the loaded media, collapse the panel to zero
+    // height while the new src loads, and reflow the page — which the
+    // user sees as a jump back to the top. Reusing the existing element
+    // and just swapping ``.src`` keeps dimensions stable across ticks.
     const body = entry.panel.querySelector('.media-body');
-    const frag = document.createDocumentFragment();
+    if (!entry.rowEls) entry.rowEls = new Map(); // runId -> {row, head, stepEl, mediaEl, type, captionEl}
 
+    const seen = new Set();
     for (const { runId, events } of perRun) {
+      seen.add(runId);
+
       // Latest event with step <= entry.step (events are step-ascending).
       let chosen = null;
       for (const e of events) {
@@ -927,69 +990,106 @@
         else break;
       }
 
-      const row = document.createElement('div');
-      row.className = 'media-row';
-
-      const head = document.createElement('div');
-      head.className = 'media-row-head';
-      const dot = document.createElement('span');
-      dot.className = 'run-dot';
-      dot.style.background = runColor(runId);
-      head.appendChild(dot);
-      const lab = document.createElement('span');
-      lab.className = 'media-row-label';
-      lab.textContent = runId;
-      lab.title = runId;
-      head.appendChild(lab);
-      if (chosen) {
-        const stp = document.createElement('span');
-        stp.className = 'media-row-step';
-        stp.textContent = `@${chosen.step}`;
-        head.appendChild(stp);
+      let r = entry.rowEls.get(runId);
+      if (!r) {
+        const row = document.createElement('div');
+        row.className = 'media-row';
+        const head = document.createElement('div');
+        head.className = 'media-row-head';
+        const dot = document.createElement('span');
+        dot.className = 'run-dot';
+        dot.style.background = runColor(runId);
+        head.appendChild(dot);
+        const lab = document.createElement('span');
+        lab.className = 'media-row-label';
+        lab.textContent = runId;
+        lab.title = runId;
+        head.appendChild(lab);
+        const stepEl = document.createElement('span');
+        stepEl.className = 'media-row-step';
+        head.appendChild(stepEl);
+        row.appendChild(head);
+        body.appendChild(row);
+        r = { row, head, stepEl, mediaEl: null, type: null, captionEl: null };
+        entry.rowEls.set(runId, r);
       }
-      row.appendChild(head);
 
       if (chosen) {
+        r.stepEl.textContent = `@${chosen.step}`;
         const url = `/api/media-file?run_id=${encodeURIComponent(runId)}&path=${encodeURIComponent(chosen.path)}`;
-        const previousUrl = entry.lastUrls.get(runId);
-        let mediaEl;
-        if (chosen.type === 'video') {
-          mediaEl = document.createElement('video');
-          mediaEl.controls = true;
-          mediaEl.preload = 'metadata';
-          mediaEl.muted = true;
-          mediaEl.playsInline = true;
-          mediaEl.src = url;
+        // Reuse the existing media element when its type matches; just
+        // swap src. We compare against a custom ``dataset.spurl`` rather
+        // than ``mediaEl.src`` — the browser canonicalises ``.src`` to an
+        // absolute URL so naive equality always fails, and re-setting the
+        // src on a playing ``<video>`` restarts it from frame 0 (the "bleep"
+        // the user noticed when audio cuts off).
+        if (r.mediaEl && r.type === chosen.type) {
+          if (r.mediaEl.dataset.spurl !== url) {
+            r.mediaEl.src = url;
+            r.mediaEl.dataset.spurl = url;
+            if (chosen.type === 'image') {
+              r.mediaEl.alt = `${runId} @ step ${chosen.step}`;
+            }
+          }
         } else {
-          mediaEl = document.createElement('img');
-          mediaEl.loading = 'lazy';
-          mediaEl.decoding = 'async';
-          mediaEl.alt = `${runId} @ step ${chosen.step}`;
+          if (r.mediaEl) r.mediaEl.remove();
+          let mediaEl;
+          if (chosen.type === 'video') {
+            mediaEl = document.createElement('video');
+            mediaEl.controls = true;
+            mediaEl.preload = 'metadata';
+            mediaEl.muted = true;
+            mediaEl.playsInline = true;
+          } else {
+            mediaEl = document.createElement('img');
+            mediaEl.loading = 'lazy';
+            mediaEl.decoding = 'async';
+            mediaEl.alt = `${runId} @ step ${chosen.step}`;
+          }
+          mediaEl.className = 'media-content';
           mediaEl.src = url;
+          mediaEl.dataset.spurl = url;
+          r.row.appendChild(mediaEl);
+          r.mediaEl = mediaEl;
+          r.type = chosen.type;
         }
-        mediaEl.className = 'media-content';
-        row.appendChild(mediaEl);
-        entry.lastUrls.set(runId, url);
-
+        // Caption (create / update / remove)
         if (chosen.caption) {
-          const cap = document.createElement('div');
-          cap.className = 'media-caption';
-          cap.textContent = chosen.caption;
-          row.appendChild(cap);
+          if (!r.captionEl) {
+            r.captionEl = document.createElement('div');
+            r.captionEl.className = 'media-caption';
+            r.row.appendChild(r.captionEl);
+          }
+          r.captionEl.textContent = chosen.caption;
+        } else if (r.captionEl) {
+          r.captionEl.remove();
+          r.captionEl = null;
         }
-        // Suppress unused-var lint; previousUrl is for future diff/skip.
-        void previousUrl;
+        entry.lastUrls.set(runId, url);
       } else {
-        const empty = document.createElement('div');
-        empty.className = 'media-empty';
-        empty.textContent = 'no data at this step';
-        row.appendChild(empty);
+        // No data at this step — clear any media + show placeholder text.
+        r.stepEl.textContent = '';
+        if (r.mediaEl) {
+          r.mediaEl.remove();
+          r.mediaEl = null;
+          r.type = null;
+        }
+        if (!r.captionEl) {
+          r.captionEl = document.createElement('div');
+          r.captionEl.className = 'media-empty';
+          r.row.appendChild(r.captionEl);
+        }
+        r.captionEl.textContent = 'no data at this step';
       }
-
-      frag.appendChild(row);
     }
 
-    body.replaceChildren(frag);
+    // Drop rows for runs that vanished from selection.
+    for (const [runId, r] of entry.rowEls) {
+      if (!seen.has(runId)) {
+        r.row.remove();
+        entry.rowEls.delete(runId);
+      }
+    }
   }
 
   function emaSmooth(ys, alpha) {
