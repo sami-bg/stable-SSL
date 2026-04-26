@@ -924,8 +924,12 @@ class Manager(submitit.helpers.Checkpointable):
             run_dir = str(Path(self._trainer.default_root_dir).resolve())
             run_id = _generate_run_id()
 
-        # Drop any pre-existing CSVLogger — RegistryLogger *is* a
-        # CSVLogger and would otherwise race on metrics.csv.
+        # Drop only ``CSVLogger`` instances that aren't us — RegistryLogger
+        # *is* a CSVLogger and the two would otherwise race on the same
+        # ``metrics.csv``. Anything else is kept as-is: a user who passes
+        # ``TensorBoardLogger`` (or ``logger=True`` which auto-creates one)
+        # gets to keep TB writing to its own ``lightning_logs/`` dir;
+        # ``WandbLogger``/``TrackioLogger``/etc. are obviously kept.
         self._trainer.loggers = [
             lgr
             for lgr in self._trainer.loggers
@@ -936,7 +940,12 @@ class Manager(submitit.helpers.Checkpointable):
         ]
 
         registry_logger = RegistryLogger(run_dir=run_dir, run_id=run_id)
-        self._trainer.loggers.append(registry_logger)
+        # Insert at index 0 so ``trainer.logger`` (the singular alias for
+        # ``loggers[0]``) resolves to RegistryLogger. Callbacks gating on
+        # ``hasattr(trainer.logger, "log_image")`` then route media through
+        # us, not whatever Lightning happens to put first (e.g. an
+        # auto-created ``TensorBoardLogger`` when ``logger`` was left unset).
+        self._trainer.loggers.insert(0, registry_logger)
 
         log_header("RegistryLogger")
         logging.info(f"  run_dir: {registry_logger.run_dir}")

@@ -475,7 +475,39 @@ class RunScanner:
         if cache_key is not None:
             cached = self._metrics_cache.get(run_id)
             if cached is not None and (cached[0], cached[1]) == cache_key:
-                yield {"chunk": 0, "metrics": cached[2]["metrics"]}
+                # Slice the cached payload into smaller chunks so the client
+                # still gets a progressive paint even on a warm cache hit.
+                # The server is fast here — slicing a few thousand floats is
+                # cheap — and the visual feel ("filling in") is what the
+                # user notices vs one big drop.
+                CHUNK_POINTS = 5000
+                full_metrics = cached[2]["metrics"]
+                # Build per-metric slices in lockstep so each chunk carries
+                # roughly CHUNK_POINTS total points across all metrics.
+                names = list(full_metrics.keys())
+                offsets = {n: 0 for n in names}
+                lengths = {n: len(full_metrics[n]["y"]) for n in names}
+                chunk_id = 0
+                while any(offsets[n] < lengths[n] for n in names):
+                    payload: dict[str, dict[str, list]] = {}
+                    remaining = CHUNK_POINTS
+                    for n in names:
+                        if remaining <= 0:
+                            break
+                        a = offsets[n]
+                        b = min(lengths[n], a + remaining)
+                        if b <= a:
+                            continue
+                        payload[n] = {
+                            "step": full_metrics[n]["step"][a:b],
+                            "epoch": full_metrics[n]["epoch"][a:b],
+                            "y": full_metrics[n]["y"][a:b],
+                        }
+                        offsets[n] = b
+                        remaining -= b - a
+                    if payload:
+                        yield {"chunk": chunk_id, "metrics": payload}
+                        chunk_id += 1
                 yield {"done": True}
                 return
 
