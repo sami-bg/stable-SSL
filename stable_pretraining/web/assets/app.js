@@ -23,9 +23,16 @@
     detailRunId: null,       // run currently shown in the modal
     detailFilter: '',
     filters: [],             // [{key, values: [string,...]}], AND across, OR within
-    collapsedMetrics: new Set(),  // metric tree paths currently collapsed
+    expandedMetrics: new Set(),  // metric tree paths the user has expanded (closed by default)
     openSidebarGroups: new Set(), // sidebar group keys the user has expanded
     theme: 'dark',
+    activeTab: 'figures',   // 'figures' | 'out' | 'err'
+    metricSearch: '',
+    // Cached per-run log discoveries: runId -> {streams, fetchedAt}
+    logsIndex: new Map(),
+    // Currently selected (runId, stream_id) for each kind, persisted across
+    // tab switches so the user doesn't lose their place.
+    logSelection: { out: null, err: null },  // null or {runId, streamId}
   };
 
   const SYNC_KEY = 'sptweb-x';
@@ -113,9 +120,11 @@
         state.runs.delete(id);
         state.metrics.delete(id);
         state.visible.delete(id);
+        state.logsIndex.delete(id);
       }
     }
     renderRunList();
+    updateHeaderStats();
   }
 
   // Stream-fetch metrics via NDJSON. The server emits one JSON object per
@@ -645,6 +654,10 @@
     }
     renderRunList();
     scheduleRerender();
+    if (state.activeTab === 'out' || state.activeTab === 'err') {
+      // Selection changed → log-stream options change.
+      fetchLogStreams(id).then(() => renderLogTab(state.activeTab));
+    }
   }
 
   async function setAllVisible(visible) {
@@ -669,6 +682,9 @@
     }
     renderRunList();
     scheduleRerender();
+    if (state.activeTab === 'out' || state.activeTab === 'err') {
+      refreshLogStreamsForVisibleRuns().then(() => renderLogTab(state.activeTab));
+    }
   }
 
   // ---- render: charts ---------------------------------------------------
@@ -690,7 +706,18 @@
       if (!m) continue;
       for (const k of Object.keys(m.metrics)) names.add(k);
     }
-    return [...names].sort();
+    const all = [...names].sort();
+    const q = (state.metricSearch || '').trim().toLowerCase();
+    if (!q) return all;
+    const filtered = all.filter(n => n.toLowerCase().includes(q));
+    // Update the "M of N matches" status if the input exists.
+    const status = document.getElementById('metric-search-status');
+    if (status) {
+      status.textContent = filtered.length === all.length
+        ? `${all.length}`
+        : `${filtered.length} / ${all.length} match`;
+    }
+    return filtered;
   }
 
   function visibleMediaTags() {
@@ -743,7 +770,8 @@
         const path = pathPrefix ? `${pathPrefix}/${item.key}` : item.key;
         const det = document.createElement('details');
         det.className = 'metric-group';
-        det.open = !state.collapsedMetrics.has(path);
+        // Closed by default; track explicit user expansion in the set.
+        det.open = state.expandedMetrics.has(path);
 
         const sm = document.createElement('summary');
         const lab = document.createElement('span');
@@ -760,8 +788,8 @@
         body.className = 'metric-group-body';
         det.appendChild(body);
         det.addEventListener('toggle', () => {
-          if (det.open) state.collapsedMetrics.delete(path);
-          else state.collapsedMetrics.add(path);
+          if (det.open) state.expandedMetrics.add(path);
+          else state.expandedMetrics.delete(path);
         });
 
         parent.appendChild(det);
@@ -1045,6 +1073,15 @@
             mediaEl.loading = 'lazy';
             mediaEl.decoding = 'async';
             mediaEl.alt = `${runId} @ step ${chosen.step}`;
+            // Click → open in fullscreen lightbox. Videos already have
+            // a native fullscreen button via ``controls``; this gives
+            // images parity.
+            mediaEl.addEventListener('click', () => {
+              const cap = chosen.caption
+                ? `${runId} @ step ${chosen.step} — ${chosen.caption}`
+                : `${runId} @ step ${chosen.step}`;
+              openLightbox(mediaEl.src, cap);
+            });
           }
           mediaEl.className = 'media-content';
           mediaEl.src = url;
@@ -1836,6 +1873,161 @@
     };
   }
 
+  // ---- image lightbox ---------------------------------------------------
+
+  function openLightbox(src, caption) {
+    const box = document.getElementById('image-lightbox');
+    const img = document.getElementById('lightbox-img');
+    const cap = document.getElementById('lightbox-caption');
+    if (!box || !img) return;
+    img.src = src;
+    img.alt = caption || '';
+    cap.textContent = caption || '';
+    box.hidden = false;
+  }
+
+  function closeLightbox() {
+    const box = document.getElementById('image-lightbox');
+    const img = document.getElementById('lightbox-img');
+    if (!box) return;
+    box.hidden = true;
+    if (img) img.removeAttribute('src');
+  }
+
+  // ---- header stats -----------------------------------------------------
+
+  function updateHeaderStats() {
+    const counts = { running: 0, completed: 0, failed: 0 };
+    for (const r of state.runs.values()) {
+      const s = r.status || 'unknown';
+      if (s in counts) counts[s] += 1;
+    }
+    for (const [k, v] of Object.entries(counts)) {
+      const el = document.querySelector(`#stat-${k} .n`);
+      if (el) el.textContent = String(v);
+    }
+  }
+
+  // ---- tabs -------------------------------------------------------------
+
+  function setActiveTab(name) {
+    if (!['figures', 'out', 'err'].includes(name)) return;
+    state.activeTab = name;
+    for (const btn of document.querySelectorAll('#tabs .tab')) {
+      btn.classList.toggle('active', btn.dataset.tab === name);
+    }
+    for (const pane of document.querySelectorAll('.tab-pane')) {
+      pane.classList.toggle('active', pane.id === `tab-${name}`);
+    }
+    if (name === 'out' || name === 'err') {
+      // Lazily fetch logs the first time the user opens a log tab.
+      refreshLogStreamsForVisibleRuns().then(() => renderLogTab(name));
+    }
+  }
+
+  // ---- logs -------------------------------------------------------------
+
+  async function fetchLogStreams(runId) {
+    try {
+      const data = await fetchJSON(`/api/logs?run_id=${encodeURIComponent(runId)}`);
+      state.logsIndex.set(runId, { streams: data.streams || [], fetchedAt: Date.now() });
+    } catch (e) {
+      state.logsIndex.set(runId, { streams: [], fetchedAt: Date.now() });
+    }
+  }
+
+  async function refreshLogStreamsForVisibleRuns() {
+    const ids = effectivelyVisible();
+    await Promise.all(ids.map(fetchLogStreams));
+  }
+
+  // Build the list of stream options for the active tab as
+  // [{value: "<runId>::<stream_id>", label: "<runId> — <stream label>"}, ...]
+  function buildLogOptions(kind) {
+    const opts = [];
+    for (const id of effectivelyVisible()) {
+      const idx = state.logsIndex.get(id);
+      if (!idx) continue;
+      for (const s of idx.streams) {
+        if (s.kind !== kind) continue;
+        opts.push({
+          value: `${id}::${s.stream_id}`,
+          label: `${id}  —  ${s.name}  (${formatBytes(s.size)})`,
+          runId: id,
+          streamId: s.stream_id,
+        });
+      }
+    }
+    return opts;
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KiB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+
+  async function renderLogTab(kind) {
+    const selectId = kind === 'err' ? 'logs-err-stream-selector' : 'logs-stream-selector';
+    const viewId   = kind === 'err' ? 'logs-err' : 'logs-out';
+    const sel  = document.getElementById(selectId);
+    const view = document.getElementById(viewId);
+    const opts = buildLogOptions(kind);
+
+    if (opts.length === 0) {
+      sel.innerHTML = '';
+      view.classList.add('empty');
+      view.textContent = effectivelyVisible().length === 0
+        ? 'select one or more runs on the left to view their logs.'
+        : `no .${kind} files were found for the selected run(s).`;
+      state.logSelection[kind] = null;
+      return;
+    }
+
+    // Restore prior selection if still valid; else default to the first.
+    const prior = state.logSelection[kind];
+    const priorVal = prior ? `${prior.runId}::${prior.streamId}` : null;
+    let active = opts.find(o => o.value === priorVal) || opts[0];
+
+    sel.innerHTML = '';
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      if (o.value === active.value) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    state.logSelection[kind] = { runId: active.runId, streamId: active.streamId };
+    await loadLogContent(kind);
+  }
+
+  async function loadLogContent(kind) {
+    const sel = state.logSelection[kind];
+    const viewId = kind === 'err' ? 'logs-err' : 'logs-out';
+    const view = document.getElementById(viewId);
+    if (!sel) {
+      view.classList.add('empty');
+      view.textContent = '';
+      return;
+    }
+    view.classList.remove('empty');
+    view.textContent = 'loading...';
+    try {
+      const r = await fetch(
+        `/api/log-content?run_id=${encodeURIComponent(sel.runId)}&stream_id=${encodeURIComponent(sel.streamId)}`,
+        { cache: 'no-store' },
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const txt = await r.text();
+      view.textContent = txt || '(empty)';
+      // Auto-scroll to the bottom (most recent output).
+      view.scrollTop = view.scrollHeight;
+    } catch (e) {
+      view.classList.add('empty');
+      view.textContent = `failed to load: ${e.message || e}`;
+    }
+  }
+
   function wireControls() {
     document.getElementById('run-search').addEventListener(
       'input',
@@ -1871,6 +2063,57 @@
       // Group key shows up in chart legends → rebuild charts.
       scheduleRerender();
     });
+
+    // Tabs
+    for (const btn of document.querySelectorAll('#tabs .tab')) {
+      btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+    }
+
+    // Lightbox: click outside the image (or on the close button) to dismiss.
+    const lightbox = document.getElementById('image-lightbox');
+    if (lightbox) {
+      lightbox.addEventListener('click', e => {
+        // Only close when clicking the backdrop, not the image itself.
+        if (e.target === lightbox) closeLightbox();
+      });
+      const closeBtn = document.getElementById('lightbox-close');
+      if (closeBtn) closeBtn.addEventListener('click', closeLightbox);
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        const box = document.getElementById('image-lightbox');
+        if (box && !box.hidden) closeLightbox();
+      }
+    });
+
+    // Metric search (debounced; force a tree rebuild because the set of
+    // visible metrics changes).
+    const ms = document.getElementById('metric-search');
+    if (ms) {
+      ms.addEventListener('input', debounce(e => {
+        state.metricSearch = e.target.value;
+        state._lastTreeKey = null; // force rebuild
+        scheduleRerender();
+      }, 80));
+    }
+
+    // Log tab selectors / refresh buttons
+    const outSel = document.getElementById('logs-stream-selector');
+    if (outSel) outSel.addEventListener('change', () => {
+      const [runId, streamId] = outSel.value.split('::');
+      state.logSelection.out = { runId, streamId };
+      loadLogContent('out');
+    });
+    const errSel = document.getElementById('logs-err-stream-selector');
+    if (errSel) errSel.addEventListener('change', () => {
+      const [runId, streamId] = errSel.value.split('::');
+      state.logSelection.err = { runId, streamId };
+      loadLogContent('err');
+    });
+    const outRefresh = document.getElementById('logs-refresh');
+    if (outRefresh) outRefresh.addEventListener('click', () => loadLogContent('out'));
+    const errRefresh = document.getElementById('logs-err-refresh');
+    if (errRefresh) errRefresh.addEventListener('click', () => loadLogContent('err'));
 
     document.getElementById('theme-toggle').addEventListener('click', () => {
       applyTheme(state.theme === 'dark' ? 'light' : 'dark');

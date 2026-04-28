@@ -3,17 +3,17 @@
 
 .. automodule:: stable_pretraining.data.transforms
 
-   
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       to_image
-   
+
    .. rubric:: Classes
 
    .. autosummary::
-   
+
       AdditiveGaussian
       CenterCrop
       ColorJitter
@@ -54,4 +54,3 @@
       UniformTemporalSubsample
       WrapTorchTransform
       random_seed
-   

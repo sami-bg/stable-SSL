@@ -62,6 +62,16 @@ class RunScanner:
         # Invalidated when the metrics.csv mtime or size changes.
         # run_id -> (mtime, size, parsed_dict, json_bytes_or_None)
         self._metrics_cache: dict[str, tuple[float, int, dict, Optional[bytes]]] = {}
+        # Per-run map of stream_id → resolved Path for the .out / .err / .log
+        # files discovered by ``logs_index``. Populated lazily and reused by
+        # ``log_content`` so reads don't have to walk the filesystem again.
+        self._log_paths: dict[str, dict[str, Path]] = {}
+        # Incremental-walk cache: directory path → (mtime, [child_subdirs],
+        # [child_sidecars]). On steady-state polls we ``stat`` each known
+        # directory; if its mtime is unchanged we reuse the cached child
+        # listings without a (NFS-expensive) ``readdir``. Only directories
+        # whose mtime has actually changed are re-walked.
+        self._walk_cache: dict[Path, tuple[float, list[Path], list[Path]]] = {}
 
     # ---- lifecycle ----
 
@@ -131,9 +141,22 @@ class RunScanner:
 
     # ---- scanning ----
 
-    @staticmethod
-    def _list_dir(d: Path) -> tuple[list[Path], list[Path]]:
-        """One ``readdir`` call. Returns (subdirs, sidecar_paths_in_dir)."""
+    def _list_dir(self, d: Path) -> tuple[list[Path], list[Path]]:
+        """Return (subdirs, sidecar_paths) for ``d``, mtime-cached.
+
+        On NFS each ``readdir`` is a network round-trip; ``stat`` on the
+        directory itself is much cheaper. By caching the prior listing
+        keyed on mtime we skip the readdir for every directory that hasn't
+        seen a child added/removed since the previous walk — which on a
+        big run tree is the vast majority of them.
+        """
+        try:
+            mtime = d.stat().st_mtime
+        except OSError:
+            return [], []
+        cached = self._walk_cache.get(d)
+        if cached is not None and cached[0] == mtime:
+            return cached[1], cached[2]
         subdirs: list[Path] = []
         sidecars: list[Path] = []
         try:
@@ -148,6 +171,7 @@ class RunScanner:
                         continue
         except OSError:
             pass
+        self._walk_cache[d] = (mtime, subdirs, sidecars)
         return subdirs, sidecars
 
     def _parallel_walk(
@@ -166,6 +190,7 @@ class RunScanner:
         ~5 Hz so the UI loading bar can show a live counter.
         """
         results: list[Path] = []
+        visited: set[Path] = {root}
         last_pub = time.monotonic()
         with ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="spt-walk"
@@ -180,7 +205,9 @@ class RunScanner:
                         continue
                     results.extend(sidecars)
                     for sd in subdirs:
-                        in_flight.add(exe.submit(self._list_dir, sd))
+                        if sd not in visited:
+                            visited.add(sd)
+                            in_flight.add(exe.submit(self._list_dir, sd))
                 if report_progress:
                     now = time.monotonic()
                     if now - last_pub >= 0.2:
@@ -189,6 +216,12 @@ class RunScanner:
                         )
                         self._publish("progress", self.progress_json())
                         last_pub = now
+        # Prune the walk cache: drop entries for dirs that no longer exist
+        # under ``root``. Keeps the cache footprint bounded as runs come and
+        # go (archived / moved / deleted).
+        for cached_dir in list(self._walk_cache.keys()):
+            if cached_dir not in visited:
+                self._walk_cache.pop(cached_dir, None)
         return results
 
     def _loop(self) -> None:
@@ -684,6 +717,185 @@ class RunScanner:
             pass
         return {"events": events}
 
+    def logs_index(self, run_id: str) -> Optional[dict]:
+        """Discover ``.out`` / ``.err`` / ``.log`` files for a run.
+
+        Search order:
+
+        1. Anything inside ``{run_dir}/`` matching ``*.out`` / ``*.err``.
+        2. Files in ``hp.output_dir`` (Hydra often points training logs here).
+        3. **submitit layout** (common for spt + slurm):
+
+           ``{output_dir}/../{sweep_id}_{task_id}/.submitit/{sweep_id}_{task_id}_{rank}_log.{out,err}``
+
+           ``sweep_id`` comes from the ``sweep:N`` tag and ``task_id``
+           from ``hp.slurm.task_id`` (or the trailing ``_<task>`` part
+           of ``run_id``). Multiple ranks are returned individually so
+           DDP runs get a per-rank selector.
+
+        Returns a dict ``{"streams": [{name, kind, rank, size, stream_id}, ...]}``
+        or ``None`` if the run is unknown.
+        """
+        with self._lock:
+            run = self._runs.get(run_id)
+        if run is None:
+            return None
+        # Single source of truth for path discovery — also reused by reads.
+        path_map = self._rediscover_log_paths(run, run.sidecar or {})
+        self._log_paths[run_id] = path_map
+        streams = []
+        for label, path in path_map.items():
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            kind = "err" if label.endswith(".err") or "_log.err" in path.name else "out"
+            rank: Optional[int] = None
+            # Names from the submitit branch are ``"rank N .out/.err"``.
+            if label.startswith("rank "):
+                try:
+                    rank = int(label.split()[1])
+                except (IndexError, ValueError):
+                    rank = None
+            streams.append(
+                {
+                    "name": label,
+                    "kind": kind,
+                    "rank": rank,
+                    "size": size,
+                    "stream_id": _safe_log_id(label),
+                }
+            )
+        # Sort: .out before .err; ranked streams first (low to high), then alpha.
+        streams.sort(
+            key=lambda s: (
+                0 if s["kind"] == "out" else 1,
+                s["rank"] is None,
+                s["rank"] if s["rank"] is not None else 0,
+                s["name"],
+            )
+        )
+        return {"streams": streams}
+
+    def log_content(
+        self, run_id: str, stream_id: str, max_bytes: int = 4 * 1024 * 1024
+    ) -> Optional[bytes]:
+        """Read the (last ``max_bytes`` of the) log identified by ``stream_id``.
+
+        Returns ``None`` if the run / stream is unknown. Truncates from the
+        front so the most recent output is preserved when the file exceeds
+        the cap.
+        """
+
+        def _find_path(paths_by_label: dict[str, Path]) -> Optional[Path]:
+            for label, p in paths_by_label.items():
+                if _safe_log_id(label) == stream_id:
+                    return p
+            return None
+
+        paths = self._log_paths.get(run_id) or {}
+        path = _find_path(paths)
+        if path is None:
+            # Run might have been added (or discovery cache cleared) after the
+            # last ``logs_index`` call — re-walk once and retry.
+            with self._lock:
+                run = self._runs.get(run_id)
+            if run is None:
+                return None
+            paths = self._rediscover_log_paths(run, run.sidecar or {})
+            self._log_paths[run_id] = paths
+            path = _find_path(paths)
+            if path is None:
+                return None
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return None
+        with path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+                # Discard up to the next newline to avoid a truncated line.
+                f.readline()
+            return f.read()
+
+    def _rediscover_log_paths(self, run: _Run, sidecar: dict) -> dict[str, Path]:
+        """Walk the well-known places and return a ``{label: Path}`` map.
+
+        Labels are human-readable (``"<basename>"`` for free-standing files,
+        ``"rank N .out/.err"`` for submitit per-rank logs). The HTTP layer
+        derives a slug ``stream_id`` from each label via ``_safe_log_id``.
+        """
+        out: dict[str, Path] = {}
+        seen: set[Path] = set()
+
+        def _record(p: Path, label: str):
+            r = p.resolve()
+            if r in seen:
+                return
+            seen.add(r)
+            # Disambiguate label collisions across discovery paths.
+            base = label
+            i = 2
+            while label in out:
+                label = f"{base} ({i})"
+                i += 1
+            out[label] = p
+
+        for ext in ("out", "err"):
+            for p in sorted(run.run_dir.glob(f"*.{ext}")):
+                _record(p, p.name)
+
+        hp = sidecar.get("hparams") or {}
+        out_dir = hp.get("output_dir")
+        if out_dir:
+            try:
+                od = Path(out_dir).expanduser().resolve()
+            except Exception:
+                od = None
+            if od and od.is_dir():
+                for ext in ("out", "err", "log"):
+                    for p in sorted(od.glob(f"*.{ext}")):
+                        _record(p, p.name)
+
+        sweep_tag = next(
+            (t for t in (sidecar.get("tags") or []) if t.startswith("sweep:")),
+            None,
+        )
+        sweep_id = sweep_tag.split(":", 1)[1] if sweep_tag else None
+        task_id: Optional[str] = None
+        # Try both nested (``hparams["slurm"]["task_id"]``) and flat
+        # (``hparams["slurm.task_id"]``) — Hydra/spt produce the flat form
+        # when keys are dotted in YAML.
+        slurm = hp.get("slurm")
+        if isinstance(slurm, dict) and slurm.get("task_id") is not None:
+            task_id = str(slurm["task_id"])
+        elif hp.get("slurm.task_id") is not None:
+            task_id = str(hp["slurm.task_id"])
+        if task_id is None and "_" in run.run_id:
+            task_id = run.run_id.rsplit("_", 1)[-1]
+        if sweep_id and task_id and out_dir:
+            try:
+                parent = Path(out_dir).expanduser().resolve().parent
+            except Exception:
+                parent = None
+            if parent and parent.is_dir():
+                submitit_dir = parent / f"{sweep_id}_{task_id}" / ".submitit"
+                if submitit_dir.is_dir():
+                    for p in sorted(submitit_dir.iterdir()):
+                        n = p.name
+                        if not (n.endswith("_log.out") or n.endswith("_log.err")):
+                            continue
+                        try:
+                            rank = int(n.split("_log.")[0].rsplit("_", 1)[-1])
+                        except ValueError:
+                            rank = None
+                        kind = "out" if n.endswith(".out") else "err"
+                        label = (
+                            f"rank {rank} .{kind}" if rank is not None else f".{kind}"
+                        )
+                        _record(p, label)
+        return out
+
     def media_file_path(self, run_id: str, rel_path: str) -> Optional[Path]:
         """Resolve a media file path safely, with ``..`` traversal blocked.
 
@@ -710,6 +922,21 @@ class RunScanner:
         if not target.is_file():
             return None
         return target
+
+
+def _safe_log_id(label: str) -> str:
+    """Stable opaque id used in the ``/api/log-content`` URL.
+
+    Just an alphanum + ``_``/``-``/``.`` slug of the label so the client
+    can pass it back without worrying about URL encoding.
+    """
+    out = []
+    for ch in label:
+        if ch.isalnum() or ch in "._-":
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out) or "log"
 
 
 def _maybe_float(row: list[str], idx: Optional[int]) -> Optional[float]:

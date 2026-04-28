@@ -11,19 +11,13 @@
 <div id="app">
   <header id="topbar">
     <div class="brand">spt&nbsp;web</div>
-    <div id="status-row"><span id="run-count">0 runs</span></div>
+    <div id="status-row">
+      <span id="run-count">0 runs</span>
+      <span class="status-stat" id="stat-running"   title="running runs">·  <span class="dot running"></span><span class="n">0</span> running</span>
+      <span class="status-stat" id="stat-completed" title="completed runs">·  <span class="dot completed"></span><span class="n">0</span> done</span>
+      <span class="status-stat" id="stat-failed"    title="failed runs">·  <span class="dot failed"></span><span class="n">0</span> failed</span>
+    </div>
     <div class="spacer"></div>
-    <label class="control">smoothing
-      <input id="smoothing" type="range" min="0" max="0.99" step="0.01" value="0">
-      <span id="smoothing-val">0.00</span>
-    </label>
-    <label class="control">x-axis
-      <select id="x-axis">
-        <option value="step" selected>step</option>
-        <option value="epoch">epoch</option>
-      </select>
-    </label>
-    <label class="control"><input id="log-y" type="checkbox"> log&nbsp;y</label>
     <button id="theme-toggle" class="icon-btn" type="button" title="toggle light/dark theme" aria-label="toggle theme"></button>
   </header>
   <aside id="sidebar">
@@ -53,7 +47,55 @@
     </div>
     <div id="run-list"></div>
   </aside>
-  <main id="charts"><div class="empty-state">select a run on the left to plot its metrics</div></main>
+  <main id="main-panel">
+    <nav id="tabs" class="tabs" role="tablist">
+      <button class="tab active" data-tab="figures" type="button">figures</button>
+      <button class="tab" data-tab="out" type="button">.out</button>
+      <button class="tab" data-tab="err" type="button">.err</button>
+    </nav>
+    <div id="tab-figures" class="tab-pane active">
+      <div id="figures-controls">
+        <label class="control">smoothing
+          <input id="smoothing" type="range" min="0" max="0.99" step="0.01" value="0">
+          <span id="smoothing-val">0.00</span>
+        </label>
+        <label class="control">x-axis
+          <select id="x-axis">
+            <option value="step" selected>step</option>
+            <option value="epoch">epoch</option>
+          </select>
+        </label>
+        <label class="control"><input id="log-y" type="checkbox"> log&nbsp;y</label>
+        <input id="metric-search" type="search" placeholder="filter metrics by name..."
+               autocomplete="off" spellcheck="false">
+        <span id="metric-search-status" class="metric-search-status"></span>
+      </div>
+      <div id="charts"><div class="empty-state">select a run on the left to plot its metrics</div></div>
+    </div>
+    <div id="tab-out" class="tab-pane">
+      <div class="logs-controls">
+        <label class="control">stream
+          <select id="logs-stream-selector"></select>
+        </label>
+        <button id="logs-refresh" class="icon-btn" type="button" title="refresh">↻</button>
+      </div>
+      <pre id="logs-out" class="log-view"></pre>
+    </div>
+    <div id="tab-err" class="tab-pane">
+      <div class="logs-controls">
+        <label class="control">stream
+          <select id="logs-err-stream-selector"></select>
+        </label>
+        <button id="logs-err-refresh" class="icon-btn" type="button" title="refresh">↻</button>
+      </div>
+      <pre id="logs-err" class="log-view"></pre>
+    </div>
+  </main>
+</div>
+<div id="image-lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="image preview">
+  <button id="lightbox-close" class="lightbox-close" type="button" title="close (Esc)" aria-label="close">×</button>
+  <img id="lightbox-img" alt="">
+  <div id="lightbox-caption" class="lightbox-caption"></div>
 </div>
 <div id="scan-progress" hidden>
   <div class="scan-progress-card">

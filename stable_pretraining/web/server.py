@@ -7,6 +7,8 @@ Routes:
     GET /api/scan-status             → JSON {phase, total, done, initial_done}
     GET /api/metrics?run_id=…        → JSON sparse metrics (warm-cache friendly)
     GET /api/metrics-stream?run_id=… → NDJSON chunks streamed during CSV parse
+    GET /api/logs?run_id=…           → JSON list of available .out/.err streams
+    GET /api/log-content?run_id=…&stream_id=… → text/plain (last ~4 MiB)
     GET /api/stream                  → Server-Sent Events stream of update deltas
 
 ThreadingHTTPServer spawns a thread per request; SSE handlers hold a
@@ -109,6 +111,32 @@ class _Handler(BaseHTTPRequestHandler):
                     self._serve_json({"error": "run not found"}, 404)
                     return
                 self._serve_json(data)
+            elif path == "/api/logs":
+                run_id = qs.get("run_id", [None])[0]
+                if not run_id:
+                    self._serve_json({"error": "missing run_id"}, 400)
+                    return
+                data = self.scanner.logs_index(run_id)
+                if data is None:
+                    self._serve_json({"error": "run not found"}, 404)
+                    return
+                self._serve_json(data)
+            elif path == "/api/log-content":
+                run_id = qs.get("run_id", [None])[0]
+                stream_id = qs.get("stream_id", [None])[0]
+                if not run_id or not stream_id:
+                    self.send_error(400, "missing run_id or stream_id")
+                    return
+                body = self.scanner.log_content(run_id, stream_id)
+                if body is None:
+                    self.send_error(404, "Not Found")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
             elif path == "/api/media-file":
                 run_id = qs.get("run_id", [None])[0]
                 rel = qs.get("path", [None])[0]

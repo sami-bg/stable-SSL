@@ -742,19 +742,6 @@ The library is not yet available on PyPI. You can install it from the source cod
     <details>
     <summary>Click to expand setup instructions</summary>
 
-    **Install Computer Modern fonts:**
-    ```bash
-    mkdir -p ~/.local/share/fonts
-    cp assets/cm-unicode-0.7.0\ 2/*.ttf ~/.local/share/fonts/
-    fc-cache -f -v
-    # verify: fc-list | grep cmu
-    ```
-
-    **Clear matplotlib font cache:**
-    ```bash
-    python -c "import shutil, matplotlib; shutil.rmtree(matplotlib.get_cachedir())"
-    ```
-
     **Install TeX Live (minimal, no sudo):**
     ```bash
     cd /tmp
@@ -762,7 +749,6 @@ The library is not yet available on PyPI. You can install it from the source cod
     tar xzf install-tl-unx.tar.gz
     cd install-tl-*/
     ./install-tl --texdir ~/texlive --no-interaction --scheme=scheme-basic
-    ~/texlive/bin/x86_64-linux/tlmgr install type1cm cm-super dvipng collection-fontsrecommended amsmath amssymb bm underscore xcolor
     ```
 
     Add to your `~/.bashrc` (or equivalent):
@@ -770,17 +756,43 @@ The library is not yet available on PyPI. You can install it from the source cod
     export PATH="$HOME/texlive/bin/x86_64-linux:$PATH"
     ```
 
-    **Verify:**
+    **Install required LaTeX packages.** Pin a known-good CTAN mirror first (the default redirector occasionally serves corrupt files or unreachable hosts), then install one package per line so any failure is visible:
     ```bash
-    python -c "
+    tlmgr option repository https://ctan.math.illinois.edu/systems/texlive/tlnet
+    for pkg in type1cm cm-super dvipng collection-fontsrecommended \
+               amsmath amsfonts tools underscore xcolor iftex epstopdf-pkg; do
+      tlmgr install "$pkg" || echo "FAILED: $pkg"
+    done
+    ```
+
+    Notes on the package list:
+    - `amsfonts` provides `amssymb.sty`; `tools` provides `bm.sty`; `iftex` provides `ifvtex.sty`. Naming these as `amssymb`/`bm`/`ifvtex` directly will fail with "package not present in repository".
+    - If `tlmgr` reports checksum mismatches, switch to a different mirror (e.g. `https://mirror.ox.ac.uk/sites/ctan.org/systems/texlive/tlnet`) and rerun.
+
+    **Computer Modern TTF fonts (only if you also use `usetex=False`):** with `usetex=True`, all matplotlib text is rendered by LaTeX using TeX Live's bundled fonts and this step is unnecessary. Install the TTFs only if you want CMU for matplotlib's own text rendering (no LaTeX roundtrip):
+    ```bash
+    mkdir -p ~/.local/share/fonts
+    cp assets/cm-unicode-0.7.0\ 2/*.ttf ~/.local/share/fonts/
+    fc-cache -f -v   # requires fontconfig; skip if unavailable
+    # verify: fc-list | grep cmu
+    ```
+
+    **Clear matplotlib font cache** (after either step above):
+    ```bash
+    python -c "import shutil, matplotlib; shutil.rmtree(matplotlib.get_cachedir(), ignore_errors=True)"
+    ```
+
+    **Verify** (heredoc with single-quoted `'PY'` so the shell does not touch `$`):
+    ```bash
+    python - <<'PY'
     import matplotlib; matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     plt.rc('text', usetex=True)
     plt.rc('font', family='serif')
-    plt.figure(); plt.title(r'\$\sum_{i=1}^n x_i\$')
+    plt.figure(); plt.title(r'$\sum_{i=1}^n x_i$')
     plt.savefig('/tmp/tex_test.png')
     print('Success!')
-    "
+    PY
     ```
 
     </details>

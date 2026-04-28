@@ -192,9 +192,11 @@ _DEFERRED_INIT_DONE = False
 
 
 def _do_deferred_init() -> None:
-    """One-time setup that used to live at import time but pulls in Lightning
-    or HuggingFace ``datasets`` (both expensive). Runs the first time a heavy
-    attribute is accessed via ``__getattr__``.
+    """Run the one-time deferred setup.
+
+    Used to live at import time but pulls in Lightning or HuggingFace
+    ``datasets`` (both expensive). Runs the first time a heavy attribute is
+    accessed via ``__getattr__``.
     """
     global _DEFERRED_INIT_DONE
     if _DEFERRED_INIT_DONE:
