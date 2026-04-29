@@ -18,6 +18,9 @@ def pytest_configure(config):
         "markers", "download: Tests that download data from the internet"
     )
     config.addinivalue_line(
+        "markers", "distributed: Tests requiring torch.distributed (gloo/CPU OK)"
+    )
+    config.addinivalue_line(
         "markers", "v1: Legacy tests that need updating (auto-skipped)"
     )
 
@@ -26,11 +29,15 @@ def pytest_collection_modifyitems(config, items):
     """Auto-skip tests based on markers."""
     skip_v1 = pytest.mark.skip(reason="v1: legacy test needs updating")
     skip_gpu = pytest.mark.skip(reason="no GPU available")
+    skip_dist = pytest.mark.skip(reason="torch.distributed not available")
+    dist_unavailable = not torch.distributed.is_available()
     for item in items:
         if "v1" in item.keywords:
             item.add_marker(skip_v1)
         elif "gpu" in item.keywords and not torch.cuda.is_available():
             item.add_marker(skip_gpu)
+        elif "distributed" in item.keywords and dist_unavailable:
+            item.add_marker(skip_dist)
 
 
 @pytest.fixture

@@ -15,6 +15,22 @@ from .optim import create_optimizer, create_scheduler
 from stable_pretraining.utils.error_handling import catch_errors_class
 
 
+_FSDP_PREFIX_RE = re.compile(r"(^|\.)_fsdp_wrapped_module\.")
+
+
+def _strip_fsdp_prefix(qual_name: str) -> str:
+    """Remove FSDP's ``_fsdp_wrapped_module.`` segments from a qualified name.
+
+    FSDP rewrites module names to insert ``_fsdp_wrapped_module`` between the
+    wrapper and the wrapped module (e.g. ``_fsdp_wrapped_module.backbone`` or
+    ``foo._fsdp_wrapped_module.bar``). User regex patterns are written against
+    the un-wrapped names, so we strip the segments before matching.
+    """
+    if "_fsdp_wrapped_module" not in qual_name:
+        return qual_name
+    return _FSDP_PREFIX_RE.sub(lambda m: m.group(1), qual_name)
+
+
 @catch_errors_class()
 class Module(pl.LightningModule):
     """PyTorch Lightning module using manual optimization with multi-optimizer support.
@@ -422,25 +438,30 @@ class Module(pl.LightningModule):
             if "callbacks_modules" in qual_name or "callbacks_metrics" in qual_name:
                 continue
 
+            # Strip FSDP wrapping prefixes so user regex like "backbone" still
+            # matches after FSDP has rewritten the name to e.g.
+            # "_fsdp_wrapped_module.backbone".
+            match_name = _strip_fsdp_prefix(qual_name)
+
             # inherit parent's group if any
-            if "." in qual_name:
-                parent_name = qual_name.rsplit(".", 1)[0]
+            if "." in match_name:
+                parent_name = match_name.rsplit(".", 1)[0]
                 group_idx = module_to_group.get(parent_name)
             else:
                 group_idx = None
 
             # override if explicit match
             for idx, (_, regex) in enumerate(compiled):
-                if regex.match(qual_name):
+                if regex.match(match_name):
                     group_idx = idx
                     break
 
-            module_to_group[qual_name] = group_idx
+            module_to_group[match_name] = group_idx
 
             if group_idx is not None:
                 group_name = compiled[group_idx][0]
-                # record module name
-                modules_by_name[group_name].append(qual_name)
+                # record module name (use the stripped name for readability)
+                modules_by_name[group_name].append(match_name)
                 # collect direct parameters only to avoid duplication
                 direct_params = list(module.parameters(recurse=False))
                 if direct_params:

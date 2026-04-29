@@ -497,6 +497,59 @@ class TeacherStudentWrapper(nn.Module):
         """
         return self.forward_teacher(*args, **kwargs)
 
+    def fsdp_setup(self, auto_wrap_policy=None, **fsdp_kwargs) -> None:
+        """Wrap student and teacher with identical FSDP policies.
+
+        ``update_teacher`` performs an in-place EMA via
+        ``zip(self.teacher.parameters(), self.student.parameters())``. Under
+        FSDP this requires student and teacher to have identical shard
+        structure: same auto-wrap policy, same number of parameter tensors,
+        same per-tensor shapes. This method enforces that.
+
+        The zero-coefficient shortcut is preserved: when ``self.teacher is
+        self.student`` (set in :meth:`__init__` when both base and final EMA
+        coefficients are 0), only the student is wrapped — teacher reuses
+        the same FSDP unit.
+
+        Args:
+            auto_wrap_policy: FSDP auto-wrap policy applied to both student
+                and teacher. Pass ``None`` to defer wrap to a higher-level
+                strategy and only run the alignment check at the end.
+            **fsdp_kwargs: Forwarded to
+                :class:`FullyShardedDataParallel` (e.g. ``device_id``,
+                ``sharding_strategy``, ``cpu_offload``).
+        """
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+        from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+        if self.teacher is self.student:
+            # Zero-coefficient shortcut: a single FSDP unit for the shared
+            # object. Wrap once via the student attribute; teacher follows.
+            if auto_wrap_policy is not None:
+                self.student = FSDP(
+                    self.student,
+                    auto_wrap_policy=auto_wrap_policy,
+                    **fsdp_kwargs,
+                )
+                self.teacher = self.student
+            return
+
+        if auto_wrap_policy is not None:
+            self.student = FSDP(
+                self.student,
+                auto_wrap_policy=auto_wrap_policy,
+                **fsdp_kwargs,
+            )
+            self.teacher = FSDP(
+                self.teacher,
+                auto_wrap_policy=auto_wrap_policy,
+                **fsdp_kwargs,
+            )
+            self.teacher.requires_grad_(False)
+
+        assert_aligned_wrapping(self.student, self.teacher)
+
 
 def from_torchvision(model_name, low_resolution=False, **kwargs):
     """Load a backbone model.

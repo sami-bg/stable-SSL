@@ -127,7 +127,7 @@ class BarlowTwinsLoss(torch.nn.Module):
         """
         c = self.bn(z_i).T @ self.bn(z_j)  # normalize along the batch dimension
         c = c / z_i.size(0)
-        all_reduce(c)
+        c = all_reduce(c)
 
         on_diag = (torch.diagonal(c) - 1).pow(2).sum()
         off_diag = off_diagonal(c).pow(2).sum()

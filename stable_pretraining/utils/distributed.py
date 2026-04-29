@@ -15,7 +15,7 @@ def is_dist_avail_and_initialized():
 
 
 def all_gather(tensor, *args, **kwargs):
-    """Gather tensors from all processes.
+    """Gather tensors from all processes (autograd-aware).
 
     Args:
         tensor: The tensor to gather
@@ -23,15 +23,22 @@ def all_gather(tensor, *args, **kwargs):
         **kwargs: Additional keyword arguments for all_gather
 
     Returns:
-        Tuple containing the gathered tensors
+        Tuple of tensors of length world_size when distributed is initialized,
+        otherwise a single-element tuple containing the input tensor.
     """
     if is_dist_avail_and_initialized():
-        torch.distributed.nn.functional.all_gather(tensor, *args, **kwargs)
+        return tuple(
+            torch.distributed.nn.functional.all_gather(tensor, *args, **kwargs)
+        )
     return (tensor,)
 
 
 def all_reduce(tensor, *args, **kwargs):
-    """Reduce tensors across all processes.
+    """Reduce tensors across all processes (autograd-aware, returns a new tensor).
+
+    The returned tensor must be captured by the caller; this wrapper does not
+    modify the input tensor in-place. The autograd-aware functional API used here
+    clones the input before reducing, so the original tensor is unchanged.
 
     Args:
         tensor: The tensor to reduce
@@ -39,10 +46,11 @@ def all_reduce(tensor, *args, **kwargs):
         **kwargs: Additional keyword arguments for all_reduce
 
     Returns:
-        The reduced tensor
+        The reduced tensor (a new tensor when distributed is initialized,
+        otherwise the input tensor unchanged).
     """
     if is_dist_avail_and_initialized():
-        torch.distributed.nn.functional.all_reduce(tensor, *args, **kwargs)
+        return torch.distributed.nn.functional.all_reduce(tensor, *args, **kwargs)
     return tensor
 
 
