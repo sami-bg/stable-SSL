@@ -1187,10 +1187,38 @@ class Manager(submitit.helpers.Checkpointable):
         log_header("TrainerFit")
         logging.info(f"  ckpt_path: {ckpt_path}")
         logging.info(f"  resume_weights_only: {self.resume_weights_only}")
-        self._trainer.fit(
-            self.instantiated_module,
-            **fit_kwargs,
-        )
+        # Wrap fit() so any callback/model error gets a full, flushed,
+        # multi-stream traceback in stdout BEFORE it climbs the
+        # Hydra/submitit chain (those layers can swallow tracebacks into
+        # result.pkl files that never reach SLURM .out logs). We re-raise
+        # so the process still exits with a nonzero status — the goal is
+        # visibility, not silent recovery.
+        try:
+            self._trainer.fit(
+                self.instantiated_module,
+                **fit_kwargs,
+            )
+        except BaseException as e:
+            import sys as _sys
+            import traceback as _tb
+
+            _msg = (
+                f"\n!!! TRAINER FIT FAILED — {type(e).__name__}: {e}\n"
+                f"    epoch={getattr(self._trainer, 'current_epoch', '?')}/"
+                f"{getattr(self._trainer, 'max_epochs', '?')}, "
+                f"global_step={getattr(self._trainer, 'global_step', '?')}\n"
+            )
+            # Print to BOTH streams + flush so log captures see it.
+            print(_msg, flush=True)
+            print(_tb.format_exc(), flush=True)
+            _sys.stderr.write(_msg)
+            _sys.stderr.write(_tb.format_exc())
+            _sys.stderr.flush()
+            try:
+                logging.exception("Trainer.fit raised — re-raising after loud log")
+            except Exception:
+                pass
+            raise
         self._dump_wandb_data()
 
     def validate(self):
