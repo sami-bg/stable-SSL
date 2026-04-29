@@ -108,12 +108,23 @@ class BarlowTwinsLoss(torch.nn.Module):
     Args:
         lambd (float, optional): The weight of the off-diagonal terms in the loss.
             Default is 5e-3.
+        feature_dim (int, optional): Projector output dimension. When provided,
+            the internal BatchNorm is materialized eagerly as
+            :class:`torch.nn.BatchNorm1d`. This is **required for FSDP** because
+            :class:`torch.nn.LazyBatchNorm1d` materializes its parameters on
+            first forward, which conflicts with FSDP's flat-param assumption
+            established at wrap time. When ``None`` (default), uses
+            :class:`torch.nn.LazyBatchNorm1d` for backwards compatibility with
+            non-FSDP setups.
     """
 
-    def __init__(self, lambd: float = 5e-3):
+    def __init__(self, lambd: float = 5e-3, feature_dim: int | None = None):
         super().__init__()
         self.lambd = lambd
-        self.bn = torch.nn.LazyBatchNorm1d()
+        if feature_dim is None:
+            self.bn = torch.nn.LazyBatchNorm1d()
+        else:
+            self.bn = torch.nn.BatchNorm1d(feature_dim)
 
     def forward(self, z_i, z_j):
         """Compute the loss of the Barlow Twins model.
