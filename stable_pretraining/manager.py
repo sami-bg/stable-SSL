@@ -227,6 +227,8 @@ class Manager(submitit.helpers.Checkpointable):
                 )
                 self._trainer.callbacks.append(TeacherStudentCallback())
 
+        self._log_fsdp_info(needs_teacher_student=needs_teacher_student)
+
         self.init_and_sync_wandb()
         print_logger_info(self._trainer.logger)
         print_signal_info()
@@ -261,6 +263,42 @@ class Manager(submitit.helpers.Checkpointable):
             ckpt_path=ckpt_path,
         )
         self._dump_wandb_data()
+
+    def _log_fsdp_info(self, *, needs_teacher_student: bool) -> None:
+        """Log FSDP strategy details and warn about TeacherStudentWrapper alignment.
+
+        No-op when the trainer is not using FSDP. When FSDP is detected, logs
+        the strategy subclass, sharding strategy, state-dict type, the count
+        of ``ignored_modules``, and the configured auto-wrap policy. If a
+        :class:`TeacherStudentWrapper` is also present, prints a one-line
+        reminder that student and teacher must wrap with identical policies
+        (the safety net is :func:`assert_aligned_wrapping` invoked from
+        :meth:`TeacherStudentWrapper.fsdp_setup`, but the user-facing warning
+        helps when a benchmark is migrated from DDP to FSDP).
+        """
+        from stable_pretraining.utils.fsdp import (
+            describe_fsdp_strategy,
+            is_fsdp_strategy,
+        )
+
+        if not is_fsdp_strategy(self._trainer):
+            return
+
+        info = describe_fsdp_strategy(self._trainer)
+        logging.info("\t● 🪡🪡🪡 FSDP STRATEGY DETECTED 🪡🪡🪡")
+        logging.info(f"\t\t- subclass: {info['subclass']}")
+        logging.info(f"\t\t- sharding_strategy: {info['sharding_strategy']}")
+        logging.info(f"\t\t- state_dict_type: {info['state_dict_type']}")
+        logging.info(f"\t\t- n_ignored_modules: {info['n_ignored_modules']}")
+        logging.info(f"\t\t- auto_wrap_policy: {info['auto_wrap_policy']}")
+
+        if needs_teacher_student:
+            logging.warning(
+                "\t\t- TeacherStudentWrapper present under FSDP: student and "
+                "teacher must wrap with identical policies for the in-place EMA "
+                "update to be correct. assert_aligned_wrapping() is the safety "
+                "net but plan ahead — see docs/fsdp.md (when added)."
+            )
 
     def validate(self):
         logging.info("📣📣📣 CALLING trainer.validate 📣📣📣")

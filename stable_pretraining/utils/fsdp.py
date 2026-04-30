@@ -51,7 +51,50 @@ __all__ = [
     "StableSSLFSDPStrategy",
     "find_callback_containers",
     "assert_aligned_wrapping",
+    "is_fsdp_strategy",
+    "describe_fsdp_strategy",
 ]
+
+
+def is_fsdp_strategy(strategy_or_trainer) -> bool:
+    """Return True if the argument is (or wraps) an FSDP strategy.
+
+    Accepts either a Lightning :class:`Strategy` instance or a Lightning
+    :class:`Trainer` (in which case ``trainer.strategy`` is inspected).
+
+    Returns False (without raising) if FSDP is not importable, so callers
+    can use this in conditional code without guarding the import themselves.
+    """
+    if not _FSDP_AVAILABLE:
+        return False
+    # Trainer case
+    strat = getattr(strategy_or_trainer, "strategy", strategy_or_trainer)
+    return isinstance(strat, FSDPStrategy)
+
+
+def describe_fsdp_strategy(strategy_or_trainer) -> dict:
+    """Return a serializable summary of an FSDP strategy's relevant settings.
+
+    Useful for logging and for tests that want to assert on the strategy
+    configuration without poking at private attributes from many places.
+    """
+    if not is_fsdp_strategy(strategy_or_trainer):
+        return {"is_fsdp": False}
+    strat = getattr(strategy_or_trainer, "strategy", strategy_or_trainer)
+    sharding = getattr(strat, "sharding_strategy", None)
+    state_dict_type = getattr(strat, "_state_dict_type", None) or getattr(
+        strat, "state_dict_type", None
+    )
+    ignored = list(strat.kwargs.get("ignored_modules", [])) if hasattr(strat, "kwargs") else []
+    auto_wrap = strat.kwargs.get("auto_wrap_policy") if hasattr(strat, "kwargs") else None
+    return {
+        "is_fsdp": True,
+        "subclass": type(strat).__name__,
+        "sharding_strategy": str(sharding) if sharding is not None else None,
+        "state_dict_type": str(state_dict_type) if state_dict_type is not None else None,
+        "n_ignored_modules": len(ignored),
+        "auto_wrap_policy": type(auto_wrap).__name__ if auto_wrap is not None else None,
+    }
 
 
 def assert_aligned_wrapping(student: nn.Module, teacher: nn.Module) -> None:
