@@ -37,8 +37,10 @@ def test_feature_dim_uses_eager_bn():
 
 
 def test_eager_bn_matches_lazy_bn_after_first_forward():
-    """Numerical equivalence: with the same init, eager and lazy BN produce
-    identical losses on the first forward."""
+    """Numerical equivalence: with the same init, eager and lazy BN produce.
+
+    identical losses on the first forward.
+    """
     torch.manual_seed(0)
     z_i = torch.randn(8, 16, requires_grad=True)
     z_j = torch.randn(8, 16, requires_grad=True)
@@ -55,8 +57,10 @@ def test_eager_bn_matches_lazy_bn_after_first_forward():
 
 
 def test_eager_bn_finite_loss_and_grads():
-    """Sanity: eager-BN BarlowTwins runs forward+backward and produces finite
-    loss and gradients."""
+    """Sanity: eager-BN BarlowTwins runs forward+backward and produces finite.
+
+    loss and gradients.
+    """
     torch.manual_seed(0)
     z_i = torch.randn(8, 16, requires_grad=True)
     z_j = torch.randn(8, 16, requires_grad=True)

@@ -31,7 +31,8 @@ def _build_tiny(seed: int):
 
 
 def _save_load_fsdp_sharded(rank: int, world_size: int) -> None:
-    """Train 2 steps, save sharded state_dict, build a fresh model and load,
+    """Train 2 steps, save sharded state_dict, build a fresh model and load,.
+
     train one more step. Compare to a non-interrupted run that took 3 steps.
 
     The sharded path uses :class:`ShardedStateDictConfig` — each rank writes
@@ -64,9 +65,7 @@ def _save_load_fsdp_sharded(rank: int, world_size: int) -> None:
         m = _build_tiny(seed=seed).to(device)
         return FSDP(
             m,
-            auto_wrap_policy=partial(
-                size_based_auto_wrap_policy, min_num_params=100
-            ),
+            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=100),
             device_id=device.index,
             use_orig_params=True,
         )
@@ -167,9 +166,11 @@ def test_save_load_fsdp_sharded():
 
 
 def _ddp_into_fsdp_clear_error(rank: int, world_size: int) -> None:
-    """Save a state dict from a non-FSDP (full) model, then try to load it
+    """Save a state dict from a non-FSDP (full) model, then try to load it.
+
     into an FSDP-wrapped model with sharded state dict type. This must fail
-    in a recognizable way — never silent partial loading."""
+    in a recognizable way — never silent partial loading.
+    """
     import os
     import tempfile
     from functools import partial
@@ -196,9 +197,7 @@ def _ddp_into_fsdp_clear_error(rank: int, world_size: int) -> None:
     # Now build an FSDP-wrapped model and try to load via SHARDED_STATE_DICT.
     fsdp_model = FSDP(
         _build_tiny(seed=0).to(device),
-        auto_wrap_policy=partial(
-            size_based_auto_wrap_policy, min_num_params=100
-        ),
+        auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=100),
         device_id=device.index,
         use_orig_params=True,
     )
@@ -207,9 +206,7 @@ def _ddp_into_fsdp_clear_error(rank: int, world_size: int) -> None:
     raised = False
     try:
         cfg = ShardedStateDictConfig(offload_to_cpu=False)
-        with FSDP.state_dict_type(
-            fsdp_model, StateDictType.SHARDED_STATE_DICT, cfg
-        ):
+        with FSDP.state_dict_type(fsdp_model, StateDictType.SHARDED_STATE_DICT, cfg):
             fsdp_model.load_state_dict(blob)
     except Exception as exc:  # noqa: BLE001
         raised = True

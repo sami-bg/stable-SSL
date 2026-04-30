@@ -25,7 +25,6 @@ from stable_pretraining.backbone.utils import TeacherStudentWrapper
 from stable_pretraining.tests.distributed.conftest import (
     run_distributed,
     tiny_backbone,
-    tiny_backbone_with_bn,
 )
 from stable_pretraining.utils.fsdp import (
     assert_aligned_wrapping,
@@ -83,8 +82,10 @@ def test_assert_aligned_wrapping_detects_buffer_mismatch():
 
 
 def test_zero_coefficient_shortcut_no_duplicate_wrapping():
-    """When EMA coefficient is 0, teacher is student. fsdp_setup must not
-    create two FSDP units for the same underlying module."""
+    """When EMA coefficient is 0, teacher is student. fsdp_setup must not.
+
+    create two FSDP units for the same underlying module.
+    """
     backbone = tiny_backbone()
     wrapper = TeacherStudentWrapper(
         backbone,
@@ -101,9 +102,11 @@ def test_zero_coefficient_shortcut_no_duplicate_wrapping():
 
 
 def test_warm_init_produces_equal_params_pre_fsdp():
-    """``warm_init=True`` runs an EMA-with-coef-0 update in __init__, which
+    """``warm_init=True`` runs an EMA-with-coef-0 update in __init__, which.
+
     copies the student into the teacher exactly. Verify this happens BEFORE
-    any FSDP wrapping (it's an init-time invariant)."""
+    any FSDP wrapping (it's an init-time invariant).
+    """
     backbone = tiny_backbone()
     wrapper = TeacherStudentWrapper(
         backbone,
@@ -137,8 +140,10 @@ def test_no_op_fsdp_setup_still_runs_alignment_check():
 
 
 def _ema_coefficient_synced(rank: int, world_size: int) -> None:
-    """``ema_coefficient`` is a buffer; verify it's identical across ranks
-    after ``update_ema_coefficient`` is called identically on each rank."""
+    """``ema_coefficient`` is a buffer; verify it's identical across ranks.
+
+    after ``update_ema_coefficient`` is called identically on each rank.
+    """
     import torch.distributed as dist
 
     backbone = tiny_backbone()
@@ -165,8 +170,10 @@ def test_ema_coefficient_synced_across_ranks():
 
 def _ema_update_matches_single_process(rank: int, world_size: int) -> None:
     """Update teacher with EMA on each rank from the same starting state.
+
     Without FSDP, every rank's wrapper is a full replica, so the post-EMA
-    teacher params must match a deterministic single-process EMA."""
+    teacher params must match a deterministic single-process EMA.
+    """
     torch.manual_seed(123)
     backbone = tiny_backbone()
     wrapper = TeacherStudentWrapper(
@@ -198,8 +205,10 @@ def test_ema_update_does_not_crash_distributed():
 
 
 def test_mismatched_policies_raises_clearly():
-    """Build student and teacher with different module structures; the
-    alignment helper must raise (never silently succeed)."""
+    """Build student and teacher with different module structures; the.
+
+    alignment helper must raise (never silently succeed).
+    """
     student = nn.Sequential(nn.Linear(16, 32), nn.Linear(32, 16))
     teacher = nn.Sequential(nn.Linear(16, 16))  # one fewer layer
     with pytest.raises(AssertionError):
@@ -212,8 +221,10 @@ def test_mismatched_policies_raises_clearly():
 
 
 def _ema_under_fsdp_matches_single_process(rank: int, world_size: int) -> None:
-    """Forward pass + update_teacher under FSDP and compare gathered teacher
-    params to a single-process reference."""
+    """Forward pass + update_teacher under FSDP and compare gathered teacher.
+
+    params to a single-process reference.
+    """
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 

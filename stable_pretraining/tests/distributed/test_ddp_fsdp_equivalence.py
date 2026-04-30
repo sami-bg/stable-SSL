@@ -36,12 +36,10 @@ batch split logic is right) is also exercised by the smaller smoke tests in
 
 from __future__ import annotations
 
-import copy
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict
 
 import pytest
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -382,7 +380,6 @@ def _byol_step(rank, world_size):
     w_fsdp = make_wrapper().to(device)
     from functools import partial
 
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 
     policy = partial(size_based_auto_wrap_policy, min_num_params=100)

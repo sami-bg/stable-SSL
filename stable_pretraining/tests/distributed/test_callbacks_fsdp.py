@@ -77,9 +77,7 @@ def _build_module_with_callbacks(callbacks: List) -> spt.Module:
         # Bind by passing module — same as user code would do.
         if isinstance(cb, dict):
             cb["module"] = module
-            cb_inst = cb["cls"](
-                **{k: v for k, v in cb.items() if k != "cls"}
-            )
+            cb_inst = cb["cls"](**{k: v for k, v in cb.items() if k != "cls"})
         else:
             raise TypeError("expected dict spec")
         module.__dict__.setdefault("_test_callbacks", []).append(cb_inst)
@@ -95,8 +93,10 @@ def _build_module_with_callbacks(callbacks: List) -> spt.Module:
 
 
 def test_find_callback_containers_with_online_probe():
-    """A Module with an OnlineProbe registers a probe in callbacks_modules
-    and metrics in callbacks_metrics. Both must be detected."""
+    """A Module with an OnlineProbe registers a probe in callbacks_modules.
+
+    and metrics in callbacks_metrics. Both must be detected.
+    """
     import torchmetrics
 
     module = _build_module_with_callbacks(
@@ -123,9 +123,11 @@ def test_find_callback_containers_with_online_probe():
 
 
 def test_find_callback_containers_with_online_knn():
-    """OnlineKNN doesn't register a learnable module but DOES register
+    """OnlineKNN doesn't register a learnable module but DOES register.
+
     metrics and uses the OnlineQueue (which itself registers in
-    callbacks_modules during setup)."""
+    callbacks_modules during setup).
+    """
     import torchmetrics
 
     module = spt.Module(
@@ -168,9 +170,11 @@ def test_find_callback_containers_with_rankme():
 
 
 def _exercise_strategy_setup(module, kwargs_in):
-    """Run ``CallbackAwareFSDPStrategy._setup_model`` with a real instance but a
+    """Run ``CallbackAwareFSDPStrategy._setup_model`` with a real instance but a.
+
     mocked super-class ``_setup_model``. Returns the kwargs the super would
-    have observed."""
+    have observed.
+    """
     from unittest.mock import patch
 
     from lightning.pytorch.strategies import FSDPStrategy
@@ -190,9 +194,11 @@ def _exercise_strategy_setup(module, kwargs_in):
 
 
 def test_strategy_setup_model_injects_ignored_modules():
-    """``CallbackAwareFSDPStrategy._setup_model`` must add the discovered
+    """``CallbackAwareFSDPStrategy._setup_model`` must add the discovered.
+
     callback containers to ``self.kwargs["ignored_modules"]`` before
-    delegating to super()._setup_model."""
+    delegating to super()._setup_model.
+    """
     import torchmetrics
 
     module = _build_module_with_callbacks(
@@ -234,8 +240,10 @@ def test_strategy_setup_model_preserves_user_ignored_modules():
 
 
 def test_strategy_setup_model_no_double_add():
-    """If a callback container is already in ``ignored_modules``, it shouldn't
-    be added a second time."""
+    """If a callback container is already in ``ignored_modules``, it shouldn't.
+
+    be added a second time.
+    """
     import torchmetrics
 
     module = _build_module_with_callbacks(
@@ -318,9 +326,11 @@ def test_probe_weight_remains_unsharded_after_fsdp_wrap():
 
 
 def _probe_receives_independent_gradients(rank: int, world_size: int) -> None:
-    """Under FSDP, the probe's parameters must receive gradients from the
+    """Under FSDP, the probe's parameters must receive gradients from the.
+
     probe's own loss — not from the backbone's gradients, and the probe's
-    optimizer must be able to step."""
+    optimizer must be able to step.
+    """
     import torchmetrics
     from functools import partial
 
@@ -391,9 +401,11 @@ def test_online_probe_gradient_flow_under_fsdp():
 
 
 def _queue_gathers_under_fsdp(rank: int, world_size: int) -> None:
-    """An OnlineQueue with ``gather_distributed=True`` must collect data from
+    """An OnlineQueue with ``gather_distributed=True`` must collect data from.
+
     all ranks. We verify this by populating the underlying ordered queue with
-    rank-distinguishable tensors and triggering the gather path directly."""
+    rank-distinguishable tensors and triggering the gather path directly.
+    """
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA test executed without CUDA")
 

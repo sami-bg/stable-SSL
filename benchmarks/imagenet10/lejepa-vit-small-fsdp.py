@@ -242,9 +242,7 @@ def main():
                 target_shape=model.embed_dim,
             ),
             pl.pytorch.callbacks.ModelCheckpoint(
-                dirpath=str(
-                    Path(__file__).parent / "checkpoints" / "lejepa-vits-fsdp"
-                ),
+                dirpath=str(Path(__file__).parent / "checkpoints" / "lejepa-vits-fsdp"),
                 filename="lejepa-vits-fsdp-{epoch:03d}",
                 save_top_k=-1,
                 every_n_epochs=300,

@@ -83,13 +83,21 @@ def describe_fsdp_strategy(strategy_or_trainer) -> dict:
     state_dict_type = getattr(strat, "_state_dict_type", None) or getattr(
         strat, "state_dict_type", None
     )
-    ignored = list(strat.kwargs.get("ignored_modules", [])) if hasattr(strat, "kwargs") else []
-    auto_wrap = strat.kwargs.get("auto_wrap_policy") if hasattr(strat, "kwargs") else None
+    ignored = (
+        list(strat.kwargs.get("ignored_modules", []))
+        if hasattr(strat, "kwargs")
+        else []
+    )
+    auto_wrap = (
+        strat.kwargs.get("auto_wrap_policy") if hasattr(strat, "kwargs") else None
+    )
     return {
         "is_fsdp": True,
         "subclass": type(strat).__name__,
         "sharding_strategy": str(sharding) if sharding is not None else None,
-        "state_dict_type": str(state_dict_type) if state_dict_type is not None else None,
+        "state_dict_type": str(state_dict_type)
+        if state_dict_type is not None
+        else None,
         "n_ignored_modules": len(ignored),
         "auto_wrap_policy": type(auto_wrap).__name__ if auto_wrap is not None else None,
     }

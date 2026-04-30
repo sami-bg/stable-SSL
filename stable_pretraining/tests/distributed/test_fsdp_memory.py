@@ -46,8 +46,10 @@ pytestmark = [pytest.mark.distributed, pytest.mark.gpu]
 
 
 def _make_oversized_model(in_dim: int = 1024, hidden: int = 4096, depth: int = 4):
-    """Stack of large ``Linear`` layers. ~67M params at the defaults — enough
-    that AdamW's optimizer state is clearly the dominant memory term."""
+    """Stack of large ``Linear`` layers. ~67M params at the defaults — enough.
+
+    that AdamW's optimizer state is clearly the dominant memory term.
+    """
     layers = [nn.Linear(in_dim, hidden), nn.ReLU(inplace=False)]
     for _ in range(depth - 2):
         layers += [nn.Linear(hidden, hidden), nn.ReLU(inplace=False)]
@@ -93,7 +95,9 @@ def _measure_peak_memory(
         wrapped = DDP(model, device_ids=[device.index])
     elif wrap_kind == "fsdp":
         kwargs = dict(
-            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=1_000_000),
+            auto_wrap_policy=partial(
+                size_based_auto_wrap_policy, min_num_params=1_000_000
+            ),
             device_id=device.index,
             use_orig_params=True,
         )
@@ -165,9 +169,7 @@ def _optimizer_state_lower(rank: int, world_size: int) -> None:
             f"fsdp_peak={fsdp_peak / 1e6:.1f}MB "
             f"threshold={threshold / 1e6:.1f}MB"
         )
-        assert fsdp_peak < threshold, (
-            f"FSDP did not save enough memory:{msg}"
-        )
+        assert fsdp_peak < threshold, f"FSDP did not save enough memory:{msg}"
 
 
 def test_fsdp_optimizer_state_lower_than_ddp():
@@ -182,9 +184,11 @@ def test_fsdp_optimizer_state_lower_than_ddp():
 
 
 def _throughput_within_2x(rank: int, world_size: int) -> None:
-    """For a small model, FSDP's communication overhead dominates the wall
+    """For a small model, FSDP's communication overhead dominates the wall.
+
     clock. We don't expect FSDP to win — we just guard against pathological
-    regressions (e.g. >2x slowdown from a bad default)."""
+    regressions (e.g. >2x slowdown from a bad default).
+    """
     # Smaller dims so communication ratio is higher; same 3 measured steps.
     _, ddp_t = _measure_peak_memory(rank, "ddp", in_dim=128, hidden=256, depth=2)
     _, fsdp_t = _measure_peak_memory(rank, "fsdp", in_dim=128, hidden=256, depth=2)
@@ -213,12 +217,8 @@ def _ac_further_reduction(rank: int, world_size: int) -> None:
     The reduction comes from re-computing activations during backward
     instead of holding them — orthogonal to FSDP's parameter sharding.
     """
-    fsdp_peak, _ = _measure_peak_memory(
-        rank, "fsdp", activation_checkpointing=False
-    )
-    fsdp_ac_peak, _ = _measure_peak_memory(
-        rank, "fsdp", activation_checkpointing=True
-    )
+    fsdp_peak, _ = _measure_peak_memory(rank, "fsdp", activation_checkpointing=False)
+    fsdp_ac_peak, _ = _measure_peak_memory(rank, "fsdp", activation_checkpointing=True)
     if rank == 0:
         # Don't demand a huge gain — activations are not necessarily the
         # dominant term in this synthetic model — just require some

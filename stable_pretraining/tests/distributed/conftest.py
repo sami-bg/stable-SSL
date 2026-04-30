@@ -77,7 +77,9 @@ def _worker(
             world_size=world_size,
         )
     except Exception as e:  # noqa: BLE001
-        error_queue.put((rank, f"init_process_group failed: {e!r}\n{traceback.format_exc()}"))
+        error_queue.put(
+            (rank, f"init_process_group failed: {e!r}\n{traceback.format_exc()}")
+        )
         return
 
     try:
@@ -161,7 +163,9 @@ def run_distributed(
         # Sort by rank for deterministic test output.
         errors.sort(key=lambda x: x[0])
         joined = "\n\n".join(f"--- rank {r} ---\n{msg}" for r, msg in errors)
-        raise AssertionError(f"run_distributed: {len(errors)} worker(s) failed:\n{joined}")
+        raise AssertionError(
+            f"run_distributed: {len(errors)} worker(s) failed:\n{joined}"
+        )
 
     nonzero = [(p.pid, p.exitcode) for p in procs if p.exitcode not in (0, None)]
     if nonzero:

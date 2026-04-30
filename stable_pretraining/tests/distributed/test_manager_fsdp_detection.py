@@ -46,8 +46,10 @@ def test_is_fsdp_strategy_recognizes_our_strategy():
 
 
 def test_is_fsdp_strategy_recognizes_via_trainer_attribute():
-    """If passed an object with a ``.strategy`` attribute (i.e. a Trainer),
-    inspect that attribute."""
+    """If passed an object with a ``.strategy`` attribute (i.e. a Trainer),.
+
+    inspect that attribute.
+    """
 
     class _FakeTrainer:
         strategy = make_fsdp_strategy()
@@ -138,15 +140,13 @@ def test_log_fsdp_info_warns_when_teacher_student_present():
     from loguru import logger
 
     captured_warn = []
-    sink_id = logger.add(
-        lambda msg: captured_warn.append(str(msg)), level="WARNING"
-    )
+    sink_id = logger.add(lambda msg: captured_warn.append(str(msg)), level="WARNING")
     try:
         # No TS -> no warning
         mgr._log_fsdp_info(needs_teacher_student=False)
-        assert all(
-            "TeacherStudentWrapper" not in line for line in captured_warn
-        ), captured_warn
+        assert all("TeacherStudentWrapper" not in line for line in captured_warn), (
+            captured_warn
+        )
         # Reset
         captured_warn.clear()
         # With TS -> one warning line

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pytest
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 
 from stable_pretraining.tests.distributed.conftest import (
@@ -94,9 +93,7 @@ def test_find_callback_containers():
     class M(nn.Module):
         def __init__(self):
             super().__init__()
-            self.callbacks_modules = nn.ModuleDict(
-                {"probe": nn.Linear(8, 4)}
-            )
+            self.callbacks_modules = nn.ModuleDict({"probe": nn.Linear(8, 4)})
             self.callbacks_metrics = nn.ModuleDict()
             self.backbone = nn.Linear(16, 8)
 
@@ -130,9 +127,7 @@ def _supervised_one_step(rank: int, world_size: int) -> None:
     model = _SmokeModel()
     fsdp_model = FSDP(
         model,
-        auto_wrap_policy=default_auto_wrap_policy(
-            model, min_num_params=10
-        ),
+        auto_wrap_policy=default_auto_wrap_policy(model, min_num_params=10),
         device_id=None,  # CPU
     )
 
@@ -172,9 +167,7 @@ class _ModelWithCallbacks(nn.Module):
     def __init__(self):
         super().__init__()
         self.backbone = tiny_backbone()
-        self.callbacks_modules = nn.ModuleDict(
-            {"probe": nn.Linear(16, 4)}
-        )
+        self.callbacks_modules = nn.ModuleDict({"probe": nn.Linear(16, 4)})
         self.callbacks_metrics = nn.ModuleDict()
 
 
@@ -220,8 +213,10 @@ def test_callbacks_not_sharded_under_fsdp():
 
 
 def _wrap_everything_with_zero_threshold(rank: int, world_size: int) -> None:
-    """Wrap with size_based threshold=0 and assert FSDP either succeeds with
-    sensible behavior or raises a clear error rather than corrupting state."""
+    """Wrap with size_based threshold=0 and assert FSDP either succeeds with.
+
+    sensible behavior or raises a clear error rather than corrupting state.
+    """
     from functools import partial
 
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP

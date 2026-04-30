@@ -139,9 +139,11 @@ def test_dino_no_hang_repeated_updates_cpu():
 
 
 def _interleaved_loss_call(rank: int, world_size: int) -> None:
-    """Realistic interleave: ``softmax_center_teacher`` (which calls
+    """Realistic interleave: ``softmax_center_teacher`` (which calls.
+
     ``apply_center_update``) followed by ``update_center``. This mirrors the
-    normal training loop and exercises the lazy-apply behavior."""
+    normal training loop and exercises the lazy-apply behavior.
+    """
     torch.manual_seed(17 + rank)
     n_views, batch, out_dim = 2, 4, 8
     loss = DINOv1Loss(center_momentum=0.9)
@@ -209,9 +211,7 @@ def _dino_with_fsdp_no_hang(rank: int, world_size: int) -> None:
         # Student/teacher logits via the same backbone (toy setup).
         student_logits = fsdp_backbone(x.view(-1, out_dim)).view(n_views, batch, -1)
         with torch.no_grad():
-            teacher_logits = fsdp_backbone(x.view(-1, out_dim)).view(
-                n_views, batch, -1
-            )
+            teacher_logits = fsdp_backbone(x.view(-1, out_dim)).view(n_views, batch, -1)
 
         teacher_probs = dino_loss.softmax_center_teacher(
             teacher_logits, teacher_temp=0.04, update_centers=True
@@ -286,9 +286,9 @@ def _dino_center_ddp_vs_fsdp(rank: int, world_size: int) -> None:
             with torch.no_grad():
                 t = wrapped(x.view(-1, out_dim)).view(n_views, batch, -1)
             tp = dino.softmax_center_teacher(t, teacher_temp=0.04, update_centers=True)
-            l = dino(s, tp)
+            loss = dino(s, tp)
             dino.update_center(t)
-            l.backward()
+            loss.backward()
             opt.step()
             opt.zero_grad()
         # Force one final apply so the last queued update is realized.
@@ -324,11 +324,13 @@ def test_dino_center_ddp_vs_fsdp_equivalent():
 
 
 def _adversarial_concurrent_collectives(rank: int, world_size: int) -> None:
-    """Issue a DINO async reduce immediately followed by an FSDP forward
+    """Issue a DINO async reduce immediately followed by an FSDP forward.
+
     (which triggers all-gather of sharded params). If the implementations
     serialize on the same NCCL stream, this should still complete; if they
     deadlock on the same comm group, the test will time out via
-    ``run_distributed``'s join timeout."""
+    ``run_distributed``'s join timeout.
+    """
     from functools import partial
 
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -373,6 +375,4 @@ def _adversarial_concurrent_collectives(rank: int, world_size: int) -> None:
 @pytest.mark.gpu
 def test_dino_concurrent_collectives_stress():
     """Adversarial: deliberately overlap DINO async reduce with FSDP forward."""
-    run_distributed(
-        _adversarial_concurrent_collectives, world_size=2, backend="nccl"
-    )
+    run_distributed(_adversarial_concurrent_collectives, world_size=2, backend="nccl")
