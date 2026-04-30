@@ -67,6 +67,10 @@ write_to_template = "version = \"{version}\"\n"
 trackio = ["trackio", "gradio_client"]
 # SwanLab experiment tracking
 swanlab = ["swanlab"]
+# Video / Lance dataset support (stable_pretraining.data.video).
+# - opencv-python-headless: synthetic .mp4 fixtures and frame I/O.
+# - pylance: Lance columnar storage backend for video segments.
+video = ["opencv-python-headless", "pylance"]
 # Development and documentation tools
 dev = [
     "pytest",
