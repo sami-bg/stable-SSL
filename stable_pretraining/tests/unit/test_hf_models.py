@@ -135,7 +135,14 @@ def test_spt_hf_fidelity_flow(tmp_path):
         feat_fixed = feat.mean(dim=1).clone()
         init_out = model.hf_backbone(feat_fixed).clone()
 
-    # Configure Lightning Trainer
+    # Configure Lightning Trainer with the HF export callback explicitly.
+    # The callback is required for the export-folder assertion below — we
+    # construct it here rather than relying on a default registration.
+    from stable_pretraining.callbacks import HuggingFaceCheckpointCallback
+
+    # per_step=True writes to step_{global_step}/ (the assertion below checks
+    # exactly that path); per_step=False would write to last/ instead.
+    hf_cb = HuggingFaceCheckpointCallback(save_dir=str(hf_save_dir), per_step=True)
     trainer = pl.Trainer(
         default_root_dir=str(test_root),
         accelerator="cpu",
@@ -146,12 +153,8 @@ def test_spt_hf_fidelity_flow(tmp_path):
         limit_val_batches=0,
         enable_checkpointing=True,
         logger=False,
+        callbacks=[hf_cb],
     )
-
-    # Inject/Redirect Callback
-    for cb in trainer.callbacks:
-        if "HuggingFaceCheckpointCallback" in cb.__class__.__name__:
-            cb.save_dir = hf_save_dir
 
     # DataLoader with dict-based batches
     dl = torch.utils.data.DataLoader(

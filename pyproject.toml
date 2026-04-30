@@ -67,12 +67,12 @@ write_to_template = "version = \"{version}\"\n"
 trackio = ["trackio", "gradio_client"]
 # SwanLab experiment tracking
 swanlab = ["swanlab"]
-# Video / Lance dataset support (stable_pretraining.data.video).
-# - opencv-python-headless: synthetic .mp4 fixtures and frame I/O.
-# - pylance: Lance columnar storage backend for video segments.
-video = ["opencv-python-headless", "pylance"]
-# Development and documentation tools
+# Development and documentation tools.
+# Pulls in the trackio + swanlab extras so the full test surface (including
+# experiment-tracking integrations) is exercised by ``pip install -e .[dev]``.
 dev = [
+    "stable-pretraining[trackio]",
+    "stable-pretraining[swanlab]",
     "pytest",
     "coverage",
     "pytest-cov",

@@ -190,10 +190,7 @@ def build_barlow_twins():
             backbone=make_backbone(),
             projector=make_projector(),
             forward=forward.barlow_twins_forward,
-            # feature_dim=PROJ_DIM materializes BN eagerly. Required because
-            # the regression harness introspects parameters before any forward
-            # (LazyBatchNorm1d's UninitializedParameter trips register_hook).
-            barlow_loss=losses.BarlowTwinsLoss(feature_dim=PROJ_DIM),
+            barlow_loss=losses.BarlowTwinsLoss(),
             optim={"optimizer": {"type": "Adam", "lr": 1e-3}},
         ),
         data=make_data(multi_view=True),

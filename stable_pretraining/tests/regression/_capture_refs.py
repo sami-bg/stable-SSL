@@ -117,7 +117,7 @@ METHODS = {
             backbone=make_backbone(),
             projector=make_projector(),
             forward=forward.barlow_twins_forward,
-            barlow_loss=losses.BarlowTwinsLoss(feature_dim=PROJ_DIM),
+            barlow_loss=losses.BarlowTwinsLoss(),
             optim={"optimizer": {"type": "Adam", "lr": 1e-3}},
         ),
         data=make_data(True),

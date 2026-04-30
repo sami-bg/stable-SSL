@@ -153,8 +153,7 @@ def _make_barlow_loss(model: nn.Module, batch: torch.Tensor, _ignored=None):
     half = batch.size(0) // 2
     z_i = model(batch[:half])
     z_j = model(batch[half:])
-    # feature_dim=16 matches model output dim; eager BN required for FSDP.
-    return BarlowTwinsLoss(feature_dim=16)(z_i, z_j)
+    return BarlowTwinsLoss()(z_i, z_j)
 
 
 def _wrap_ddp(model: nn.Module, device: torch.device):
