@@ -7,6 +7,7 @@ import torchvision
 from loguru import logger as logging
 from torch import nn
 from dataclasses import dataclass
+from transformers.utils import ModelOutput
 
 # Try to import optional dependencies
 try:
@@ -242,7 +243,7 @@ class FeaturesConcat(nn.Module):
 
 
 @dataclass
-class EmbeddingOutput:
+class EmbeddingOutput(ModelOutput):
     """HuggingFace-style output container for model embeddings.
 
     Attributes:
@@ -250,15 +251,8 @@ class EmbeddingOutput:
         hidden_states: Dictionary mapping layer names to their intermediate outputs.
     """
 
-    last_hidden_state: Any
-    hidden_states: dict[str, torch.Tensor]
-
-    def __getitem__(self, key: str) -> Any:
-        """Allow dict-like access for backward compatibility."""
-        return getattr(self, key)
-
-    def keys(self):
-        return ["last_hidden_state", "hidden_states"]
+    last_hidden_state: Any = None
+    hidden_states: dict[str, torch.Tensor] = None
 
 
 class HiddenStateExtractor(nn.Module):
@@ -351,7 +345,8 @@ class TeacherStudentWrapper(nn.Module):
     are literally the same object, saving memory but forward passes through the teacher
     will not produce any gradients.
 
-    Usage example:
+    Usage example::
+
         backbone = ResNet18()
         wrapped_backbone = TeacherStudentWrapper(backbone)
         module = ssl.Module(
@@ -558,14 +553,16 @@ def from_torchvision(model_name, low_resolution=False, **kwargs):
     output size num_classes. Otherwise, the last layer is replaced by an identity layer.
 
     Args:
-        model_name (str): Name of the backbone model. Supported models are:
-            - Any model from torchvision.models
-            - "Resnet9"
-            - "ConvMixer"
+        model_name (str): Name of the backbone model. Supported models:
+
+            * Any model from ``torchvision.models``
+            * ``"Resnet9"``
+            * ``"ConvMixer"``
         low_resolution (bool, optional): Whether to adapt the resolution of the model (for CIFAR typically).
             By default False.
         **kwargs: Additional keyword arguments for the model. Special handling:
-            - in_channels (int): Number of input channels. If provided for ResNet models, the first
+
+            * ``in_channels`` (int): Number of input channels. If provided for ResNet models, the first
               conv layer will be modified to accept this many channels. Default is 3.
 
     Returns:

@@ -8,7 +8,7 @@ References:
 
 Example::
 
-    from stable_pretraining.backbone import MAE
+    from stable_pretraining.methods import MAE
     import lightning as pl
 
     # Create model
@@ -24,8 +24,13 @@ Example::
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
+import torch.nn as nn
+from typing import Union
+
+from transformers.utils import ModelOutput
 
 from stable_pretraining.backbone import MAEDecoder, MaskedEncoder, PatchMasking
 from stable_pretraining.utils import MAELoss
@@ -33,7 +38,7 @@ from stable_pretraining import Module
 
 
 @dataclass
-class MAEOutput:
+class MAEOutput(ModelOutput):
     """Output from MAE forward pass.
 
     :ivar loss: Reconstruction loss (MSE on masked patches)
@@ -43,11 +48,11 @@ class MAEOutput:
     :ivar num_visible: Number of visible patches
     """
 
-    loss: torch.Tensor
-    predictions: torch.Tensor
-    mask: torch.Tensor
-    num_masked: int
-    num_visible: int
+    loss: torch.Tensor = None
+    predictions: torch.Tensor = None
+    mask: torch.Tensor = None
+    num_masked: int = None
+    num_visible: int = None
 
 
 class MAE(Module):
@@ -58,7 +63,7 @@ class MAE(Module):
         - **Decoder**: Lightweight transformer reconstructing masked patches
         - **Target**: Normalized pixel values of masked patches
 
-    :param encoder_name: timm model name (e.g., "vit_base_patch16_224")
+    :param model_or_model_name: timm model name string or pre-instantiated nn.Module
     :param decoder_embed_dim: Decoder hidden dimension (default: 512)
     :param decoder_depth: Number of decoder blocks (default: 8)
     :param decoder_num_heads: Decoder attention heads (default: 16)
@@ -67,6 +72,8 @@ class MAE(Module):
     :param norm_pix_loss: Normalize target pixels per patch (default: True)
     :param loss_type: Loss type for MAELoss (default: 'mse')
     :param pretrained: Load pretrained encoder weights
+    :param masking: Custom masking module (e.g., MultiBlockMasking).
+        When provided, overrides mask_ratio and block_size.
 
     Example::
 
@@ -98,7 +105,7 @@ class MAE(Module):
 
     def __init__(
         self,
-        encoder_name: str = "vit_base_patch16_224",
+        model_or_model_name: Union[str, nn.Module] = "vit_base_patch16_224",
         decoder_embed_dim: int = 512,
         decoder_depth: int = 8,
         decoder_num_heads: int = 16,
@@ -107,13 +114,17 @@ class MAE(Module):
         norm_pix_loss: bool = True,
         loss_type: str = "mse",
         pretrained: bool = False,
+        masking: Optional[nn.Module] = None,
     ):
         super().__init__()
 
         # Encoder with masking
-        self.masking = PatchMasking(mask_ratio=mask_ratio, block_size=block_size)
+        if masking is not None:
+            self.masking = masking
+        else:
+            self.masking = PatchMasking(mask_ratio=mask_ratio, block_size=block_size)
         self.encoder = MaskedEncoder(
-            encoder_name, masking=self.masking, pretrained=pretrained
+            model_or_model_name, masking=self.masking, pretrained=pretrained
         )
 
         embed_dim = self.encoder.embed_dim

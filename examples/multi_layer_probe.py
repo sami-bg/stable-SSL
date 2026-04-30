@@ -1,14 +1,16 @@
-"""Multi-layer probe for vision models."""
+"""
+Multi-layer Probe for Vision Models
+===================================
 
-import argparse
-from typing import Dict, List, Tuple
+Train probes attached to multiple layers of a frozen backbone to monitor
+representation quality across depth.
+"""
 
 import hydra
 import lightning as pl
 import torch
 import torchmetrics
-import torchvision
-from datasets import load_dataset
+from typing import Dict, List, Tuple
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger  # type: ignore
 from omegaconf import DictConfig
@@ -23,9 +25,12 @@ from transformers import (
 import stable_pretraining as spt
 from stable_pretraining.data import transforms
 
+
 # -----------------------------
 # Model registry
 # -----------------------------
+
+
 MODEL_ZOO = {
     "DINOv2": {
         "processor_cls": AutoImageProcessor,

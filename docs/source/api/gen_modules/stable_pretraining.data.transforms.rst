@@ -1,15 +1,56 @@
-﻿transforms
-==========
+﻿stable\_pretraining.data.transforms
+===================================
 
-.. currentmodule:: stable_pretraining.data
+.. automodule:: stable_pretraining.data.transforms
 
-.. autoclass:: transforms
-   :members:
-   :show-inheritance:
-   :no-undoc-members:
-   :special-members: __mul__, __add__, __div__, __neg__, __sub__, __truediv__
 
-.. _sphx_glr_backref_stable_pretraining.data.transforms:
+   .. rubric:: Functions
 
-.. minigallery:: stable_pretraining.data.transforms
-    :add-heading: Examples using ``transforms``:
+   .. autosummary::
+
+      to_image
+
+   .. rubric:: Classes
+
+   .. autosummary::
+
+      AdditiveGaussian
+      CenterCrop
+      ColorJitter
+      Compose
+      Conditional
+      ContextTargetsMultiBlockMask
+      ControlledTransform
+      GaussianBlur
+      GaussianNoise
+      Lambda
+      MultiViewTransform
+      PILGaussianBlur
+      PatchMasking
+      RGB
+      RandomAdjustSharpness
+      RandomAffine
+      RandomAutocontrast
+      RandomChannelPermutation
+      RandomContiguousTemporalSampler
+      RandomCrop
+      RandomEqualize
+      RandomErasing
+      RandomGrayscale
+      RandomHorizontalFlip
+      RandomInvert
+      RandomMask
+      RandomPerspective
+      RandomPosterize
+      RandomResizedCrop
+      RandomRotation
+      RandomSolarize
+      RandomVerticalFlip
+      Resize
+      RoundRobinMultiViewTransform
+      RoutingTransform
+      ToImage
+      Transform
+      UniformTemporalSubsample
+      WrapTorchTransform
+      random_seed

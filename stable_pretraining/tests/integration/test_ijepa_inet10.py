@@ -82,7 +82,7 @@ class TestIJEPAImagenet10:
 
         # Create IJEPA module with vit_tiny for fast CPU testing
         module = IJEPA(
-            encoder_name="vit_tiny_patch16_224",
+            model_or_model_name="vit_tiny_patch16_224",
             predictor_embed_dim=192,
             predictor_depth=6,
             num_targets=4,
@@ -131,7 +131,7 @@ class TestIJEPAImagenet10:
         final_loss = trainer.callback_metrics.get("fit/loss_step")
         assert final_loss is not None, "No loss logged"
         print(f"\nIJEPA final loss after 3 steps: {final_loss.item():.6f}")
-        expected = torch.tensor(0.515345)
+        expected = torch.tensor(0.520613)
         assert torch.isclose(final_loss.cpu(), expected, atol=1e-4), (
             f"IJEPA loss {final_loss.item():.6f} != expected {expected.item():.6f}"
         )

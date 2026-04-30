@@ -1,33 +1,59 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+"""Top-level package for stable-pretraining.
 
+The package's public attributes (``Manager``, ``Module``, callbacks,
+loggers, sub-packages such as ``data``/``utils``/etc.) are loaded **lazily**
+via PEP 562 ``__getattr__``. This keeps ``import stable_pretraining`` cheap
+— useful for fast-start CLI commands like ``spt web`` and ``spt registry`` —
+while ``stable_pretraining.Manager``, ``import stable_pretraining as spt;
+spt.Module``, and similar usage patterns continue to work unchanged.
+
+The first time a heavy attribute is accessed (anything in
+``_LAZY_ATTRS`` / ``_LAZY_SUBMODULES``) we run a small one-time
+initialisation that applies the Lightning manual-optimisation patch and
+adjusts ``datasets`` logging verbosity — both of which used to live at
+import time.
+
+Light-weight things (logger config, ``get_config``, version info, optional
+dependency probes, OmegaConf resolver registration) stay eager because
+they're used everywhere and their cost is negligible.
+"""
+
+from __future__ import annotations
+
+import importlib
+import logging
 import os
+import sys
 
 os.environ["LOGURU_LEVEL"] = os.environ.get("LOGURU_LEVEL", "INFO")
-
-import logging
-import sys
 
 from loguru import logger
 from omegaconf import OmegaConf
 
-# Handle optional dependencies early
-try:
-    import sklearn.base  # noqa: F401
+# ---------------------------------------------------------------------------
+# Optional-dependency probes (cheap; users branch on these flags)
+# ---------------------------------------------------------------------------
 
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
+# ``find_spec`` checks installation without actually importing the package,
+# which is ~40 ms total for all four (vs 3 s for eager imports of sklearn /
+# wandb / trackio / swanlab).
+from importlib.util import find_spec as _find_spec  # noqa: E402
 
-try:
-    import wandb  # noqa: F401
+SKLEARN_AVAILABLE = _find_spec("sklearn") is not None
+WANDB_AVAILABLE = _find_spec("wandb") is not None
+TRACKIO_AVAILABLE = _find_spec("trackio") is not None
+SWANLAB_AVAILABLE = _find_spec("swanlab") is not None
 
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
 
-from . import backbone, callbacks, data, losses, module, optim, static, utils
-from .__about__ import (
+# ---------------------------------------------------------------------------
+# Eager light-weight imports
+# ---------------------------------------------------------------------------
+
+# Global config and version metadata are tiny and used nearly everywhere.
+from ._config import get_config, set  # noqa: F401, E402
+from .__about__ import (  # noqa: F401, E402
     __author__,
     __license__,
     __summary__,
@@ -35,35 +61,205 @@ from .__about__ import (
     __url__,
     __version__,
 )
-from .backbone.utils import TeacherStudentWrapper
-from .callbacks import (
-    EarlyStopping,
-    ImageRetrieval,
-    LiDAR,
-    LoggingCallback,
-    ModuleSummary,
-    OnlineKNN,
-    OnlineProbe,
-    OnlineWriter,
-    RankMe,
-    TeacherStudentCallback,
-    TrainerInfo,
-)
-from .callbacks.registry import log, log_dict
-from .manager import Manager
-from .module import Module
-from .utils.lightning_patch import apply_manual_optimization_patch
 
-# Conditionally import callbacks that depend on optional packages
-if SKLEARN_AVAILABLE:
-    from .callbacks import SklearnCheckpoint
-else:
-    SklearnCheckpoint = None
+# OmegaConf resolver: register at import time so YAML configs can use ${eval:…}
+# without requiring a heavy attribute access first.
+OmegaConf.register_new_resolver("eval", eval)
+
+
+# ---------------------------------------------------------------------------
+# Logger setup
+# ---------------------------------------------------------------------------
+
+# Use richuru for nicer console output if it's available.
+try:
+    import richuru
+
+    richuru.install()
+except ImportError:
+    pass
+
+
+_FILE_COL_WIDTH = 12
+_LEVEL_MAP = {"WARNING": "WARN", "SUCCESS": "OK"}
+
+
+def _log_format(record):
+    """Loguru format function — shared with ``_config._apply_verbose``."""
+    name = record["file"].name
+    if len(name) > _FILE_COL_WIDTH:
+        name = name[: _FILE_COL_WIDTH - 1] + "~"
+    name = name.ljust(_FILE_COL_WIDTH)
+    level = _LEVEL_MAP.get(record["level"].name, record["level"].name)
+    level = level.ljust(5)
+    return (
+        f"<green>{{time:HH:mm:ss}}</green> | <level>{level}</level> | "
+        f"<cyan>{name}</cyan>| <level>{{message}}</level>\n{{exception}}"
+    )
+
+
+def _make_log_filter():
+    """Build a loguru filter that respects ``get_config().log_rank``."""
+    cfg = get_config()
+
+    def _filter(record):
+        log_rank = cfg.log_rank
+        if log_rank == "all":
+            return True
+        rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
+        return str(rank) == str(log_rank)
+
+    return _filter
+
+
+logger.remove()
+logger.add(
+    sys.stdout,
+    format=_log_format,
+    filter=_make_log_filter(),
+    level=os.environ.get("LOGURU_LEVEL", "INFO"),
+)
+
+
+class _InterceptHandler(logging.Handler):
+    """Forward stdlib logging records into loguru."""
+
+    def emit(self, record):
+        logger.log(record.levelname, record.getMessage())
+
+
+logging.root.handlers = []
+logging.basicConfig(handlers=[_InterceptHandler()], level="INFO")
+
+
+# ---------------------------------------------------------------------------
+# Lazy heavy attributes (PEP 562)
+# ---------------------------------------------------------------------------
+
+# Mapping of attribute -> (module path, attr name within that module).
+# Accessing any of these triggers a one-time submodule import + the deferred
+# init below.
+_LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    # Core
+    "Manager": ("stable_pretraining.manager", "Manager"),
+    "Module": ("stable_pretraining.module", "Module"),
+    "TeacherStudentWrapper": (
+        "stable_pretraining.backbone.utils",
+        "TeacherStudentWrapper",
+    ),
+    # Callbacks (re-exported from .callbacks)
+    "EarlyStopping": ("stable_pretraining.callbacks", "EarlyStopping"),
+    "ImageRetrieval": ("stable_pretraining.callbacks", "ImageRetrieval"),
+    "LiDAR": ("stable_pretraining.callbacks", "LiDAR"),
+    "LoggingCallback": ("stable_pretraining.callbacks", "LoggingCallback"),
+    "ModuleSummary": ("stable_pretraining.callbacks", "ModuleSummary"),
+    "OnlineKNN": ("stable_pretraining.callbacks", "OnlineKNN"),
+    "OnlineProbe": ("stable_pretraining.callbacks", "OnlineProbe"),
+    "OnlineWriter": ("stable_pretraining.callbacks", "OnlineWriter"),
+    "RankMe": ("stable_pretraining.callbacks", "RankMe"),
+    "TeacherStudentCallback": (
+        "stable_pretraining.callbacks",
+        "TeacherStudentCallback",
+    ),
+    "TrainerInfo": ("stable_pretraining.callbacks", "TrainerInfo"),
+    # Callback registry helpers
+    "log": ("stable_pretraining.callbacks.registry", "log"),
+    "log_dict": ("stable_pretraining.callbacks.registry", "log_dict"),
+    # Loggers
+    "TrackioLogger": ("stable_pretraining.loggers", "TrackioLogger"),
+    "SwanLabLogger": ("stable_pretraining.loggers", "SwanLabLogger"),
+    # Registry
+    "RegistryLogger": ("stable_pretraining.registry", "RegistryLogger"),
+    "open_registry": ("stable_pretraining.registry", "open_registry"),
+}
+
+# Sub-packages exposed as attributes of `stable_pretraining`.
+_LAZY_SUBMODULES: set[str] = {
+    "backbone",
+    "callbacks",
+    "data",
+    "loggers",
+    "losses",
+    "module",
+    "optim",
+    "registry",
+    "static",
+    "utils",
+}
+
+
+_DEFERRED_INIT_DONE = False
+
+
+def _do_deferred_init() -> None:
+    """Run the one-time deferred setup.
+
+    Used to live at import time but pulls in Lightning or HuggingFace
+    ``datasets`` (both expensive). Runs the first time a heavy attribute is
+    accessed via ``__getattr__``.
+    """
+    global _DEFERRED_INIT_DONE
+    if _DEFERRED_INIT_DONE:
+        return
+    _DEFERRED_INIT_DONE = True
+
+    # Apply Lightning's manual-optimisation patch (needs Lightning loaded).
+    try:
+        from .utils.lightning_patch import apply_manual_optimization_patch
+
+        apply_manual_optimization_patch()
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+    # Adjust HuggingFace datasets logging if available.
+    try:
+        import datasets
+
+        datasets.logging.set_verbosity_info()
+    except (ModuleNotFoundError, AttributeError):
+        # AttributeError can occur with pyarrow version incompatibilities.
+        pass
+
+
+def __getattr__(name: str):
+    if name in _LAZY_SUBMODULES:
+        mod = importlib.import_module(f".{name}", __name__)
+        globals()[name] = mod
+        _do_deferred_init()
+        return mod
+    if name in _LAZY_ATTRS:
+        modpath, attrname = _LAZY_ATTRS[name]
+        mod = importlib.import_module(modpath)
+        attr = getattr(mod, attrname)
+        globals()[name] = attr
+        _do_deferred_init()
+        return attr
+    if name == "SklearnCheckpoint":
+        # Conditional callback — only available when sklearn is installed.
+        if not SKLEARN_AVAILABLE:
+            globals()["SklearnCheckpoint"] = None
+            return None
+        from .callbacks import SklearnCheckpoint as _SC
+
+        globals()["SklearnCheckpoint"] = _SC
+        _do_deferred_init()
+        return _SC
+    raise AttributeError(f"module 'stable_pretraining' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(__all__) | set(globals().keys()))
+
 
 __all__ = [
     # Availability flags
     "SKLEARN_AVAILABLE",
     "WANDB_AVAILABLE",
+    "TRACKIO_AVAILABLE",
+    "SWANLAB_AVAILABLE",
+    # Global config
+    "set",
+    "get_config",
     # Callbacks
     "OnlineProbe",
     "SklearnCheckpoint",
@@ -77,7 +273,7 @@ __all__ = [
     "LiDAR",
     "ImageRetrieval",
     "TeacherStudentCallback",
-    # Modules
+    # Sub-packages
     "utils",
     "data",
     "module",
@@ -92,6 +288,14 @@ __all__ = [
     "TeacherStudentWrapper",
     "log",
     "log_dict",
+    # Loggers
+    "loggers",
+    "TrackioLogger",
+    "SwanLabLogger",
+    # Registry
+    "registry",
+    "RegistryLogger",
+    "open_registry",
     # Package info
     "__author__",
     "__license__",
@@ -100,71 +304,3 @@ __all__ = [
     "__url__",
     "__version__",
 ]
-
-# Register OmegaConf resolvers
-OmegaConf.register_new_resolver("eval", eval)
-
-# Setup logging
-
-# Try to install richuru for better formatting if available
-try:
-    import richuru
-
-    richuru.install()
-except ImportError:
-    pass
-
-
-def rank_zero_only_filter(record):
-    """Filter to only log on rank 0 in distributed training."""
-    import os
-
-    # Check common environment variables for distributed rank
-    rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))
-    return rank == "0" and record["level"].no >= logger.level("INFO").no
-
-
-logger.remove()
-logger.add(
-    sys.stdout,
-    format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <7}</level> (<cyan>{process}, {name}</cyan>) | <level>{message}</level>",
-    filter=rank_zero_only_filter,
-    level="INFO",
-)
-
-
-# Redirect standard logging to loguru
-class InterceptHandler(logging.Handler):
-    def emit(self, record):
-        logger.log(record.levelname, record.getMessage())
-        # Get corresponding Loguru level if it exists
-        # try:
-        #     level = logger.level(record.levelname).name
-        # except ValueError:
-        #     level = "INFO"
-
-        # Find caller from where originated the log message
-        # frame, depth = logging.currentframe(), 2
-        # while frame.f_code.co_filename == logging.__file__:
-        #     frame = frame.f_back
-        #     depth += 1
-        # logger.opt(depth=depth, exception=record.exc_info).log(
-        #     level, record.getMessage()
-        # )
-
-
-# Remove all handlers associated with the root logger object
-logging.root.handlers = []
-logging.basicConfig(handlers=[InterceptHandler()], level="INFO")
-
-# Try to set datasets logging verbosity if available
-try:
-    import datasets
-
-    datasets.logging.set_verbosity_info()
-except (ModuleNotFoundError, AttributeError):
-    # AttributeError can occur with pyarrow version incompatibilities
-    pass
-
-# Apply Lightning patch for manual optimization parameter support
-apply_manual_optimization_patch()
