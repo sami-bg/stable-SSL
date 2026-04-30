@@ -269,12 +269,7 @@ class Manager(submitit.helpers.Checkpointable):
 
         No-op when the trainer is not using FSDP. When FSDP is detected, logs
         the strategy subclass, sharding strategy, state-dict type, the count
-        of ``ignored_modules``, and the configured auto-wrap policy. If a
-        :class:`TeacherStudentWrapper` is also present, prints a one-line
-        reminder that student and teacher must wrap with identical policies
-        (the safety net is :func:`assert_aligned_wrapping` invoked from
-        :meth:`TeacherStudentWrapper.fsdp_setup`, but the user-facing warning
-        helps when a benchmark is migrated from DDP to FSDP).
+        of ``ignored_modules``, and the configured auto-wrap policy.
         """
         from stable_pretraining.utils.fsdp import (
             describe_fsdp_strategy,
@@ -297,7 +292,7 @@ class Manager(submitit.helpers.Checkpointable):
                 "\t\t- TeacherStudentWrapper present under FSDP: student and "
                 "teacher must wrap with identical policies for the in-place EMA "
                 "update to be correct. assert_aligned_wrapping() is the safety "
-                "net but plan ahead — see docs/fsdp.md (when added)."
+                "net but plan ahead — see docs/fsdp.md."
             )
 
     def validate(self):

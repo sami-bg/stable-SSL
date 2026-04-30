@@ -1,4 +1,4 @@
-"""Phase 0 tests: distributed test infrastructure and gather utility fix.
+"""Distributed test infrastructure and gather utility fix.
 
 These tests must run on a CPU-only laptop with the gloo backend.
 """
@@ -57,11 +57,6 @@ def _all_ranks_succeed(rank: int, world_size: int) -> None:
 
 def test_run_distributed_happy_path():
     run_distributed(_all_ranks_succeed, world_size=2)
-
-
-# ---------------------------------------------------------------------------
-# Phase 0 prerequisite: the all_gather/all_reduce utility actually gathers.
-# ---------------------------------------------------------------------------
 
 
 def _all_gather_returns_world_size_tensors(rank: int, world_size: int) -> None:

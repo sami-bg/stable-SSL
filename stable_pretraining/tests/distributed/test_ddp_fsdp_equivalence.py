@@ -1,4 +1,4 @@
-"""Phase 3: DDP vs FSDP equivalence — the keystone correctness suite.
+"""DDP vs FSDP equivalence — the keystone correctness suite.
 
 For each loss/method, we run one forward+backward+step under DDP, then under
 FSDP, then assert the loss and post-step parameters match within tolerance.

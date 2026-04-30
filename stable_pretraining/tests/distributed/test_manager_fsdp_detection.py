@@ -1,4 +1,4 @@
-"""Phase 6.1: Manager FSDP detection + logging.
+"""Manager FSDP detection + logging.
 
 Verifies:
 - :func:`is_fsdp_strategy` correctly identifies FSDP strategies (and trainers

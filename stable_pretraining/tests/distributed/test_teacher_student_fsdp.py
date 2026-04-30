@@ -1,4 +1,4 @@
-"""Phase 2 tests: TeacherStudentWrapper compatibility under FSDP.
+"""TeacherStudentWrapper compatibility under FSDP.
 
 The wrapper performs in-place EMA via
 ``zip(teacher.parameters(), student.parameters())``. Under FSDP this is correct

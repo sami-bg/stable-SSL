@@ -1,4 +1,4 @@
-"""Phase 6.2: FSDP checkpointing.
+"""FSDP checkpointing.
 
 Verifies the save / load round trip for FSDP-style sharded checkpoints, and
 that loading a DDP-format checkpoint into an FSDP run fails with a

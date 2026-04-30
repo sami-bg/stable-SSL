@@ -1,4 +1,4 @@
-"""Phase 4: callback compatibility under FSDP.
+"""Callback compatibility under FSDP.
 
 The :class:`stable_pretraining.callbacks.utils.TrainableCallback` system
 monkey-patches :meth:`Module.configure_model` and

@@ -1,4 +1,4 @@
-"""Phase 1 smoke tests: FSDP strategy construction and basic wrapping.
+"""FSDP strategy construction and basic wrapping.
 
 Two layers of tests:
 

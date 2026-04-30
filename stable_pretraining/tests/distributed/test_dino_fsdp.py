@@ -1,4 +1,4 @@
-"""Phase 5: DINO async center update under FSDP.
+"""DINO async center update under FSDP.
 
 :meth:`DINOv1Loss.update_center` (``losses/dino.py:215-227``) starts an
 :func:`torch.distributed.all_reduce` with ``async_op=True`` for the teacher

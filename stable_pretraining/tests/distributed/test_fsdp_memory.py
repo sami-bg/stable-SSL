@@ -1,4 +1,4 @@
-"""Phase 7: FSDP GPU memory and throughput regression guards.
+"""FSDP GPU memory and throughput regression guards.
 
 These tests verify that FSDP delivers its principal advertised benefit —
 **reduced peak memory** — when sharding optimizer state, parameters, and
