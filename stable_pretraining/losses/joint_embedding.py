@@ -300,18 +300,35 @@ class NTXEntLoss(InfoNCELoss):
 
         Returns:
             float: The computed contrastive loss.
+
+        Note:
+            ``_compute`` ``all_gather``s ``anchors`` and ``candidates`` across
+            ranks, producing a gathered logits matrix of shape
+            ``(2*N*world_size, 2*N*world_size)``. Targets and mask are
+            constructed at that **gathered** shape — every rank computes the
+            same global targets / mask deterministically from ``N`` and
+            ``world_size``. (For ``world_size=1`` this reduces to the
+            single-process behavior.)
         """
         anchors = torch.cat([z_i, z_j], dim=0)
         candidates = anchors
 
         N = z_i.size(0)
-        targets = torch.cat(
-            [
-                torch.arange(N, 2 * N, device=z_i.device),
-                torch.arange(N, device=z_i.device),
-            ]
-        )
-        # prevent self-matching by masking diagonal
-        mask = torch.eye(2 * N, dtype=torch.bool, device=z_i.device)
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            world_size = torch.distributed.get_world_size()
+        else:
+            world_size = 1
+        full_size = 2 * N * world_size
+
+        # For each gathered anchor at row k, its positive is the other view of
+        # the same sample on the same rank: shifted by N within its 2N block.
+        block_indices = torch.arange(full_size, device=z_i.device)
+        within_block = block_indices % (2 * N)
+        block_starts = block_indices - within_block
+        positives_within = (within_block + N) % (2 * N)
+        targets = block_starts + positives_within
+
+        # Mask the diagonal of the gathered logits (prevents self-matching).
+        mask = torch.eye(full_size, dtype=torch.bool, device=z_i.device)
 
         return self._compute(anchors, candidates, targets, mask=mask)

@@ -1,1 +1,1 @@
-version = "0.1.dev566+g6e681c43c.d20260430"
+version = "0.1.dev567+gc38cff828.d20260430"

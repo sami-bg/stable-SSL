@@ -67,12 +67,18 @@ write_to_template = "version = \"{version}\"\n"
 trackio = ["trackio", "gradio_client"]
 # SwanLab experiment tracking
 swanlab = ["swanlab"]
-# Development and documentation tools.
-# Pulls in the trackio + swanlab extras so the full test surface (including
-# experiment-tracking integrations) is exercised by ``pip install -e .[dev]``.
+# Development and documentation tools. Inlines the trackio + swanlab deps
+# (rather than referencing the standalone extras) so uv's pubgrub resolver
+# doesn't choke on a self-referential graph. The standalone ``[trackio]``
+# and ``[swanlab]`` extras above remain available for users who want just
+# one without the rest of the dev toolchain.
 dev = [
-    "stable-pretraining[trackio]",
-    "stable-pretraining[swanlab]",
+    # trackio (mirrors [trackio])
+    "trackio",
+    "gradio_client",
+    # swanlab (mirrors [swanlab])
+    "swanlab",
+    # tooling
     "pytest",
     "coverage",
     "pytest-cov",
