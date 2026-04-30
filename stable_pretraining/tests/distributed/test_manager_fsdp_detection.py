@@ -67,7 +67,7 @@ def test_describe_fsdp_strategy_for_our_strategy():
     )
     info = describe_fsdp_strategy(strat)
     assert info["is_fsdp"] is True
-    assert info["subclass"] == "StableSSLFSDPStrategy"
+    assert info["subclass"] == "CallbackAwareFSDPStrategy"
     assert "FULL_SHARD" in info["sharding_strategy"]
     assert "sharded" in info["state_dict_type"]
     assert info["n_ignored_modules"] == 0
@@ -126,7 +126,7 @@ def test_log_fsdp_info_logs_for_fsdp(caplog):
 
     text = "\n".join(captured)
     assert "FSDP STRATEGY DETECTED" in text
-    assert "subclass: StableSSLFSDPStrategy" in text
+    assert "subclass: CallbackAwareFSDPStrategy" in text
     assert "sharding_strategy" in text
     assert "state_dict_type" in text
 

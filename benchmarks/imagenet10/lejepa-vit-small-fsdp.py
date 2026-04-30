@@ -14,7 +14,7 @@ Scales transparently to multi-GPU when more devices become available:
   ``Block`` class via :func:`default_auto_wrap_policy`.
 
 Linear-probe and KNN evaluation callbacks are auto-excluded from FSDP
-sharding by :class:`StableSSLFSDPStrategy` (their parameters / circular
+sharding by :class:`CallbackAwareFSDPStrategy` (their parameters / circular
 buffers belong to the callbacks' own optimizers and lookups).
 """
 
@@ -198,7 +198,7 @@ def main():
     # --- FSDP strategy (the only meaningful diff vs the DDP variant) -------
     # ``default_auto_wrap_policy(model)`` auto-detects the timm ``Block``
     # class (≥2 occurrences) and returns a ``ModuleWrapPolicy`` over it. The
-    # ``StableSSLFSDPStrategy`` returned by ``make_fsdp_strategy`` adds
+    # ``CallbackAwareFSDPStrategy`` returned by ``make_fsdp_strategy`` adds
     # ``module.callbacks_modules`` and ``module.callbacks_metrics`` (where
     # the OnlineProbe / OnlineKNN / RankMe state lives) to ``ignored_modules``
     # so those parameters and buffers are never sharded.

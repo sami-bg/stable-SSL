@@ -4,9 +4,9 @@ Provides:
 - :func:`default_auto_wrap_policy`: a sensible default policy that wraps
   transformer / residual blocks.
 - :func:`make_fsdp_strategy`: a Hydra-friendly factory returning a
-  :class:`StableSSLFSDPStrategy` that automatically excludes
+  :class:`CallbackAwareFSDPStrategy` that automatically excludes
   ``callbacks_modules`` and ``callbacks_metrics`` from sharding.
-- :class:`StableSSLFSDPStrategy`: subclass of Lightning's
+- :class:`CallbackAwareFSDPStrategy`: subclass of Lightning's
   :class:`~lightning.pytorch.strategies.FSDPStrategy` that injects callback
   containers into ``ignored_modules`` at model setup time, since these
   containers hold callback-owned modules with their own optimizers.
@@ -21,9 +21,8 @@ main FSDP unit would put them out of reach of the callback's optimizer.
 
 from __future__ import annotations
 
-from typing import Iterable, Optional, Set, Type, Union
+from typing import Iterable, Literal, Optional, Set, Type, Union
 
-import torch
 import torch.nn as nn
 from loguru import logger as logging
 
@@ -31,7 +30,6 @@ try:
     from lightning.pytorch.strategies import FSDPStrategy
     from torch.distributed.fsdp import (
         CPUOffload,
-        FullyShardedDataParallel,
         ShardingStrategy,
     )
     from torch.distributed.fsdp.wrap import (
@@ -48,7 +46,7 @@ except ImportError:  # pragma: no cover
 __all__ = [
     "default_auto_wrap_policy",
     "make_fsdp_strategy",
-    "StableSSLFSDPStrategy",
+    "CallbackAwareFSDPStrategy",
     "find_callback_containers",
     "assert_aligned_wrapping",
     "is_fsdp_strategy",
@@ -229,13 +227,18 @@ def default_auto_wrap_policy(
     return partial(size_based_auto_wrap_policy, min_num_params=min_num_params)
 
 
-class StableSSLFSDPStrategy(FSDPStrategy):  # type: ignore[misc]
+class CallbackAwareFSDPStrategy(FSDPStrategy):  # type: ignore[misc]
     """:class:`FSDPStrategy` that auto-excludes callback containers from sharding.
 
     On model setup, walks the LightningModule tree and adds every
     ``callbacks_modules`` / ``callbacks_metrics`` :class:`torch.nn.ModuleDict`
     found to FSDP's ``ignored_modules``. Existing user-supplied
     ``ignored_modules`` are preserved.
+
+    Most users should construct this via :func:`make_fsdp_strategy` rather
+    than instantiating it directly. Subclass this class if you need to extend
+    the wrap-time hook (e.g. to add cluster- or project-specific
+    ``ignored_modules`` beyond the callback containers).
     """
 
     def _setup_model(self, model: nn.Module) -> nn.Module:  # type: ignore[override]
@@ -253,7 +256,7 @@ class StableSSLFSDPStrategy(FSDPStrategy):  # type: ignore[misc]
                     seen_ids.add(id(c))
             self.kwargs["ignored_modules"] = existing
             logging.info(
-                f"StableSSLFSDPStrategy: excluding {len(containers)} callback "
+                f"CallbackAwareFSDPStrategy: excluding {len(containers)} callback "
                 f"container(s) from FSDP sharding"
             )
         return super()._setup_model(model)
@@ -264,7 +267,7 @@ def make_fsdp_strategy(
     auto_wrap_policy=None,
     sharding_strategy: Union[str, "ShardingStrategy"] = "FULL_SHARD",
     cpu_offload: Union[bool, "CPUOffload", None] = False,
-    state_dict_type: str = "sharded",
+    state_dict_type: Literal["full", "sharded"] = "sharded",
     ignore_callbacks: bool = True,
     **kwargs,
 ):
@@ -283,7 +286,7 @@ def make_fsdp_strategy(
         state_dict_type: ``"sharded"`` or ``"full"``. Sharded scales better;
             full is more compatible with non-FSDP loading.
         ignore_callbacks: When ``True`` (default), returns
-            :class:`StableSSLFSDPStrategy` which excludes
+            :class:`CallbackAwareFSDPStrategy` which excludes
             ``callbacks_modules`` / ``callbacks_metrics`` from sharding. Set
             ``False`` to use the vanilla :class:`FSDPStrategy`.
         **kwargs: Forwarded to :class:`FSDPStrategy` and ultimately to
@@ -298,7 +301,7 @@ def make_fsdp_strategy(
     if isinstance(cpu_offload, bool):
         cpu_offload = CPUOffload(offload_params=cpu_offload)
 
-    cls = StableSSLFSDPStrategy if ignore_callbacks else FSDPStrategy
+    cls = CallbackAwareFSDPStrategy if ignore_callbacks else FSDPStrategy
     return cls(
         auto_wrap_policy=auto_wrap_policy,
         sharding_strategy=sharding_strategy,

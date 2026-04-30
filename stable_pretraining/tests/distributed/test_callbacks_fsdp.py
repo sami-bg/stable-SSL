@@ -14,7 +14,7 @@ This test file verifies that:
    ``callbacks_modules`` and ``callbacks_metrics`` containers populated by
    real :class:`OnlineProbe`, :class:`OnlineKNN`, and :class:`RankMe`
    instances after :meth:`Module.configure_model` runs.
-2. **Strategy wiring (CPU)**: :class:`StableSSLFSDPStrategy._setup_model`
+2. **Strategy wiring (CPU)**: :class:`CallbackAwareFSDPStrategy._setup_model`
    adds those containers to FSDP's ``ignored_modules`` before super()'s
    wrap, with no double-add.
 3. **Wrap-time (CPU)**: a Module + OnlineProbe wrapped manually with
@@ -41,7 +41,7 @@ from stable_pretraining.tests.distributed.conftest import (
     tiny_backbone,
 )
 from stable_pretraining.utils.fsdp import (
-    StableSSLFSDPStrategy,
+    CallbackAwareFSDPStrategy,
     find_callback_containers,
 )
 
@@ -163,12 +163,12 @@ def test_find_callback_containers_with_rankme():
 
 
 # ---------------------------------------------------------------------------
-# 2. Strategy wiring: StableSSLFSDPStrategy injects ignored_modules.
+# 2. Strategy wiring: CallbackAwareFSDPStrategy injects ignored_modules.
 # ---------------------------------------------------------------------------
 
 
 def _exercise_strategy_setup(module, kwargs_in):
-    """Run ``StableSSLFSDPStrategy._setup_model`` with a real instance but a
+    """Run ``CallbackAwareFSDPStrategy._setup_model`` with a real instance but a
     mocked super-class ``_setup_model``. Returns the kwargs the super would
     have observed."""
     from unittest.mock import patch
@@ -181,7 +181,7 @@ def _exercise_strategy_setup(module, kwargs_in):
         captured["ignored_modules"] = list(self.kwargs.get("ignored_modules", []))
         return model
 
-    fake = StableSSLFSDPStrategy.__new__(StableSSLFSDPStrategy)
+    fake = CallbackAwareFSDPStrategy.__new__(CallbackAwareFSDPStrategy)
     fake.kwargs = dict(kwargs_in)
 
     with patch.object(FSDPStrategy, "_setup_model", fake_super_setup):
@@ -190,7 +190,7 @@ def _exercise_strategy_setup(module, kwargs_in):
 
 
 def test_strategy_setup_model_injects_ignored_modules():
-    """``StableSSLFSDPStrategy._setup_model`` must add the discovered
+    """``CallbackAwareFSDPStrategy._setup_model`` must add the discovered
     callback containers to ``self.kwargs["ignored_modules"]`` before
     delegating to super()._setup_model."""
     import torchmetrics

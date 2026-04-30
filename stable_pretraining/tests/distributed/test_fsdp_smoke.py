@@ -27,7 +27,7 @@ from stable_pretraining.tests.distributed.conftest import (
     tiny_projector,
 )
 from stable_pretraining.utils.fsdp import (
-    StableSSLFSDPStrategy,
+    CallbackAwareFSDPStrategy,
     default_auto_wrap_policy,
     find_callback_containers,
     make_fsdp_strategy,
@@ -49,7 +49,7 @@ def test_make_fsdp_strategy_constructs():
         cpu_offload=False,
         state_dict_type="sharded",
     )
-    assert isinstance(strat, StableSSLFSDPStrategy)
+    assert isinstance(strat, CallbackAwareFSDPStrategy)
 
 
 def test_make_fsdp_strategy_without_callback_exclusion():
