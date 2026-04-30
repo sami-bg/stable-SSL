@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
 from .sampler import RepeatedRandomSampler
-from .datasets import HFDataset
+from .datasets import HFMapDataset, HFIterableDataset
 
 
 class DictFormat(Dataset):
@@ -53,15 +53,15 @@ class DataModule(pl.LightningDataModule):
         logging.info("Setting up DataModule")
         if train is None:
             logging.warning(
-                "⚠️⚠️⚠️ train was not passed to DataModule, it is required"
-                "unless you only validate ⚠️⚠️⚠️"
+                "! train was not passed to DataModule, it is required "
+                "unless you only validate"
             )
         self.train = self._format_data_conf(train, "train")
         self.test = self._format_data_conf(test, "test")
         if val is None:
             logging.warning(
-                "⚠️⚠️⚠️ val was not passed to DataModule, it is required"
-                "unless you set `num_sanity_val_steps=0` and `val_check_interval=0` ⚠️⚠️⚠️"
+                "! val was not passed to DataModule, it is required "
+                "unless you set `num_sanity_val_steps=0` and `val_check_interval=0`"
             )
         self.val = self._format_data_conf(val, "val")
         self.predict = self._format_data_conf(predict, "predict")
@@ -75,12 +75,12 @@ class DataModule(pl.LightningDataModule):
             return None
         if isinstance(conf, DataLoader):
             return conf
-        elif isinstance(conf["dataset"], HFDataset):
-            logging.info(f"\t● {stage} already has an instantiated dataset! ✅")
+        elif isinstance(conf["dataset"], (HFMapDataset, HFIterableDataset)):
+            logging.info(f"  {stage} already has an instantiated dataset")
         elif type(conf) is dict:
-            logging.info(f"\t● {stage} has `dict` type and no instantiated dataset!")
+            logging.info(f"  {stage} has `dict` type and no instantiated dataset")
             conf = OmegaConf.create(conf)
-            logging.info(f"\t● {stage} created `DictConfig`! ✅")
+            logging.info(f"  {stage} created DictConfig")
         elif type(conf) is not DictConfig:
             raise ValueError(f"`{conf}` must be a dict of DictConfig")
         sign = inspect.signature(DataLoader)
@@ -93,7 +93,7 @@ class DataModule(pl.LightningDataModule):
             if k not in sign.parameters:
                 raise ValueError(f"{k} given in conf is not a DataLoader kwarg")
         conf = copy.deepcopy(conf)
-        logging.info(f"\t● {stage} conf is valid and saved! ✅")
+        logging.success(f"✓ {stage} conf is valid and saved")
         return conf
 
     def setup(self, stage):
@@ -120,12 +120,12 @@ class DataModule(pl.LightningDataModule):
             self.predict_dataset = d = hydra.utils.instantiate(
                 self.predict.dataset, _convert_="object", _recursive_=True
             )
-        logging.info(f"dataset for {stage} loaded!  ✅")
+        logging.success(f"✓ dataset for {stage} loaded")
         if d is not None:
-            logging.info(f"\t● length: {len(d)}")
-            logging.info(f"\t● columns: {d.column_names}")
+            logging.info(f"  length: {len(d)}")
+            logging.info(f"  columns: {d.column_names}")
         else:
-            logging.info("\t● setup was done by user")
+            logging.info("  setup was done by user")
 
     def _get_loader_kwargs(self, config, dataset):
         kwargs = dict()
@@ -141,6 +141,7 @@ class DataModule(pl.LightningDataModule):
         return kwargs
 
     def train_dataloader(self):
+        """Return the training DataLoader."""
         if isinstance(self.train, DataLoader):
             loader = self.train
         else:
@@ -181,6 +182,9 @@ class DataModule(pl.LightningDataModule):
         return loader
 
     def val_dataloader(self):
+        """Return the validation DataLoader (or an empty list if unset)."""
+        if self.val is None:
+            return []
         if isinstance(self.val, DataLoader):
             if hasattr(self.val.dataset, "set_pl_trainer"):
                 self.val.dataset.set_pl_trainer(self._trainer)
@@ -195,6 +199,7 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(dataset=self.val_dataset, **kwargs)
 
     def test_dataloader(self):
+        """Return the test DataLoader."""
         if isinstance(self.test, DataLoader):
             if hasattr(self.test.dataset, "set_pl_trainer"):
                 self.test.dataset.set_pl_trainer(self._trainer)
@@ -209,6 +214,7 @@ class DataModule(pl.LightningDataModule):
         return DataLoader(dataset=self.test_dataset, **kwargs)
 
     def predict_dataloader(self):
+        """Return the prediction DataLoader."""
         if isinstance(self.predict, DataLoader):
             if hasattr(self.predict.dataset, "set_pl_trainer"):
                 self.predict.dataset.set_pl_trainer(self._trainer)

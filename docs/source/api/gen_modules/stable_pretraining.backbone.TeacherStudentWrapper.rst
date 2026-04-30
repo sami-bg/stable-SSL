@@ -1,5 +1,5 @@
 ﻿TeacherStudentWrapper
-====================
+=====================
 
 .. currentmodule:: stable_pretraining.backbone
 

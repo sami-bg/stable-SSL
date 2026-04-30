@@ -17,6 +17,13 @@
 
 .. toctree::
     :maxdepth: 1
+    :caption: Guides
+
+    cache_dir
+    cli
+
+.. toctree::
+    :maxdepth: 1
     :caption: API
 
     api/backbone
@@ -27,3 +34,5 @@
     api/module
     api/monitors
     api/optim
+    api/registry
+    api/web

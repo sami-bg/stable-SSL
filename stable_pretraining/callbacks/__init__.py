@@ -3,6 +3,8 @@ from .checkpoint_sklearn import (
     WandbCheckpoint,
     StrictCheckpointCallback,
 )
+from .checkpoint_trackio import TrackioCheckpoint
+from .checkpoint_swanlab import SwanLabCheckpoint
 from .image_retrieval import ImageRetrieval
 from .knn import OnlineKNN
 from .latent_viz import LatentViz
@@ -19,9 +21,9 @@ from .earlystop import EpochMilestones
 from .wd_schedule import WeightDecayUpdater
 from .cleanup import CleanUpCallback
 from .env_info import EnvironmentDumpCallback
-from .cpu_offload import CPUOffloadCallback
 from .registry import ModuleRegistryCallback
 from .unused_parameters import LogUnusedParametersOnce
+from .hf_models import HuggingFaceCheckpointCallback
 
 __all__ = [
     OnlineProbe,
@@ -38,7 +40,6 @@ __all__ = [
     RankMe,
     LiDAR,
     ImageRetrieval,
-    CPUOffloadCallback,
     TeacherStudentCallback,
     CLIPZeroShot,
     EmbeddingCache,
@@ -49,4 +50,7 @@ __all__ = [
     EnvironmentDumpCallback,
     ModuleRegistryCallback,
     LogUnusedParametersOnce,
+    HuggingFaceCheckpointCallback,
+    TrackioCheckpoint,
+    SwanLabCheckpoint,
 ]

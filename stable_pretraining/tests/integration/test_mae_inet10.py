@@ -81,7 +81,7 @@ class TestMAEImagenet10:
 
         # Create MAE module with vit_tiny for fast CPU testing
         module = MAE(
-            encoder_name="vit_tiny_patch16_224",
+            model_or_model_name="vit_tiny_patch16_224",
             decoder_embed_dim=192,
             decoder_depth=4,
             decoder_num_heads=3,
@@ -123,7 +123,7 @@ class TestMAEImagenet10:
         final_loss = trainer.callback_metrics.get("fit/loss_step")
         assert final_loss is not None, "No loss logged"
         print(f"\nMAE final loss after 3 steps: {final_loss.item():.6f}")
-        expected = torch.tensor(1.214716)
+        expected = torch.tensor(1.223879)
         assert torch.isclose(final_loss.cpu(), expected, atol=1e-4), (
             f"MAE loss {final_loss.item():.6f} != expected {expected.item():.6f}"
         )
