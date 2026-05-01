@@ -401,7 +401,9 @@ def test_online_probe_gradient_flow_under_fsdp():
 
 
 def _queue_gathers_under_fsdp(rank: int, world_size: int) -> None:
-    """``OnlineQueue.on_validation_epoch_start`` calls
+    """Verify the gather path used by ``OnlineQueue`` works under NCCL.
+
+    ``OnlineQueue.on_validation_epoch_start`` calls
     ``pl_module.all_gather(tensor)``, which under the hood is
     ``torch.distributed.all_gather`` over the active backend. Verify the
     underlying gather works correctly under NCCL with rank-distinguishable

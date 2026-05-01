@@ -235,9 +235,11 @@ def _ac_composes_with_fsdp(rank: int, world_size: int) -> None:
 
 
 def test_fsdp_with_activation_checkpointing_composes():
-    """AC + FSDP must run end-to-end without breaking; we don't assert AC
-    saves memory because that depends on the model topology (see docstring
-    on ``_ac_composes_with_fsdp``)."""
+    """AC + FSDP must run end-to-end without breaking.
+
+    We don't assert AC saves memory because that depends on the model
+    topology (see docstring on ``_ac_composes_with_fsdp``).
+    """
     if torch.cuda.device_count() < 2:
         pytest.skip("requires 2+ CUDA devices")
     run_distributed(_ac_composes_with_fsdp, world_size=2, backend="nccl")

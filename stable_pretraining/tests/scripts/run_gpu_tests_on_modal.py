@@ -1,4 +1,4 @@
-"""Run GPU-marked tests on Modal.
+r"""Run GPU-marked tests on Modal.
 
 Most of the FSDP / distributed test suite is gated with ``@pytest.mark.gpu``
 because PyTorch's FSDP requires a non-CPU accelerator at forward time, and
@@ -54,9 +54,8 @@ Costs are per-second on Modal; a 1-minute run on 2x A10G is roughly $0.20.
 The first build takes longer (~5 min) because the PyTorch wheel is fetched
 fresh; subsequent runs reuse the cached image and start in <30 s.
 
-Notes
+Notes:
 -----
-
 - The image build mounts the working tree via ``add_local_dir`` honoring
   ``.gitignore`` — the venv, build artifacts, and run outputs aren't shipped.
 - ``--index-url https://pypi.org/simple/`` overrides Modal's
