@@ -401,41 +401,29 @@ def test_online_probe_gradient_flow_under_fsdp():
 
 
 def _queue_gathers_under_fsdp(rank: int, world_size: int) -> None:
-    """An OnlineQueue with ``gather_distributed=True`` must collect data from.
-
-    all ranks. We verify this by populating the underlying ordered queue with
-    rank-distinguishable tensors and triggering the gather path directly.
+    """``OnlineQueue.on_validation_epoch_start`` calls
+    ``pl_module.all_gather(tensor)``, which under the hood is
+    ``torch.distributed.all_gather`` over the active backend. Verify the
+    underlying gather works correctly under NCCL with rank-distinguishable
+    tensors — that's the only mechanism FSDP could break for the queue.
     """
+    import torch.distributed as dist
+
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA test executed without CUDA")
 
     device = torch.device(f"cuda:{rank}")
     torch.cuda.set_device(rank)
 
-    # Construct a minimal LightningModule-like object with all_gather.
-    # Lightning's pl_module.all_gather works under any strategy.
-    import lightning as pl
-
-    class _M(pl.LightningModule):
-        def configure_model(self):
-            pass
-
-    pl_mod = _M()
-    pl_mod.to(device)
-
-    # Use Lightning's all_gather under the hood. This is what
-    # OnlineQueue.on_validation_epoch_start calls.
     local_tensor = torch.full((4, 8), float(rank), device=device)
-    gathered = pl_mod.all_gather(local_tensor)
-    # Lightning's all_gather returns shape (world_size, *local_shape) by default.
-    assert gathered.shape[0] == world_size, (
-        f"expected world_size={world_size}, got {gathered.shape[0]}"
-    )
+    gathered_list = [torch.empty_like(local_tensor) for _ in range(world_size)]
+    dist.all_gather(gathered_list, local_tensor)
+
     # Each rank's slice should match its rank value.
     for r in range(world_size):
         expected = torch.full((4, 8), float(r), device=device)
-        assert torch.allclose(gathered[r], expected), (
-            f"rank {r} slice mismatch: {gathered[r]}"
+        assert torch.allclose(gathered_list[r], expected), (
+            f"rank {r} slice mismatch: {gathered_list[r]}"
         )
 
 

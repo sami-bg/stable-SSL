@@ -123,17 +123,19 @@ class _SmokeModel(nn.Module):
 def _supervised_one_step(rank: int, world_size: int) -> None:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
+    torch.cuda.set_device(rank)
+    device = torch.device(f"cuda:{rank}")
     torch.manual_seed(42)
-    model = _SmokeModel()
+    model = _SmokeModel().to(device)
     fsdp_model = FSDP(
         model,
         auto_wrap_policy=default_auto_wrap_policy(model, min_num_params=10),
-        device_id=None,  # CPU
+        device_id=rank,
     )
 
     optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
     batch = seeded_batch(seed=rank, batch_size=4)
-    out = fsdp_model(batch["image"])
+    out = fsdp_model(batch["image"].to(device))
     target = torch.zeros_like(out)
     loss = ((out - target) ** 2).mean()
     assert torch.isfinite(loss), f"loss is not finite: {loss}"
@@ -153,7 +155,7 @@ def test_fsdp_one_step_supervised():
 
     CUDA-only: PyTorch FSDP requires a non-CPU accelerator at forward time.
     """
-    run_distributed(_supervised_one_step, world_size=2)
+    run_distributed(_supervised_one_step, world_size=2, backend="nccl")
 
 
 # ---------------------------------------------------------------------------
@@ -222,14 +224,16 @@ def _wrap_everything_with_zero_threshold(rank: int, world_size: int) -> None:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
 
+    torch.cuda.set_device(rank)
+    device = torch.device(f"cuda:{rank}")
     torch.manual_seed(0)
-    model = _SmokeModel()
+    model = _SmokeModel().to(device)
     policy = partial(size_based_auto_wrap_policy, min_num_params=0)
     # This forces FSDP to wrap every recursive child. It should still work
     # (degenerate but valid), not silently corrupt training. Run a forward
     # to confirm it doesn't blow up.
-    fsdp_model = FSDP(model, auto_wrap_policy=policy, device_id=None)
-    out = fsdp_model(torch.randn(2, 16))
+    fsdp_model = FSDP(model, auto_wrap_policy=policy, device_id=rank)
+    out = fsdp_model(torch.randn(2, 16, device=device))
     assert torch.isfinite(out).all(), "forward produced non-finite output"
 
 
@@ -239,7 +243,7 @@ def test_extreme_wrap_policy_either_works_or_errors_clearly():
 
     CUDA-only: forward pass requires a non-CPU accelerator under FSDP.
     """
-    run_distributed(_wrap_everything_with_zero_threshold, world_size=2)
+    run_distributed(_wrap_everything_with_zero_threshold, world_size=2, backend="nccl")
 
 
 # ---------------------------------------------------------------------------

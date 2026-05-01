@@ -228,17 +228,19 @@ def _ema_under_fsdp_matches_single_process(rank: int, world_size: int) -> None:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 
+    torch.cuda.set_device(rank)
+    device = torch.device(f"cuda:{rank}")
     torch.manual_seed(42)
-    backbone = tiny_backbone()
+    backbone = tiny_backbone().to(device)
     wrapper = TeacherStudentWrapper(
         backbone,
         warm_init=True,
         base_ema_coefficient=0.5,
         final_ema_coefficient=1.0,
-    )
+    ).to(device)
 
     policy = default_auto_wrap_policy(backbone, min_num_params=10)
-    wrapper.fsdp_setup(auto_wrap_policy=policy)
+    wrapper.fsdp_setup(auto_wrap_policy=policy, device_id=rank)
 
     # Run several EMA updates after mutating the student.
     wrapper.train()
@@ -259,4 +261,6 @@ def _ema_under_fsdp_matches_single_process(rank: int, world_size: int) -> None:
 @pytest.mark.gpu
 def test_ema_under_fsdp_does_not_corrupt():
     """CUDA-only: full FSDP wrap, EMA updates, gather full teacher params."""
-    run_distributed(_ema_under_fsdp_matches_single_process, world_size=2)
+    run_distributed(
+        _ema_under_fsdp_matches_single_process, world_size=2, backend="nccl"
+    )
