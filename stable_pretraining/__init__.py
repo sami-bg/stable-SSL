@@ -211,6 +211,17 @@ def _do_deferred_init() -> None:
     except Exception:  # pragma: no cover - defensive
         pass
 
+    # Install crash-safe checkpoint saving (writes to ``.<name>.<rand>.tmp``
+    # in the target dir, then atomically renames). Replaces Lightning's
+    # built-in ``_atomic_save`` which falls back to non-atomic copy across
+    # filesystems (target on NFS + temp on /tmp = the common cluster setup).
+    try:
+        from .utils.atomic_checkpoint import install_atomic_checkpoint_save
+
+        install_atomic_checkpoint_save()
+    except Exception:  # pragma: no cover - defensive
+        pass
+
     # Adjust HuggingFace datasets logging if available.
     try:
         import datasets
