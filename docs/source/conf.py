@@ -63,10 +63,33 @@ intersphinx_mapping = {
     "numpy": ("https://numpy.org/doc/stable/", None),
     "torch": ("https://pytorch.org/docs/stable/", None),
     "python": ("https://docs.python.org/3/", None),
+    "lightning": ("https://lightning.ai/docs/pytorch/stable/", None),
+    "omegaconf": ("https://omegaconf.readthedocs.io/en/latest/", None),
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# Exclude the auto-generated ``sphinx-apidoc`` output that the CI step
+# ``sphinx-apidoc -o docs/source stable_pretraining/`` drops at the source
+# root. The hand-written ``api/*.rst`` already covers every module, and
+# parsing both sets produces dozens of "duplicate object description"
+# warnings (each symbol gets indexed twice).
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "stable_pretraining*.rst",
+    "modules.rst",
+]
+
+# References that we don't want to chase. Lightning + omegaconf intersphinx
+# resolves most class names; the remainder are plain English nouns that
+# napoleon mistakenly treats as type names ("optional", "callable",
+# "Dictionary containing ..."), or built-ins it can't link.
+nitpick_ignore_regex = [
+    (r"py:.*", r"^optional$"),
+    (r"py:.*", r"^callable$"),
+    (r"py:.*", r"^Dictionary containing.*"),
+]
 
 sphinx_gallery_conf = {
     "examples_dirs": ["../../examples/"],
