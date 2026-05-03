@@ -211,6 +211,17 @@ def _do_deferred_init() -> None:
     except Exception:  # pragma: no cover - defensive
         pass
 
+    # Install crash-safe checkpoint saving (writes to ``.<name>.<rand>.tmp``
+    # in the target dir, then atomically renames). Replaces Lightning's
+    # built-in ``_atomic_save`` which falls back to non-atomic copy across
+    # filesystems (target on NFS + temp on /tmp = the common cluster setup).
+    try:
+        from .utils.atomic_checkpoint import install_atomic_checkpoint_save
+
+        install_atomic_checkpoint_save()
+    except Exception:  # pragma: no cover - defensive
+        pass
+
     # Adjust HuggingFace datasets logging if available.
     try:
         import datasets
@@ -248,7 +259,14 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(__all__) | set(globals().keys()))
+    # Use builtins.set explicitly: ``set`` at module scope is the public
+    # ``spt.set(...)`` config helper imported from ``._config`` (it shadows
+    # the builtin), so calling ``set(__all__)`` here would invoke that
+    # helper and TypeError. Reach for the builtin via ``builtins`` to keep
+    # both the runtime helper and this dir() function working.
+    import builtins
+
+    return sorted(builtins.set(__all__) | builtins.set(globals().keys()))
 
 
 __all__ = [

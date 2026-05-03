@@ -838,6 +838,33 @@ class Manager(submitit.helpers.Checkpointable):
                     )
                 cb.dirpath = str(save_dir)
 
+        # Same redirect for HuggingFaceCheckpointCallback. Without this, an
+        # absolute ``save_dir`` (e.g. ``/mnt/data/spt_cache/hf_exports``)
+        # gets reused by every array task — 1024 jobs ``rmtree``-ing the
+        # same ``last/`` subdir produce ``FileNotFoundError`` storms.
+        # Per-run redirection puts each export under
+        # ``<run_dir>/hf_exports/`` so concurrency on the export path is
+        # impossible by construction.
+        try:
+            from .callbacks.hf_models import HuggingFaceCheckpointCallback
+        except Exception:  # pragma: no cover - HF is optional
+            HuggingFaceCheckpointCallback = None
+        if HuggingFaceCheckpointCallback is not None:
+            hf_save_dir = run_dir / "hf_exports"
+            for cb in self._trainer.callbacks:
+                if isinstance(cb, HuggingFaceCheckpointCallback):
+                    old_dir = cb.save_dir
+                    if (
+                        old_dir is not None
+                        and Path(old_dir).resolve() != hf_save_dir.resolve()
+                    ):
+                        logging.warning(
+                            f"  Redirecting HuggingFaceCheckpointCallback "
+                            f"from '{old_dir}' to '{hf_save_dir}' "
+                            "(cache_dir is active — prevents races on a shared cache)"
+                        )
+                    cb.save_dir = hf_save_dir
+
         # Add a requeue checkpoint (last.ckpt) so preemption recovery works
         # regardless of what the user's callbacks save.  Can be disabled via
         # spt.set(requeue_checkpoint=False) to save time/disk.

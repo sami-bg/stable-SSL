@@ -1,5 +1,7 @@
-import shutil
 import inspect
+import os
+import shutil
+import time
 import traceback
 from pathlib import Path
 from typing import Dict, Any
@@ -195,37 +197,82 @@ class HuggingFaceCheckpointCallback(Callback):
         subdir_name = f"step_{step}" if self.per_step else "last"
         hf_step_dir = save_dir / subdir_name
 
-        # Atomic overwrite: clear the target if it exists, then re-create.
-        if hf_step_dir.exists():
-            logger.debug(f"Overwriting previous HF directory: {hf_step_dir}")
-            shutil.rmtree(hf_step_dir)
-        hf_step_dir.mkdir(parents=True, exist_ok=True)
+        # Race-safe write protocol — multiple processes may legitimately
+        # write to the *same* ``save_dir`` (e.g. an array job sharing a
+        # global HF export cache). The previous "rmtree-then-mkdir-then-
+        # write" sequence had three races:
+        #   1. Job A's ``rmtree`` runs while Job B is mid-``save_pretrained``
+        #      → ``FileNotFoundError`` for B
+        #   2. Both jobs see ``exists() == True`` and both ``rmtree``;
+        #      second one fails with ``FileNotFoundError``
+        #   3. Job A clears, Job B reads (e.g. AutoModel.from_pretrained)
+        #      between A's rmtree and A's re-creation → missing files
+        #
+        # Fix: every process writes into a *unique* temp dir, then
+        # atomically renames it into place at the end. The temp dir lives
+        # alongside the target so the rename is same-FS atomic. Between
+        # the move-aside and install steps a reader can still see "no
+        # last/" briefly, but never a half-written one.
+        tmp_uid = f"{os.getpid()}.{int(time.monotonic_ns()):x}"
+        tmp_dir = save_dir / f".{subdir_name}.tmp.{tmp_uid}"
+        # Make sure no stale temp from a previously-killed run blocks us.
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"[hf_export] writing to temp dir {tmp_dir}")
 
         hf_submodules = self._get_hf_submodules(pl_module)
 
-        for name, model in hf_submodules.items():
-            model_save_path = hf_step_dir / name
-            # Always create with parents=True so a missing intermediate
-            # directory (e.g., partial cleanup, stale path) cannot crash.
-            model_save_path.mkdir(parents=True, exist_ok=True)
+        try:
+            for name, model in hf_submodules.items():
+                model_save_path = tmp_dir / name
+                model_save_path.mkdir(parents=True, exist_ok=True)
 
-            # Extract module/config filenames for the AutoModel map
-            module_fn = Path(inspect.getfile(model.__class__)).stem
-            config_fn = Path(inspect.getfile(model.config.__class__)).stem
+                # Extract module/config filenames for the AutoModel map
+                module_fn = Path(inspect.getfile(model.__class__)).stem
+                config_fn = Path(inspect.getfile(model.config.__class__)).stem
 
-            # Update auto_map so AutoModel knows which .py file contains the classes
-            model.config.auto_map = {
-                "AutoConfig": f"{config_fn}.{model.config.__class__.__name__}",
-                "AutoModel": f"{module_fn}.{model.__class__.__name__}",
-            }
+                # Update auto_map so AutoModel knows which .py file contains the classes
+                model.config.auto_map = {
+                    "AutoConfig": f"{config_fn}.{model.config.__class__.__name__}",
+                    "AutoModel": f"{module_fn}.{model.__class__.__name__}",
+                }
 
-            # 1. Save Weights & Config.json
-            # Note: Using the model instance (not pl_module) strips all
-            # lightning/DDP prefixes automatically.
-            model.save_pretrained(model_save_path)
+                # 1. Save Weights & Config.json
+                # Note: Using the model instance (not pl_module) strips all
+                # lightning/DDP prefixes automatically.
+                model.save_pretrained(model_save_path)
 
-            # 2. Copy code dependencies
-            self._copy_dependency_tree(model, model_save_path)
+                # 2. Copy code dependencies
+                self._copy_dependency_tree(model, model_save_path)
+
+            # Commit: move the existing target aside (if any), install the
+            # new one, then drop the old. Both renames are atomic;
+            # ``ignore_errors`` handles the corner case of a concurrent
+            # process having already moved/deleted the dirs.
+            old_aside = save_dir / f".{subdir_name}.old.{tmp_uid}"
+            try:
+                if hf_step_dir.exists():
+                    os.rename(hf_step_dir, old_aside)
+            except FileNotFoundError:
+                # Lost the race to a concurrent commit — that's fine, the
+                # target slot is empty when we install ours next.
+                pass
+            try:
+                os.rename(tmp_dir, hf_step_dir)
+            except FileNotFoundError as e:
+                logger.warning(
+                    f"[hf_export] commit rename failed for {hf_step_dir}: {e}"
+                )
+                raise
+            if old_aside.exists():
+                shutil.rmtree(old_aside, ignore_errors=True)
+            logger.debug(f"[hf_export] ✓ committed {hf_step_dir}")
+        except BaseException:
+            # On any failure leave the previous good export intact and
+            # clean up our temp.
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
 
             logger.success(
                 f"Exported HF submodule '<green>{name}</green>' at step {step} -> {model_save_path}"
