@@ -64,8 +64,8 @@ plus one critical fix — see :ref:`callback_aware_strategy` below.
 
 For a complete worked example, compare these two scripts side by side:
 
-- ``benchmarks/imagenet10/lejepa-vit-small.py`` (DDP variant)
-- ``benchmarks/imagenet10/lejepa-vit-small-fsdp.py`` (FSDP variant)
+- ``benchmarks/imagenet10/lejepa_vit_small.py`` (single GPU variant)
+- ``benchmarks/imagenet10/lejepa_vit_small_fsdp.py`` (FSDP variant)
 
 The diff is intentionally small: imports, a strategy block, and the
 ``strategy=`` argument to ``pl.Trainer``. Everything else (model, data,
