@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>stable_pretraining.manager &#8212; stable-pretraining 0.1.dev1+g7a0ec36ee documentation</title>
+    <title>stable_pretraining.manager &#8212; stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../_static/documentation_options.js?v=5c5175e4"></script>
+    <script src="../../../_static/documentation_options.js?v=01a7f8d8"></script>
     <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../../_static/sg-tags.js?v=d80f6fa4"></script>
@@ -129,7 +129,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g7a0ec36ee documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -146,6 +146,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../">stable-pretraining</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../releases/">Releases</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../contributing/">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../fsdp/">Distributed Training with FSDP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../bibliography/">Bibliography</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Guides</span></p>
@@ -382,6 +383,10 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_required_fn_parameters</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.callbacks.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">log_header</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.utils.error_handling</span><span class="w"> </span><span class="kn">import</span> <span class="n">catch_errors_class</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.utils.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">describe_fsdp_strategy</span><span class="p">,</span>
+    <span class="n">is_fsdp_strategy</span><span class="p">,</span>
+<span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">print_logger_info</span><span class="p">(</span><span class="n">logger</span><span class="p">):</span>
@@ -1505,6 +1510,8 @@
                 <span class="p">)</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_trainer</span><span class="o">.</span><span class="n">callbacks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">TeacherStudentCallback</span><span class="p">())</span>
 
+        <span class="bp">self</span><span class="o">.</span><span class="n">_log_fsdp_info</span><span class="p">(</span><span class="n">needs_teacher_student</span><span class="o">=</span><span class="n">needs_teacher_student</span><span class="p">)</span>
+
         <span class="bp">self</span><span class="o">.</span><span class="n">_maybe_restore_wandb_run_id</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_maybe_restore_trackio_run</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_maybe_restore_swanlab_run</span><span class="p">()</span>
@@ -1599,6 +1606,36 @@
                 <span class="k">pass</span>
             <span class="k">raise</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_dump_wandb_data</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_log_fsdp_info</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">needs_teacher_student</span><span class="p">:</span> <span class="nb">bool</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Log FSDP2 strategy details and warn about TeacherStudentWrapper alignment.</span>
+
+<span class="sd">        No-op when the trainer is not using FSDP. When the FSDP2-backed</span>
+<span class="sd">        :class:`ModelParallelStrategy` is detected, logs the strategy</span>
+<span class="sd">        subclass, the data/tensor parallel sizes, the checkpoint mode, and</span>
+<span class="sd">        the parallelize_fn name.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">is_fsdp_strategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_trainer</span><span class="p">):</span>
+            <span class="k">return</span>
+
+        <span class="n">info</span> <span class="o">=</span> <span class="n">describe_fsdp_strategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_trainer</span><span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\t</span><span class="s2">FSDP2 STRATEGY DETECTED&quot;</span><span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- subclass: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;subclass&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- data_parallel_size: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;data_parallel_size&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- tensor_parallel_size: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;tensor_parallel_size&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- save_distributed_checkpoint: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;save_distributed_checkpoint&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- mp_policy: </span><span class="si">{</span><span class="n">info</span><span class="p">[</span><span class="s1">&#39;mp_policy&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">needs_teacher_student</span><span class="p">:</span>
+            <span class="n">logging</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;</span><span class="se">\t\t</span><span class="s2">- TeacherStudentWrapper present under FSDP2: student and &quot;</span>
+                <span class="s2">&quot;teacher must be sharded on the same device mesh with the same &quot;</span>
+                <span class="s2">&quot;parallelize_fn for the in-place EMA update to be correct. &quot;</span>
+                <span class="s2">&quot;assert_aligned_wrapping() is the safety net but plan ahead — &quot;</span>
+                <span class="s2">&quot;see docs/fsdp.md.&quot;</span>
+            <span class="p">)</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="n">log_header</span><span class="p">(</span><span class="s2">&quot;TrainerValidate&quot;</span><span class="p">)</span>

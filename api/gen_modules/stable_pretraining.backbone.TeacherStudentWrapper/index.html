@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>TeacherStudentWrapper &#8212; stable-pretraining 0.1.dev1+g7a0ec36ee documentation</title>
+    <title>TeacherStudentWrapper &#8212; stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</title>
   
   
   
@@ -43,7 +43,7 @@
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../_static/documentation_options.js?v=5c5175e4"></script>
+    <script src="../../../_static/documentation_options.js?v=01a7f8d8"></script>
     <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../../_static/sg-tags.js?v=d80f6fa4"></script>
@@ -130,7 +130,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g7a0ec36ee documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -147,6 +147,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../">stable-pretraining</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../releases/">Releases</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../contributing/">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../fsdp/">Distributed Training with FSDP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../bibliography/">Bibliography</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Guides</span></p>
@@ -395,6 +396,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward_student"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward_student()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward_teacher"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward_teacher()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.fsdp_setup"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.fsdp_setup()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.update_ema_coefficient"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.update_ema_coefficient()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.update_teacher"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.update_teacher()</span></code></a></li>
 </ul>
@@ -473,6 +475,33 @@ Commonly the teacher is evaluated, so we default to that.</p>
 <p>By default, the teacher network does not require grad.
 If ema_coefficient == 0, then teacher==student,
 so we wrap in torch.no_grad() to ensure no gradients flow.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="stable_pretraining.backbone.TeacherStudentWrapper.fsdp_setup">
+<span class="sig-name descname"><span class="pre">fsdp_setup</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">auto_wrap_policy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">fsdp_kwargs</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/library/constants.html#None" title="(in Python v3.14)"><span class="pre">None</span></a></span></span><a class="reference internal" href="../../../_modules/stable_pretraining/backbone/utils/#TeacherStudentWrapper.fsdp_setup"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#stable_pretraining.backbone.TeacherStudentWrapper.fsdp_setup" title="Link to this definition">#</a></dt>
+<dd><p>Wrap student and teacher with identical FSDP policies.</p>
+<p><code class="docutils literal notranslate"><span class="pre">update_teacher</span></code> performs an in-place EMA via
+<code class="docutils literal notranslate"><span class="pre">zip(self.teacher.parameters(),</span> <span class="pre">self.student.parameters())</span></code>. Under
+FSDP this requires student and teacher to have identical shard
+structure: same auto-wrap policy, same number of parameter tensors,
+same per-tensor shapes. This method enforces that.</p>
+<p>The zero-coefficient shortcut is preserved: when <code class="docutils literal notranslate"><span class="pre">self.teacher</span> <span class="pre">is</span>
+<span class="pre">self.student</span></code> (set in <code class="xref py py-meth docutils literal notranslate"><span class="pre">__init__()</span></code> when both base and final EMA
+coefficients are 0), only the student is wrapped — teacher reuses
+the same FSDP unit.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>auto_wrap_policy</strong> – FSDP auto-wrap policy applied to both student
+and teacher. Pass <code class="docutils literal notranslate"><span class="pre">None</span></code> to defer wrap to a higher-level
+strategy and only run the alignment check at the end.</p></li>
+<li><p><strong>**fsdp_kwargs</strong> – Forwarded to
+<code class="xref py py-class docutils literal notranslate"><span class="pre">FullyShardedDataParallel</span></code> (e.g. <code class="docutils literal notranslate"><span class="pre">device_id</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sharding_strategy</span></code>, <code class="docutils literal notranslate"><span class="pre">cpu_offload</span></code>).</p></li>
+</ul>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py method">
@@ -564,6 +593,7 @@ not accumulate gradients, but the student remains fully trainable.</p>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward_student"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward_student()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.forward_teacher"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.forward_teacher()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.fsdp_setup"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.fsdp_setup()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.update_ema_coefficient"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.update_ema_coefficient()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stable_pretraining.backbone.TeacherStudentWrapper.update_teacher"><code class="docutils literal notranslate"><span class="pre">TeacherStudentWrapper.update_teacher()</span></code></a></li>
 </ul>

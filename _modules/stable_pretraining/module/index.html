@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>stable_pretraining.module &#8212; stable-pretraining 0.1.dev1+g7a0ec36ee documentation</title>
+    <title>stable_pretraining.module &#8212; stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
   <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../_static/documentation_options.js?v=5c5175e4"></script>
+    <script src="../../../_static/documentation_options.js?v=01a7f8d8"></script>
     <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../../_static/sg-tags.js?v=d80f6fa4"></script>
@@ -129,7 +129,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g7a0ec36ee documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -146,6 +146,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../">stable-pretraining</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../releases/">Releases</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../contributing/">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../fsdp/">Distributed Training with FSDP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../bibliography/">Bibliography</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Guides</span></p>
@@ -364,6 +365,22 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.callbacks.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">log_header</span>
 
 
+<span class="n">_FSDP_PREFIX_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(^|\.)_fsdp_wrapped_module\.&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_strip_fsdp_prefix</span><span class="p">(</span><span class="n">qual_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Remove FSDP&#39;s ``_fsdp_wrapped_module.`` segments from a qualified name.</span>
+
+<span class="sd">    FSDP rewrites module names to insert ``_fsdp_wrapped_module`` between the</span>
+<span class="sd">    wrapper and the wrapped module (e.g. ``_fsdp_wrapped_module.backbone`` or</span>
+<span class="sd">    ``foo._fsdp_wrapped_module.bar``). User regex patterns are written against</span>
+<span class="sd">    the un-wrapped names, so we strip the segments before matching.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;_fsdp_wrapped_module&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">qual_name</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">qual_name</span>
+    <span class="k">return</span> <span class="n">_FSDP_PREFIX_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="k">lambda</span> <span class="n">m</span><span class="p">:</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span> <span class="n">qual_name</span><span class="p">)</span>
+
+
 <div class="viewcode-block" id="Module">
 <a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module">[docs]</a>
 <span class="nd">@catch_errors_class</span><span class="p">()</span>
@@ -517,10 +534,59 @@
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;The forward() method must be implemented.&quot;</span><span class="p">)</span></div>
 
 
+<div class="viewcode-block" id="Module.configure_model">
+<a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.configure_model">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">configure_model</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Apply FSDP2 sharding when running under :class:`ModelParallelStrategy`.</span>
+
+<span class="sd">        :class:`~lightning.pytorch.strategies.ModelParallelStrategy` sets</span>
+<span class="sd">        ``self._device_mesh`` before invoking ``configure_model``. When</span>
+<span class="sd">        present, this dispatches to</span>
+<span class="sd">        :func:`stable_pretraining.utils.fsdp.default_parallelize_fn` which</span>
+<span class="sd">        applies ``fully_shard`` per detected transformer / residual block</span>
+<span class="sd">        class and once at the root, skipping ``callbacks_modules`` /</span>
+<span class="sd">        ``callbacks_metrics`` containers.</span>
+
+<span class="sd">        When ``self._device_mesh`` is absent (any non-FSDP2 strategy:</span>
+<span class="sd">        single GPU, DDP, etc.), this is a no-op — but the surrounding</span>
+<span class="sd">        ``configure_model`` shim still needs to exist so</span>
+<span class="sd">        :class:`TrainableCallback` has something to wrap when it registers</span>
+<span class="sd">        callback-owned modules.</span>
+
+<span class="sd">        Subclasses can override this method to use a custom parallelize</span>
+<span class="sd">        policy (e.g. tensor parallelism, custom block selection, hybrid</span>
+<span class="sd">        sharding) without having to touch the Lightning-named hook.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">device_mesh</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;_device_mesh&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">device_mesh</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Lazy import: ``module.py`` is loaded very early in package init</span>
+        <span class="c1"># (it&#39;s ``spt.Module``); a top-level import of</span>
+        <span class="c1"># ``stable_pretraining.utils.fsdp`` would risk a cycle through the</span>
+        <span class="c1"># other helpers it transitively pulls in. Same pattern that</span>
+        <span class="c1"># ``callbacks/cpu_offload.py`` uses for the same reason.</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.utils.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="n">default_parallelize_fn</span>
+
+        <span class="c1"># Read mp_policy off the strategy if ``make_fsdp_strategy`` stashed</span>
+        <span class="c1"># one. The trainer attribute is set by Lightning before</span>
+        <span class="c1"># configure_model is invoked, so this lookup is always live here.</span>
+        <span class="n">mp_policy</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">trainer</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;trainer&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">trainer</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">mp_policy</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">trainer</span><span class="o">.</span><span class="n">strategy</span><span class="p">,</span> <span class="s2">&quot;_spt_mp_policy&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="n">default_parallelize_fn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_mesh</span><span class="p">,</span> <span class="n">mp_policy</span><span class="o">=</span><span class="n">mp_policy</span><span class="p">)</span></div>
+
+
 <div class="viewcode-block" id="Module.named_parameters">
 <a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.named_parameters">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">named_parameters</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">with_callbacks</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">recurse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">with_callbacks</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="n">recurse</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">remove_duplicate</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
     <span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Override to globally exclude callback-related parameters.</span>
 
@@ -533,6 +599,9 @@
 <span class="sd">            prefix (str, optional): Prefix to prepend to parameter names. Defaults to &quot;&quot;.</span>
 <span class="sd">            recurse (bool, optional): If True, yields parameters of this module and all submodules.</span>
 <span class="sd">                If False, yields only direct parameters. Defaults to True.</span>
+<span class="sd">            remove_duplicate (bool, optional): If True (default), deduplicates parameters that are</span>
+<span class="sd">                aliased across submodules. PyTorch&#39;s FSDP wrap path passes ``remove_duplicate=False``</span>
+<span class="sd">                to inspect the raw parameter graph; the override must accept and forward it.</span>
 
 <span class="sd">        Yields:</span>
 <span class="sd">            tuple[str, torch.nn.Parameter]: Name and parameter pairs.</span>
@@ -543,7 +612,9 @@
                 <span class="s2">&quot;! You are calling self.parameters which also gives callbacks &quot;</span>
                 <span class="s2">&quot;parameters, to remove them, pass `with_callbacks=False`&quot;</span>
             <span class="p">)</span>
-        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="n">prefix</span><span class="p">,</span> <span class="n">recurse</span><span class="o">=</span><span class="n">recurse</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">named_parameters</span><span class="p">(</span>
+            <span class="n">prefix</span><span class="o">=</span><span class="n">prefix</span><span class="p">,</span> <span class="n">recurse</span><span class="o">=</span><span class="n">recurse</span><span class="p">,</span> <span class="n">remove_duplicate</span><span class="o">=</span><span class="n">remove_duplicate</span>
+        <span class="p">):</span>
             <span class="n">is_callback</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;callbacks_&quot;</span><span class="p">)</span>
             <span class="k">if</span> <span class="n">is_callback</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">with_callbacks</span><span class="p">:</span>
                 <span class="k">continue</span>
@@ -731,21 +802,29 @@
 <a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.validation_step">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">validation_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">):</span>
         <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;batch_idx&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">batch_idx</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;validate&quot;</span><span class="p">)</span></div>
+        <span class="c1"># ``self(batch, ...)`` (i.e. ``__call__``) — NOT ``self.forward(...)``.</span>
+        <span class="c1"># PyTorch&#39;s forward pre/post hooks (which is how</span>
+        <span class="c1"># :func:`torch.distributed.fsdp.fully_shard` triggers all-gather of</span>
+        <span class="c1"># the sharded DTensor params before forward and re-shard after) fire</span>
+        <span class="c1"># only on ``__call__``. Calling ``.forward()`` directly bypasses</span>
+        <span class="c1"># them, leaving DTensors in place during the forward — the very next</span>
+        <span class="c1"># op (e.g. patch-embed conv) then raises</span>
+        <span class="c1"># ``aten.convolution.default: got mixed torch.Tensor and DTensor``.</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;validate&quot;</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="Module.test_step">
 <a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.test_step">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">test_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">):</span>
         <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;batch_idx&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">batch_idx</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;test&quot;</span><span class="p">)</span></div>
+        <span class="k">return</span> <span class="bp">self</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;test&quot;</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="Module.predict_step">
 <a class="viewcode-back" href="../../../api/gen_modules/stable_pretraining.module.Module/#stable_pretraining.module.Module.predict_step">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">predict_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">):</span>
         <span class="n">batch</span><span class="p">[</span><span class="s2">&quot;batch_idx&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">batch_idx</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;predict&quot;</span><span class="p">)</span></div>
+        <span class="k">return</span> <span class="bp">self</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">stage</span><span class="o">=</span><span class="s2">&quot;predict&quot;</span><span class="p">)</span></div>
 
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_get_scheduler_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheduler_config</span><span class="p">,</span> <span class="n">scheduler_instance</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -831,25 +910,30 @@
             <span class="k">if</span> <span class="s2">&quot;callbacks_modules&quot;</span> <span class="ow">in</span> <span class="n">qual_name</span> <span class="ow">or</span> <span class="s2">&quot;callbacks_metrics&quot;</span> <span class="ow">in</span> <span class="n">qual_name</span><span class="p">:</span>
                 <span class="k">continue</span>
 
+            <span class="c1"># Strip FSDP wrapping prefixes so user regex like &quot;backbone&quot; still</span>
+            <span class="c1"># matches after FSDP has rewritten the name to e.g.</span>
+            <span class="c1"># &quot;_fsdp_wrapped_module.backbone&quot;.</span>
+            <span class="n">match_name</span> <span class="o">=</span> <span class="n">_strip_fsdp_prefix</span><span class="p">(</span><span class="n">qual_name</span><span class="p">)</span>
+
             <span class="c1"># inherit parent&#39;s group if any</span>
-            <span class="k">if</span> <span class="s2">&quot;.&quot;</span> <span class="ow">in</span> <span class="n">qual_name</span><span class="p">:</span>
-                <span class="n">parent_name</span> <span class="o">=</span> <span class="n">qual_name</span><span class="o">.</span><span class="n">rsplit</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="s2">&quot;.&quot;</span> <span class="ow">in</span> <span class="n">match_name</span><span class="p">:</span>
+                <span class="n">parent_name</span> <span class="o">=</span> <span class="n">match_name</span><span class="o">.</span><span class="n">rsplit</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
                 <span class="n">group_idx</span> <span class="o">=</span> <span class="n">module_to_group</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">parent_name</span><span class="p">)</span>
             <span class="k">else</span><span class="p">:</span>
                 <span class="n">group_idx</span> <span class="o">=</span> <span class="kc">None</span>
 
             <span class="c1"># override if explicit match</span>
             <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">regex</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">compiled</span><span class="p">):</span>
-                <span class="k">if</span> <span class="n">regex</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">qual_name</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">regex</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">match_name</span><span class="p">):</span>
                     <span class="n">group_idx</span> <span class="o">=</span> <span class="n">idx</span>
                     <span class="k">break</span>
 
-            <span class="n">module_to_group</span><span class="p">[</span><span class="n">qual_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">group_idx</span>
+            <span class="n">module_to_group</span><span class="p">[</span><span class="n">match_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">group_idx</span>
 
             <span class="k">if</span> <span class="n">group_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="n">group_name</span> <span class="o">=</span> <span class="n">compiled</span><span class="p">[</span><span class="n">group_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
-                <span class="c1"># record module name</span>
-                <span class="n">modules_by_name</span><span class="p">[</span><span class="n">group_name</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">qual_name</span><span class="p">)</span>
+                <span class="c1"># record module name (use the stripped name for readability)</span>
+                <span class="n">modules_by_name</span><span class="p">[</span><span class="n">group_name</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">match_name</span><span class="p">)</span>
                 <span class="c1"># collect direct parameters only to avoid duplication</span>
                 <span class="n">direct_params</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">module</span><span class="o">.</span><span class="n">parameters</span><span class="p">(</span><span class="n">recurse</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
                 <span class="k">if</span> <span class="n">direct_params</span><span class="p">:</span>

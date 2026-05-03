@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>stable_pretraining.backbone.utils &#8212; stable-pretraining 0.1.dev1+g7a0ec36ee documentation</title>
+    <title>stable_pretraining.backbone.utils &#8212; stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../../_static/documentation_options.js?v=5c5175e4"></script>
+    <script src="../../../../_static/documentation_options.js?v=01a7f8d8"></script>
     <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../../../_static/sg-tags.js?v=d80f6fa4"></script>
@@ -129,7 +129,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g7a0ec36ee documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -146,6 +146,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../../">stable-pretraining</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../releases/">Releases</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../contributing/">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../fsdp/">Distributed Training with FSDP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../bibliography/">Bibliography</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Guides</span></p>
@@ -863,6 +864,62 @@
 <span class="sd">        Commonly the teacher is evaluated, so we default to that.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">forward_teacher</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="TeacherStudentWrapper.fsdp_setup">
+<a class="viewcode-back" href="../../../../api/gen_modules/stable_pretraining.backbone.TeacherStudentWrapper/#stable_pretraining.backbone.TeacherStudentWrapper.fsdp_setup">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fsdp_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">auto_wrap_policy</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">fsdp_kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Wrap student and teacher with identical FSDP policies.</span>
+
+<span class="sd">        ``update_teacher`` performs an in-place EMA via</span>
+<span class="sd">        ``zip(self.teacher.parameters(), self.student.parameters())``. Under</span>
+<span class="sd">        FSDP this requires student and teacher to have identical shard</span>
+<span class="sd">        structure: same auto-wrap policy, same number of parameter tensors,</span>
+<span class="sd">        same per-tensor shapes. This method enforces that.</span>
+
+<span class="sd">        The zero-coefficient shortcut is preserved: when ``self.teacher is</span>
+<span class="sd">        self.student`` (set in :meth:`__init__` when both base and final EMA</span>
+<span class="sd">        coefficients are 0), only the student is wrapped — teacher reuses</span>
+<span class="sd">        the same FSDP unit.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            auto_wrap_policy: FSDP auto-wrap policy applied to both student</span>
+<span class="sd">                and teacher. Pass ``None`` to defer wrap to a higher-level</span>
+<span class="sd">                strategy and only run the alignment check at the end.</span>
+<span class="sd">            **fsdp_kwargs: Forwarded to</span>
+<span class="sd">                :class:`FullyShardedDataParallel` (e.g. ``device_id``,</span>
+<span class="sd">                ``sharding_strategy``, ``cpu_offload``).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">torch.distributed.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="n">FullyShardedDataParallel</span> <span class="k">as</span> <span class="n">FSDP</span>
+
+        <span class="kn">from</span><span class="w"> </span><span class="nn">stable_pretraining.utils.fsdp</span><span class="w"> </span><span class="kn">import</span> <span class="n">assert_aligned_wrapping</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span> <span class="ow">is</span> <span class="bp">self</span><span class="o">.</span><span class="n">student</span><span class="p">:</span>
+            <span class="c1"># Zero-coefficient shortcut: a single FSDP unit for the shared</span>
+            <span class="c1"># object. Wrap once via the student attribute; teacher follows.</span>
+            <span class="k">if</span> <span class="n">auto_wrap_policy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">student</span> <span class="o">=</span> <span class="n">FSDP</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">student</span><span class="p">,</span>
+                    <span class="n">auto_wrap_policy</span><span class="o">=</span><span class="n">auto_wrap_policy</span><span class="p">,</span>
+                    <span class="o">**</span><span class="n">fsdp_kwargs</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">student</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="n">auto_wrap_policy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">student</span> <span class="o">=</span> <span class="n">FSDP</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">student</span><span class="p">,</span>
+                <span class="n">auto_wrap_policy</span><span class="o">=</span><span class="n">auto_wrap_policy</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">fsdp_kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span> <span class="o">=</span> <span class="n">FSDP</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span><span class="p">,</span>
+                <span class="n">auto_wrap_policy</span><span class="o">=</span><span class="n">auto_wrap_policy</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">fsdp_kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="n">assert_aligned_wrapping</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">student</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">teacher</span><span class="p">)</span></div>
 </div>
 
 

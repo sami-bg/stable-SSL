@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>stable_pretraining.losses.joint_embedding &#8212; stable-pretraining 0.1.dev1+g7a0ec36ee documentation</title>
+    <title>stable_pretraining.losses.joint_embedding &#8212; stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
   <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
 <link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
 
-    <script src="../../../../_static/documentation_options.js?v=5c5175e4"></script>
+    <script src="../../../../_static/documentation_options.js?v=01a7f8d8"></script>
     <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="../../../../_static/sg-tags.js?v=d80f6fa4"></script>
@@ -129,7 +129,7 @@
   
   
   
-    <p class="title logo__title">stable-pretraining 0.1.dev1+g7a0ec36ee documentation</p>
+    <p class="title logo__title">stable-pretraining 0.1.dev1+ga953eba87.d20260503 documentation</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -146,6 +146,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../../">stable-pretraining</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../releases/">Releases</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../contributing/">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../../fsdp/">Distributed Training with FSDP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../../bibliography/">Bibliography</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Guides</span></p>
@@ -468,7 +469,7 @@
             <span class="n">z_j</span>
         <span class="p">)</span>  <span class="c1"># normalize along the batch dimension</span>
         <span class="n">c</span> <span class="o">=</span> <span class="n">c</span> <span class="o">/</span> <span class="n">z_i</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-        <span class="n">all_reduce</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">all_reduce</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>
 
         <span class="n">on_diag</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">diagonal</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
         <span class="n">off_diag</span> <span class="o">=</span> <span class="n">off_diagonal</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
@@ -663,19 +664,36 @@
 
 <span class="sd">        Returns:</span>
 <span class="sd">            float: The computed contrastive loss.</span>
+
+<span class="sd">        Note:</span>
+<span class="sd">            ``_compute`` ``all_gather``s ``anchors`` and ``candidates`` across</span>
+<span class="sd">            ranks, producing a gathered logits matrix of shape</span>
+<span class="sd">            ``(2*N*world_size, 2*N*world_size)``. Targets and mask are</span>
+<span class="sd">            constructed at that **gathered** shape — every rank computes the</span>
+<span class="sd">            same global targets / mask deterministically from ``N`` and</span>
+<span class="sd">            ``world_size``. (For ``world_size=1`` this reduces to the</span>
+<span class="sd">            single-process behavior.)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">anchors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">z_i</span><span class="p">,</span> <span class="n">z_j</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
         <span class="n">candidates</span> <span class="o">=</span> <span class="n">anchors</span>
 
         <span class="n">N</span> <span class="o">=</span> <span class="n">z_i</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-        <span class="n">targets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
-            <span class="p">[</span>
-                <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">N</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">z_i</span><span class="o">.</span><span class="n">device</span><span class="p">),</span>
-                <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">z_i</span><span class="o">.</span><span class="n">device</span><span class="p">),</span>
-            <span class="p">]</span>
-        <span class="p">)</span>
-        <span class="c1"># prevent self-matching by masking diagonal</span>
-        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">z_i</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="ow">and</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">is_initialized</span><span class="p">():</span>
+            <span class="n">world_size</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">distributed</span><span class="o">.</span><span class="n">get_world_size</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">world_size</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="n">full_size</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">N</span> <span class="o">*</span> <span class="n">world_size</span>
+
+        <span class="c1"># For each gathered anchor at row k, its positive is the other view of</span>
+        <span class="c1"># the same sample on the same rank: shifted by N within its 2N block.</span>
+        <span class="n">block_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">full_size</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">z_i</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">within_block</span> <span class="o">=</span> <span class="n">block_indices</span> <span class="o">%</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
+        <span class="n">block_starts</span> <span class="o">=</span> <span class="n">block_indices</span> <span class="o">-</span> <span class="n">within_block</span>
+        <span class="n">positives_within</span> <span class="o">=</span> <span class="p">(</span><span class="n">within_block</span> <span class="o">+</span> <span class="n">N</span><span class="p">)</span> <span class="o">%</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
+        <span class="n">targets</span> <span class="o">=</span> <span class="n">block_starts</span> <span class="o">+</span> <span class="n">positives_within</span>
+
+        <span class="c1"># Mask the diagonal of the gathered logits (prevents self-matching).</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="n">full_size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">z_i</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
 
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute</span><span class="p">(</span><span class="n">anchors</span><span class="p">,</span> <span class="n">candidates</span><span class="p">,</span> <span class="n">targets</span><span class="p">,</span> <span class="n">mask</span><span class="o">=</span><span class="n">mask</span><span class="p">)</span></div>
 </div>

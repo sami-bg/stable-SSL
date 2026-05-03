@@ -7,6 +7,7 @@
     self
     releases
     contributing
+    fsdp
     bibliography
 
 .. include:: ../../README.md
