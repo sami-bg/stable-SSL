@@ -13,24 +13,9 @@ from prettytable import PrettyTable
 from lightning.pytorch.core.optimizer import LightningOptimizer
 from .optim import create_optimizer, create_scheduler
 from stable_pretraining.utils.error_handling import catch_errors_class
+from stable_pretraining.utils.fsdp import default_parallelize_fn
 from stable_pretraining.callbacks.registry import log as _spt_log
 from stable_pretraining.callbacks.utils import log_header
-
-
-_FSDP_PREFIX_RE = re.compile(r"(^|\.)_fsdp_wrapped_module\.")
-
-
-def _strip_fsdp_prefix(qual_name: str) -> str:
-    """Remove FSDP's ``_fsdp_wrapped_module.`` segments from a qualified name.
-
-    FSDP rewrites module names to insert ``_fsdp_wrapped_module`` between the
-    wrapper and the wrapped module (e.g. ``_fsdp_wrapped_module.backbone`` or
-    ``foo._fsdp_wrapped_module.bar``). User regex patterns are written against
-    the un-wrapped names, so we strip the segments before matching.
-    """
-    if "_fsdp_wrapped_module" not in qual_name:
-        return qual_name
-    return _FSDP_PREFIX_RE.sub(lambda m: m.group(1), qual_name)
 
 
 @catch_errors_class()
@@ -111,7 +96,14 @@ class Module(pl.LightningModule):
 
     _warned_named_parameters = False
 
-    def __init__(self, *args, forward: callable = None, hparams: dict = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        forward: callable = None,
+        hparams: dict = None,
+        parallelize_fn: callable = default_parallelize_fn,
+        **kwargs,
+    ):
         super().__init__()
         log_header("Module")
 
@@ -119,6 +111,11 @@ class Module(pl.LightningModule):
         self.automatic_optimization = False
         self.callbacks_modules = torch.nn.ModuleDict()
         self.callbacks_metrics = torch.nn.ModuleDict()
+        # Decides which modules become FSDP units.
+        # The default :func:`default_parallelize_fn` handles timm, torchvision, and HF
+        # model conventions out of the box.
+        # Pass a custom callable for non-standard architectures.
+        self._parallelize_fn = parallelize_fn
 
         self._optimizer_index_to_name = {}
         self._optimizer_frequencies = {}
@@ -182,46 +179,30 @@ class Module(pl.LightningModule):
         raise NotImplementedError("The forward() method must be implemented.")
 
     def configure_model(self) -> None:
-        """Apply FSDP2 sharding when running under :class:`ModelParallelStrategy`.
+        """Lightning hook for FSDP2 — dispatches to the user's ``parallelize_fn`` or the default.
 
         :class:`~lightning.pytorch.strategies.ModelParallelStrategy` sets
         ``self._device_mesh`` before invoking ``configure_model``. When
-        present, this dispatches to
-        :func:`stable_pretraining.utils.fsdp.default_parallelize_fn` which
-        applies ``fully_shard`` per detected transformer / residual block
-        class and once at the root, skipping ``callbacks_modules`` /
-        ``callbacks_metrics`` containers.
+        present, we run either the user-supplied ``parallelize_fn`` (passed
+        to ``Module(parallelize_fn=...)``) or
+        :func:`stable_pretraining.utils.fsdp.default_parallelize_fn`. When
+        absent (single GPU, DDP, etc.), this is a no-op — the method exists
+        purely so :class:`TrainableCallback` has something to wrap.
 
-        When ``self._device_mesh`` is absent (any non-FSDP2 strategy:
-        single GPU, DDP, etc.), this is a no-op — but the surrounding
-        ``configure_model`` shim still needs to exist so
-        :class:`TrainableCallback` has something to wrap when it registers
-        callback-owned modules.
-
-        Subclasses can override this method to use a custom parallelize
-        policy (e.g. tensor parallelism, custom block selection, hybrid
-        sharding) without having to touch the Lightning-named hook.
+        See ``docs/source/fsdp.rst`` for customization patterns.
         """
         device_mesh = getattr(self, "_device_mesh", None)
         if device_mesh is None:
             return
 
-        # Lazy import: ``module.py`` is loaded very early in package init
-        # (it's ``spt.Module``); a top-level import of
-        # ``stable_pretraining.utils.fsdp`` would risk a cycle through the
-        # other helpers it transitively pulls in. Same pattern that
-        # ``callbacks/cpu_offload.py`` uses for the same reason.
-        from stable_pretraining.utils.fsdp import default_parallelize_fn
-
-        # Read mp_policy off the strategy if ``make_fsdp_strategy`` stashed
-        # one. The trainer attribute is set by Lightning before
-        # configure_model is invoked, so this lookup is always live here.
-        mp_policy = None
-        trainer = getattr(self, "trainer", None)
-        if trainer is not None:
-            mp_policy = getattr(trainer.strategy, "_spt_mp_policy", None)
-
-        default_parallelize_fn(self, device_mesh, mp_policy=mp_policy)
+        if self._parallelize_fn is default_parallelize_fn:
+            mp_policy = None
+            trainer = getattr(self, "trainer", None)
+            if trainer is not None:
+                mp_policy = getattr(trainer.strategy, "_spt_mp_policy", None)
+            default_parallelize_fn(self, device_mesh, mp_policy=mp_policy)
+        else:
+            self._parallelize_fn(self, device_mesh)
 
     def named_parameters(
         self,
@@ -533,10 +514,7 @@ class Module(pl.LightningModule):
             if "callbacks_modules" in qual_name or "callbacks_metrics" in qual_name:
                 continue
 
-            # Strip FSDP wrapping prefixes so user regex like "backbone" still
-            # matches after FSDP has rewritten the name to e.g.
-            # "_fsdp_wrapped_module.backbone".
-            match_name = _strip_fsdp_prefix(qual_name)
+            match_name = qual_name
 
             # inherit parent's group if any
             if "." in match_name:

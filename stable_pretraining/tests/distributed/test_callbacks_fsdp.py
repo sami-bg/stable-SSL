@@ -80,7 +80,9 @@ def _detach_reattach(rank: int, world_size: int) -> None:
     module.callbacks_modules["queue"] = nn.Linear(8, 8)
 
     mesh = init_device_mesh("cpu", (world_size,))
-    default_parallelize_fn(module, mesh)
+    # Pass ``block_classes={Block}`` because the synthetic ``Block`` isn't
+    # in the recognized registry; the kwarg is the documented escape hatch.
+    default_parallelize_fn(module, mesh, block_classes={Block})
 
     # 1) Reattachment.
     assert "callbacks_modules" in module._modules, (
@@ -161,7 +163,7 @@ def _per_callback_optimizer_steps(rank: int, world_size: int) -> None:
     module.callbacks_modules["probe"] = nn.Linear(8, 4)
 
     mesh = init_device_mesh("cpu", (world_size,))
-    default_parallelize_fn(module, mesh)
+    default_parallelize_fn(module, mesh, block_classes={Block})
 
     # Build the per-callback optimizer the way TrainableCallback does.
     probe_params = list(module.callbacks_modules.parameters())

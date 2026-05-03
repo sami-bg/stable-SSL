@@ -11,8 +11,10 @@ import torch.nn as nn
 import torchmetrics
 
 import stable_pretraining as spt
+
+# Importing fsdp registers ``"fsdp2"`` with Lightning's StrategyRegistry.
+import stable_pretraining.utils.fsdp  # noqa: F401
 from stable_pretraining.data import transforms
-from stable_pretraining.utils.fsdp import make_fsdp_strategy
 
 from lejepa_vit_small import (
     LeJEPA,
@@ -125,14 +127,12 @@ def main():
         },
     )
 
-    # ``make_fsdp_strategy`` returns a Lightning ``ModelParallelStrategy``
-    # configured for FSDP2: ``fully_shard`` is applied per ViT ``Block``
-    # (auto-detected) and once at the root. The default parallelize_fn
-    # skips ``module.callbacks_modules`` / ``module.callbacks_metrics``
-    # so the per-callback optimizers (OnlineProbe / OnlineKNN / RankMe)
-    # can still see their own parameters.
-    strategy = make_fsdp_strategy()
-
+    # ``strategy="fsdp2"`` resolves through Lightning's ``StrategyRegistry`` to
+    # our :class:`StablePretrainingFSDP2` (registered when
+    # ``stable_pretraining.utils.fsdp`` is imported). The actual sharding
+    # happens in ``Module.configure_model`` via ``default_parallelize_fn``,
+    # which auto-detects timm ``Block`` and applies ``fully_shard``
+    # per-block + at the root.
     trainer = pl.Trainer(
         max_epochs=max_epochs,
         num_sanity_val_steps=0,
@@ -190,7 +190,7 @@ def main():
         precision="bf16-mixed",
         devices=num_gpus,
         accelerator="gpu",
-        strategy=strategy,
+        strategy="fsdp2",
     )
 
     manager = spt.Manager(trainer=trainer, module=module, data=data)

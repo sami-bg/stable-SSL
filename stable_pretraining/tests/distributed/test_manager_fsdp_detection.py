@@ -28,9 +28,12 @@ def test_is_fsdp_strategy_plain_object_returns_false():
 
 
 def test_is_fsdp_strategy_detects_model_parallel_strategy():
-    from stable_pretraining.utils.fsdp import is_fsdp_strategy, make_fsdp_strategy
+    from stable_pretraining.utils.fsdp import (
+        StablePretrainingFSDP2,
+        is_fsdp_strategy,
+    )
 
-    strat = make_fsdp_strategy(data_parallel_size=1, tensor_parallel_size=1)
+    strat = StablePretrainingFSDP2(data_parallel_size=1, tensor_parallel_size=1)
     assert is_fsdp_strategy(strat) is True
 
 
@@ -40,9 +43,12 @@ def test_is_fsdp_strategy_detects_via_trainer_attr():
     ``is_fsdp_strategy`` should also accept a Trainer-like object whose
     ``.strategy`` is an FSDP2 strategy.
     """
-    from stable_pretraining.utils.fsdp import is_fsdp_strategy, make_fsdp_strategy
+    from stable_pretraining.utils.fsdp import (
+        StablePretrainingFSDP2,
+        is_fsdp_strategy,
+    )
 
-    strat = make_fsdp_strategy(data_parallel_size=1, tensor_parallel_size=1)
+    strat = StablePretrainingFSDP2(data_parallel_size=1, tensor_parallel_size=1)
 
     class FakeTrainer:
         def __init__(self, s):
@@ -60,18 +66,22 @@ def test_describe_non_fsdp_returns_is_fsdp_false():
 def test_describe_fsdp_exposes_fsdp2_fields():
     from torch.distributed.fsdp import MixedPrecisionPolicy
 
-    from stable_pretraining.utils.fsdp import describe_fsdp_strategy, make_fsdp_strategy
+    from stable_pretraining.utils.fsdp import (
+        StablePretrainingFSDP2,
+        describe_fsdp_strategy,
+    )
 
     policy = MixedPrecisionPolicy()
-    strat = make_fsdp_strategy(
+    strat = StablePretrainingFSDP2(
         data_parallel_size=2, tensor_parallel_size=1, mp_policy=policy
     )
     info = describe_fsdp_strategy(strat)
     assert info["is_fsdp"] is True
-    assert info["subclass"] == "ModelParallelStrategy"
+    # The subclass is our registry-bound ``StablePretrainingFSDP2`` (which
+    # inherits from ``ModelParallelStrategy``).
+    assert info["subclass"] in ("StablePretrainingFSDP2", "ModelParallelStrategy")
     # mp_policy is exposed by class name (so logs stay readable).
     assert info["mp_policy"] == "MixedPrecisionPolicy"
-    # save_distributed_checkpoint default exposed.
     assert info["save_distributed_checkpoint"] is True
 
 
@@ -104,9 +114,9 @@ def test_manager_log_fsdp_info_runs_under_fsdp_without_raising():
     only the manager hook's "no exceptions" property under FSDP2.
     """
     from stable_pretraining.manager import Manager
-    from stable_pretraining.utils.fsdp import make_fsdp_strategy
+    from stable_pretraining.utils.fsdp import StablePretrainingFSDP2
 
-    strat = make_fsdp_strategy(data_parallel_size=1, tensor_parallel_size=1)
+    strat = StablePretrainingFSDP2(data_parallel_size=1, tensor_parallel_size=1)
 
     class FakeTrainer:
         pass
