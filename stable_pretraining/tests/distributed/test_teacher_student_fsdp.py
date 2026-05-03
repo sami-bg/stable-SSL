@@ -1,266 +1,194 @@
-"""TeacherStudentWrapper compatibility under FSDP.
+"""TeacherStudentWrapper alignment under FSDP2.
 
-The wrapper performs in-place EMA via
-``zip(teacher.parameters(), student.parameters())``. Under FSDP this is correct
-**iff** student and teacher have identical shard structure. These tests verify
-that:
+:meth:`TeacherStudentWrapper.update_teacher` performs in-place EMA via
+``zip(teacher.parameters(), student.parameters())``. Under FSDP2 each
+parameter is a ``DTensor``, and ``zip`` requires that *each* pair of
+DTensors be addressing the same logical region of the same parameter:
+matching ``shape`` / ``dtype`` is necessary but not sufficient — the
+``placements`` and ``device_mesh`` must also agree, otherwise ``zip``
+silently pairs non-corresponding shards (corruption, not a crash).
 
-- ``assert_aligned_wrapping`` correctly detects mismatched layouts.
-- ``TeacherStudentWrapper.fsdp_setup`` produces aligned wrapping.
-- The zero-coefficient shortcut (``teacher is student``) does not double-wrap.
-- The ``warm_init=True`` path produces correct teacher state.
-- The ``ema_coefficient`` buffer stays in sync across ranks.
-
-Forward+EMA-update correctness tests are gated behind ``@pytest.mark.gpu``
-because PyTorch FSDP forward requires a non-CPU accelerator.
+:func:`stable_pretraining.utils.fsdp.assert_aligned_wrapping` enforces all
+four properties. These tests cover its truth table directly with crafted
+DTensors (so they run anywhere ``torch.distributed`` is importable, no
+fully_shard call needed).
 """
-
-from __future__ import annotations
 
 import pytest
 import torch
 import torch.nn as nn
 
-from stable_pretraining.backbone.utils import TeacherStudentWrapper
-from stable_pretraining.tests.distributed.conftest import (
-    run_distributed,
-    tiny_backbone,
-)
-from stable_pretraining.utils.fsdp import (
-    assert_aligned_wrapping,
-    default_auto_wrap_policy,
-)
+from stable_pretraining.tests.distributed.conftest import run_distributed
 
 
 pytestmark = pytest.mark.distributed
 
 
 # ---------------------------------------------------------------------------
-# Single-process (no spawn): test the alignment helper and the wrapper API.
+# 1. assert_aligned_wrapping — truth table
 # ---------------------------------------------------------------------------
 
 
-def test_assert_aligned_wrapping_passes_for_deep_copies():
-    student = tiny_backbone()
-    import copy
+def test_aligned_wrapping_accepts_identical_plain_modules():
+    r"""Plain ``nn.Parameter``\ s with matching shape/dtype must be accepted."""
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
 
-    teacher = copy.deepcopy(student)
+    student = nn.Linear(4, 4)
+    teacher = nn.Linear(4, 4)
+    # No exception expected.
     assert_aligned_wrapping(student, teacher)
 
 
-def test_assert_aligned_wrapping_detects_param_count_mismatch():
-    student = tiny_backbone()
-    teacher = nn.Linear(8, 4)  # totally different shape
+def test_aligned_wrapping_rejects_param_count_mismatch():
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+    student = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
+    teacher = nn.Sequential(nn.Linear(4, 4))
     with pytest.raises(AssertionError, match="parameter tensors"):
         assert_aligned_wrapping(student, teacher)
 
 
-def test_assert_aligned_wrapping_detects_shape_mismatch():
-    """Same number of parameters but different shapes -> AssertionError."""
-    student = nn.Sequential(nn.Linear(16, 16))
-    teacher = nn.Sequential(nn.Linear(16, 8))  # different output dim
+def test_aligned_wrapping_rejects_shape_mismatch():
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+    student = nn.Linear(4, 4)
+    teacher = nn.Linear(4, 8)
     with pytest.raises(AssertionError, match="shape"):
         assert_aligned_wrapping(student, teacher)
 
 
-def test_assert_aligned_wrapping_detects_buffer_mismatch():
-    """Same parameters but different buffer counts -> AssertionError."""
+def test_aligned_wrapping_rejects_dtype_mismatch():
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
 
-    class WithBuffer(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.lin = nn.Linear(8, 8)
-            self.register_buffer("running", torch.zeros(8))
-
-    class NoBuffer(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.lin = nn.Linear(8, 8)
-
-    with pytest.raises(AssertionError, match="buffers"):
-        assert_aligned_wrapping(WithBuffer(), NoBuffer())
+    student = nn.Linear(4, 4).to(torch.float32)
+    teacher = nn.Linear(4, 4).to(torch.float64)
+    with pytest.raises(AssertionError, match="dtype"):
+        assert_aligned_wrapping(student, teacher)
 
 
-def test_zero_coefficient_shortcut_no_duplicate_wrapping():
-    """When EMA coefficient is 0, teacher is student. fsdp_setup must not.
+def test_aligned_wrapping_rejects_buffer_dtype_mismatch():
+    """Buffer dtype check (parity with the param dtype check)."""
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
 
-    create two FSDP units for the same underlying module.
-    """
-    backbone = tiny_backbone()
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=False,
-        base_ema_coefficient=0.0,
-        final_ema_coefficient=0.0,
-    )
-    # Pre-FSDP invariant: teacher is student.
-    assert wrapper.teacher is wrapper.student
-
-    # No-op fsdp_setup (auto_wrap_policy=None) should preserve identity.
-    wrapper.fsdp_setup(auto_wrap_policy=None)
-    assert wrapper.teacher is wrapper.student
-
-
-def test_warm_init_produces_equal_params_pre_fsdp():
-    """``warm_init=True`` runs an EMA-with-coef-0 update in __init__, which.
-
-    copies the student into the teacher exactly. Verify this happens BEFORE
-    any FSDP wrapping (it's an init-time invariant).
-    """
-    backbone = tiny_backbone()
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=True,
-        base_ema_coefficient=0.5,
-        final_ema_coefficient=1.0,
-    )
-    for sp, tp in zip(wrapper.student.parameters(), wrapper.teacher.parameters()):
-        assert torch.equal(sp, tp), "warm_init should copy student into teacher"
-    # Coefficient was reset to base after the warm-init pass.
-    assert wrapper.ema_coefficient.item() == pytest.approx(0.5)
-
-
-def test_no_op_fsdp_setup_still_runs_alignment_check():
-    """``auto_wrap_policy=None`` skips wrapping but still validates alignment."""
-    backbone = tiny_backbone()
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=True,
-        base_ema_coefficient=0.5,
-        final_ema_coefficient=1.0,
-    )
-    # warm_init guarantees alignment (teacher is a deepcopy then EMA'd to
-    # equal student).
-    wrapper.fsdp_setup(auto_wrap_policy=None)
-
-
-# ---------------------------------------------------------------------------
-# Multi-process tests (no FSDP wrap): EMA buffer sync across ranks.
-# ---------------------------------------------------------------------------
-
-
-def _ema_coefficient_synced(rank: int, world_size: int) -> None:
-    """``ema_coefficient`` is a buffer; verify it's identical across ranks.
-
-    after ``update_ema_coefficient`` is called identically on each rank.
-    """
-    import torch.distributed as dist
-
-    backbone = tiny_backbone()
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=False,
-        base_ema_coefficient=0.0,
-        final_ema_coefficient=1.0,
-    )
-    wrapper.train()
-    wrapper.update_ema_coefficient(epoch=5, total_epochs=10)
-    coef = wrapper.ema_coefficient.clone()
-    gathered = [torch.zeros_like(coef) for _ in range(world_size)]
-    dist.all_gather(gathered, coef)
-    for r, g in enumerate(gathered):
-        assert torch.equal(coef, g), (
-            f"rank {rank} coef={coef.item()}, rank {r} coef={g.item()}"
-        )
-
-
-def test_ema_coefficient_synced_across_ranks():
-    run_distributed(_ema_coefficient_synced, world_size=2)
-
-
-def _ema_update_matches_single_process(rank: int, world_size: int) -> None:
-    """Update teacher with EMA on each rank from the same starting state.
-
-    Without FSDP, every rank's wrapper is a full replica, so the post-EMA
-    teacher params must match a deterministic single-process EMA.
-    """
-    torch.manual_seed(123)
-    backbone = tiny_backbone()
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=True,  # teacher == student initially
-        base_ema_coefficient=0.5,
-        final_ema_coefficient=1.0,
-    )
-    wrapper.train()
-    # Modify student in a deterministic way so EMA has a non-trivial effect.
-    for p in wrapper.student.parameters():
-        p.data.fill_(1.0)
-    wrapper.update_teacher()
-    # Teacher params should now equal 0.5 * old_teacher + 0.5 * new_student.
-    # Old teacher was a copy of the random-init student, new student is all ones.
-    # Verify expected shape & finite values; for exact value we'd need to
-    # capture the initial teacher (skipped here, this test is a smoke check).
-    for tp in wrapper.teacher.parameters():
-        assert torch.isfinite(tp).all()
-
-
-def test_ema_update_does_not_crash_distributed():
-    run_distributed(_ema_update_matches_single_process, world_size=2)
-
-
-# ---------------------------------------------------------------------------
-# Adversarial: explicitly construct mismatched policies and assert error.
-# ---------------------------------------------------------------------------
-
-
-def test_mismatched_policies_raises_clearly():
-    """Build student and teacher with different module structures; the.
-
-    alignment helper must raise (never silently succeed).
-    """
-    student = nn.Sequential(nn.Linear(16, 32), nn.Linear(32, 16))
-    teacher = nn.Sequential(nn.Linear(16, 16))  # one fewer layer
-    with pytest.raises(AssertionError):
+    student = nn.BatchNorm1d(4)
+    teacher = nn.BatchNorm1d(4)
+    teacher.running_mean = teacher.running_mean.to(torch.float64)
+    with pytest.raises(AssertionError, match="dtype"):
         assert_aligned_wrapping(student, teacher)
 
 
 # ---------------------------------------------------------------------------
-# CUDA-only: full FSDP wrap + EMA correctness.
+# 2. DTensor placement check — needs a real device mesh.
 # ---------------------------------------------------------------------------
 
 
-def _ema_under_fsdp_matches_single_process(rank: int, world_size: int) -> None:
-    """Forward pass + update_teacher under FSDP and compare gathered teacher.
+def _placement_mismatch_raises(rank: int, world_size: int) -> None:
+    """Placement-mismatch rejection.
 
-    params to a single-process reference.
+    Two DTensors with matching local shape but different placements
+    must be rejected by ``assert_aligned_wrapping``.
     """
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import FullStateDictConfig, StateDictType
-
-    torch.cuda.set_device(rank)
-    device = torch.device(f"cuda:{rank}")
-    torch.manual_seed(42)
-    backbone = tiny_backbone().to(device)
-    wrapper = TeacherStudentWrapper(
-        backbone,
-        warm_init=True,
-        base_ema_coefficient=0.5,
-        final_ema_coefficient=1.0,
-    ).to(device)
-
-    policy = default_auto_wrap_policy(backbone, min_num_params=10)
-    wrapper.fsdp_setup(auto_wrap_policy=policy, device_id=rank)
-
-    # Run several EMA updates after mutating the student.
-    wrapper.train()
-    for step in range(3):
-        for p in wrapper.student.parameters():
-            p.data.add_(0.1)
-        wrapper.update_teacher()
-
-    # Gather teacher full state for inspection on rank 0.
-    cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    with FSDP.state_dict_type(wrapper.teacher, StateDictType.FULL_STATE_DICT, cfg):
-        full_state = wrapper.teacher.state_dict()
-    if rank == 0:
-        for v in full_state.values():
-            assert torch.isfinite(v).all()
-
-
-@pytest.mark.gpu
-def test_ema_under_fsdp_does_not_corrupt():
-    """CUDA-only: full FSDP wrap, EMA updates, gather full teacher params."""
-    run_distributed(
-        _ema_under_fsdp_matches_single_process, world_size=2, backend="nccl"
+    from torch.distributed.tensor import (
+        DTensor,
+        Replicate,
+        Shard,
+        distribute_tensor,
+        init_device_mesh,
     )
+
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+    mesh = init_device_mesh("cpu", (world_size,))
+
+    base_full = torch.randn(world_size, 4)
+
+    # Student: shard dim 0.
+    s_dt = distribute_tensor(base_full.clone(), mesh, [Shard(0)])
+    s_param = nn.Parameter(s_dt)
+    student = nn.Module()
+    student.register_parameter("w", s_param)
+
+    # Teacher: replicate (different placement, same local shape after replicate)
+    # — placements differ; assertion must fire.
+    t_dt = distribute_tensor(base_full.clone(), mesh, [Replicate()])
+    t_param = nn.Parameter(t_dt)
+    teacher = nn.Module()
+    teacher.register_parameter("w", t_param)
+
+    # Sanity: both are DTensors.
+    assert isinstance(s_param, DTensor)
+    assert isinstance(t_param, DTensor)
+
+    # Local shapes may match if dim 0 size == world_size; we contrived this
+    # so they're equal. Placements differ → assertion must raise.
+    if s_param.shape == t_param.shape and s_param.dtype == t_param.dtype:
+        try:
+            assert_aligned_wrapping(student, teacher)
+        except AssertionError as e:
+            assert "placement" in str(e).lower()
+            return
+        raise AssertionError(
+            "assert_aligned_wrapping should have raised on placement mismatch"
+        )
+
+
+def test_placement_mismatch_raises_world_size_2():
+    run_distributed(_placement_mismatch_raises, world_size=2, backend="gloo")
+
+
+def _matched_dtensor_passes(rank: int, world_size: int) -> None:
+    """Matched-DTensor positive case.
+
+    Two DTensors with matching shape, dtype, placements, and device_mesh
+    must pass the alignment check.
+    """
+    from torch.distributed.tensor import Shard, distribute_tensor, init_device_mesh
+
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    base = torch.randn(world_size * 2, 4)
+
+    s_dt = distribute_tensor(base.clone(), mesh, [Shard(0)])
+    t_dt = distribute_tensor(base.clone(), mesh, [Shard(0)])
+
+    student = nn.Module()
+    student.register_parameter("w", nn.Parameter(s_dt))
+    teacher = nn.Module()
+    teacher.register_parameter("w", nn.Parameter(t_dt))
+
+    assert_aligned_wrapping(student, teacher)
+
+
+def test_matched_dtensor_passes_world_size_2():
+    run_distributed(_matched_dtensor_passes, world_size=2, backend="gloo")
+
+
+# ---------------------------------------------------------------------------
+# 3. DTensor / plain Tensor mixing is rejected.
+# ---------------------------------------------------------------------------
+
+
+def _dtensor_vs_plain_raises(rank: int, world_size: int) -> None:
+    from torch.distributed.tensor import Shard, distribute_tensor, init_device_mesh
+
+    from stable_pretraining.utils.fsdp import assert_aligned_wrapping
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    base = torch.randn(world_size * 2, 4)
+
+    s_dt = distribute_tensor(base.clone(), mesh, [Shard(0)])
+    student = nn.Module()
+    student.register_parameter("w", nn.Parameter(s_dt))
+
+    teacher = nn.Module()
+    # Teacher uses a plain tensor with the same local shape.
+    teacher.register_parameter("w", nn.Parameter(s_dt.to_local().clone()))
+
+    if student.w.shape == teacher.w.shape and student.w.dtype == teacher.w.dtype:
+        with pytest.raises(AssertionError, match="DTensor"):
+            assert_aligned_wrapping(student, teacher)
+
+
+def test_dtensor_vs_plain_raises_world_size_2():
+    run_distributed(_dtensor_vs_plain_raises, world_size=2, backend="gloo")

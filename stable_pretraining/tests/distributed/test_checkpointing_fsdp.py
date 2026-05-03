@@ -1,15 +1,24 @@
-"""FSDP checkpointing.
+r"""FSDP2 checkpointing.
 
-Verifies the save / load round trip for FSDP-style sharded checkpoints, and
-that loading a DDP-format checkpoint into an FSDP run fails with a
-recognizable error (not silent corruption).
+FSDP2 stores parameters as ``DTensor``\\ s. Sharded save/load uses
+``torch.distributed.checkpoint`` (DCP), which is what Lightning's
+``ModelParallelStrategy(save_distributed_checkpoint=True)`` uses under
+the hood.
 
-All tests in this file are CUDA-only — :class:`FullyShardedDataParallel`
-forward requires a non-CPU accelerator. They run on Linux CI with at least 2
-CUDA devices.
+This test verifies the round trip directly via DCP:
+
+1. Build a model, FSDP2-wrap it, take one optimizer step (so params and
+   optimizer state are non-trivial).
+2. Save the model state dict via DCP (one shard per rank → one DCP tree).
+3. Build a fresh model, FSDP2-wrap it (different initial params), load
+   the DCP tree, and assert every parameter matches the source after
+   ``DTensor.full_tensor()`` reduction.
+
+CUDA-only — DCP's distributed save/load path is meaningful with NCCL.
+The previous (FSDP1) "DDP checkpoint into FSDP run fails clearly" test
+was removed: modern PyTorch handles cross-format loading by transparently
+converting on demand, so the assertion no longer holds.
 """
-
-from __future__ import annotations
 
 import pytest
 import torch
@@ -21,148 +30,105 @@ from stable_pretraining.tests.distributed.conftest import run_distributed
 pytestmark = [pytest.mark.distributed, pytest.mark.gpu]
 
 
-def _build_tiny(seed: int):
+def _build(seed: int, device: torch.device) -> nn.Module:
     torch.manual_seed(seed)
-    return nn.Sequential(
-        nn.Linear(16, 32),
-        nn.ReLU(inplace=False),
-        nn.Linear(32, 16),
-    )
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(16, 16)
+
+        def forward(self, x):
+            return self.lin(x).relu() + x
+
+    class M(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList([Block() for _ in range(3)])
+
+        def forward(self, x):
+            for blk in self.blocks:
+                x = blk(x)
+            return x
+
+    return M().to(device)
 
 
-def _save_load_fsdp_sharded(rank: int, world_size: int) -> None:
-    """Train 2 steps, save sharded state_dict, build a fresh model and load,.
-
-    train one more step. Compare to a non-interrupted run that took 3 steps.
-
-    The sharded path uses :class:`ShardedStateDictConfig` — each rank writes
-    its own shard, and on load each rank reads the shard with the matching
-    layout. The full-state-dict path is more compatible but slower; we test
-    sharded here because it's the FSDP-recommended default.
-    """
-    import os
+def _save_and_load_round_trip(rank: int, world_size: int) -> None:
+    if not torch.cuda.is_available():
+        return
     import tempfile
-    from functools import partial
+    from pathlib import Path
 
     import torch.distributed as dist
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import (
-        ShardedStateDictConfig,
-        ShardedOptimStateDictConfig,
-        StateDictType,
+    import torch.distributed.checkpoint as dcp
+    from torch.distributed.checkpoint.state_dict import (
+        get_model_state_dict,
+        set_model_state_dict,
     )
-    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA test executed without CUDA")
+    from torch.distributed.fsdp import fully_shard
+    from torch.distributed.tensor import init_device_mesh
 
     device = torch.device(f"cuda:{rank}")
     torch.cuda.set_device(rank)
-    seed = 31
 
-    def _build_wrapped():
-        torch.manual_seed(seed)  # identical init across the two runs
-        m = _build_tiny(seed=seed).to(device)
-        return FSDP(
-            m,
-            auto_wrap_policy=partial(size_based_auto_wrap_policy, min_num_params=100),
-            device_id=device.index,
-            use_orig_params=True,
-        )
+    # Source model: train one step to make params non-trivial.
+    src = _build(seed=0, device=device)
+    mesh = init_device_mesh("cuda", (world_size,))
+    for blk in src.blocks:
+        fully_shard(blk, mesh=mesh)
+    fully_shard(src, mesh=mesh)
 
-    def _step(model, opt, x, y):
-        out = model(x)
-        loss = ((out - y) ** 2).mean()
-        loss.backward()
-        opt.step()
-        opt.zero_grad()
-        return loss.detach()
+    optim = torch.optim.SGD(src.parameters(), lr=1e-2)
+    x = torch.randn(8, 16, device=device)
+    src(x).pow(2).mean().backward()
+    optim.step()
 
-    # Deterministic batches, identical across both runs.
-    torch.manual_seed(seed + 100)
-    batches = [
-        (
-            torch.randn(8, 16, device=device),
-            torch.randn(8, 16, device=device),
-        )
-        for _ in range(3)
-    ]
+    # Capture the source full-tensor params for the equality assertion.
+    src_full = [p.full_tensor().detach().clone() for p in src.parameters()]
 
-    # --- Reference run: 3 contiguous steps ---------------------------------
-    ref_model = _build_wrapped()
-    ref_opt = torch.optim.SGD(ref_model.parameters(), lr=1e-3)
-    for x, y in batches:
-        _step(ref_model, ref_opt, x, y)
-    cfg = ShardedStateDictConfig(offload_to_cpu=False)
-    with FSDP.state_dict_type(ref_model, StateDictType.SHARDED_STATE_DICT, cfg):
-        ref_state = {k: v.clone() for k, v in ref_model.state_dict().items()}
+    # Save via DCP into a shared directory (rank 0 creates it, all ranks
+    # contribute their shards).
+    tmp = tempfile.mkdtemp(prefix="fsdp2-ckpt-") if rank == 0 else None
+    objs = [tmp]
+    dist.broadcast_object_list(objs, src=0)
+    ckpt_dir = Path(objs[0])
 
-    # --- Resumed run: 2 steps, save, load (fresh model), 1 step ------------
-    tmp_dir = tempfile.mkdtemp(prefix=f"fsdp_ckpt_rank{rank}_")
-    ckpt_path = os.path.join(tmp_dir, f"shard_rank{rank}.pt")
-
-    res_model = _build_wrapped()
-    res_opt = torch.optim.SGD(res_model.parameters(), lr=1e-3)
-    for x, y in batches[:2]:
-        _step(res_model, res_opt, x, y)
-
-    cfg = ShardedStateDictConfig(offload_to_cpu=False)
-    opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=False)
-    with FSDP.state_dict_type(
-        res_model,
-        StateDictType.SHARDED_STATE_DICT,
-        state_dict_config=cfg,
-        optim_state_dict_config=opt_cfg,
-    ):
-        torch.save(
-            {
-                "model": res_model.state_dict(),
-                "optim": FSDP.optim_state_dict(res_model, res_opt),
-            },
-            ckpt_path,
-        )
+    src_state = get_model_state_dict(src)
+    dcp.save(src_state, checkpoint_id=str(ckpt_dir))
     dist.barrier()
 
-    # Fresh model + fresh optimizer; load the saved state.
-    res_model_new = _build_wrapped()
-    res_opt_new = torch.optim.SGD(res_model_new.parameters(), lr=1e-3)
-    blob = torch.load(ckpt_path, weights_only=False)
-    with FSDP.state_dict_type(
-        res_model_new,
-        StateDictType.SHARDED_STATE_DICT,
-        state_dict_config=cfg,
-        optim_state_dict_config=opt_cfg,
-    ):
-        res_model_new.load_state_dict(blob["model"])
-        flat = FSDP.optim_state_dict_to_load(res_model_new, res_opt_new, blob["optim"])
-        res_opt_new.load_state_dict(flat)
+    # Destination model: different seed → different initial params.
+    dst = _build(seed=999, device=device)
+    for blk in dst.blocks:
+        fully_shard(blk, mesh=mesh)
+    fully_shard(dst, mesh=mesh)
 
-    # Final step on the resumed run.
-    _step(res_model_new, res_opt_new, *batches[2])
-    with FSDP.state_dict_type(res_model_new, StateDictType.SHARDED_STATE_DICT, cfg):
-        res_state = {k: v.clone() for k, v in res_model_new.state_dict().items()}
-
-    # The two runs must produce the same final state.
-    assert ref_state.keys() == res_state.keys(), (
-        f"key mismatch: ref={sorted(ref_state.keys())} res={sorted(res_state.keys())}"
-    )
-    for key in ref_state:
-        a = ref_state[key].detach().to(torch.float32).cpu()
-        b = res_state[key].detach().to(torch.float32).cpu()
-        assert torch.allclose(a, b, atol=1e-6, rtol=1e-5), (
-            f"resume diverged at {key}: max_abs_diff={(a - b).abs().max().item():.3e}"
+    # Sanity: dst params currently differ from src.
+    dst_full_pre = [p.full_tensor().detach().clone() for p in dst.parameters()]
+    if rank == 0:
+        any_diff = any(
+            not torch.allclose(a, b, atol=0, rtol=0)
+            for a, b in zip(src_full, dst_full_pre)
         )
+        assert any_diff, "test setup bug: dst should differ from src before load"
+
+    dst_state = get_model_state_dict(dst)
+    dcp.load(dst_state, checkpoint_id=str(ckpt_dir))
+    set_model_state_dict(dst, dst_state)
+    dist.barrier()
+
+    # Post-load: dst must match src exactly (after full_tensor reduction).
+    dst_full_post = [p.full_tensor().detach().clone() for p in dst.parameters()]
+    if rank == 0:
+        for i, (a, b) in enumerate(zip(src_full, dst_full_post)):
+            assert torch.allclose(a, b, atol=0, rtol=0), (
+                f"param {i} did not round-trip through DCP: "
+                f"max abs diff = {(a - b).abs().max().item():.3e}"
+            )
 
 
-def test_save_load_fsdp_sharded():
-    if torch.cuda.device_count() < 2:
-        pytest.skip("requires 2+ CUDA devices")
-    run_distributed(_save_load_fsdp_sharded, world_size=2, backend="nccl")
-
-
-# Note: an earlier "cross-format load fails loudly" adversarial test was
-# removed — current PyTorch FSDP handles loading a full state dict into a
-# SHARDED_STATE_DICT context silently (interpreting the input correctly),
-# which is fine for users but invalidates the speculative "must raise"
-# premise. The valuable behavioral guarantee — sharded round-trip
-# correctness — lives in ``test_save_load_fsdp_sharded`` above.
+def test_save_and_load_round_trip():
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
+        pytest.skip("requires >=2 CUDA devices")
+    run_distributed(_save_and_load_round_trip, world_size=2, backend="nccl")

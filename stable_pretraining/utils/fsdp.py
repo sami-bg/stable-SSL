@@ -95,14 +95,21 @@ def describe_fsdp_strategy(strategy_or_trainer) -> dict:
     mp_policy = getattr(strat, "_spt_mp_policy", None) or getattr(
         strat, "mp_policy", None
     )
+    # Lightning's ModelParallelStrategy stores these as private attributes;
+    # try the underscored name first, fall back to the public name in case
+    # Lightning ever flips the convention.
     return {
         "is_fsdp": True,
         "subclass": type(strat).__name__,
-        "data_parallel_size": getattr(strat, "data_parallel_size", None),
-        "tensor_parallel_size": getattr(strat, "tensor_parallel_size", None),
+        "data_parallel_size": getattr(strat, "_data_parallel_size", None)
+        or getattr(strat, "data_parallel_size", None),
+        "tensor_parallel_size": getattr(strat, "_tensor_parallel_size", None)
+        or getattr(strat, "tensor_parallel_size", None),
         "save_distributed_checkpoint": getattr(
-            strat, "save_distributed_checkpoint", None
-        ),
+            strat, "_save_distributed_checkpoint", None
+        )
+        if getattr(strat, "_save_distributed_checkpoint", None) is not None
+        else getattr(strat, "save_distributed_checkpoint", None),
         "mp_policy": type(mp_policy).__name__ if mp_policy is not None else None,
     }
 

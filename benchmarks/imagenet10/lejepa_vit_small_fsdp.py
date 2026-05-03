@@ -1,4 +1,4 @@
-"""LeJEPA ViT-Small on ImageNet-10 (Imagenette) under FSDP2, 10-epoch comparison run.
+"""LeJEPA ViT-Small on ImageNet-10 (Imagenette) under FSDP2.
 
 Run with: ``torchrun --nproc-per-node=2 lejepa_vit_small_fsdp.py``.
 """
@@ -45,7 +45,7 @@ def main():
     batch_size = effective_batch_size // num_gpus
     num_workers = 16
     max_epochs = 600
-    stop_after_epochs = 10
+    stop_after_epochs = float("inf")
     global_views = 2
     all_views = 8
 

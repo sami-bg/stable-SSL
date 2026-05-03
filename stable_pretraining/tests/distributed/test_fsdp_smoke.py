@@ -1,19 +1,14 @@
-"""FSDP strategy construction and basic wrapping.
+"""FSDP2 wiring smoke tests.
 
-Two layers of tests:
+Two layers:
 
-1. **Structural** (run anywhere): ``make_fsdp_strategy`` constructs, callback
-   containers are detected, ``default_auto_wrap_policy`` builds, and the
-   FSDP-name-prefix stripping in :class:`Module` works as expected.
-
-2. **Wrap+forward+backward** (CUDA-only): run inside a multi-process group.
-   PyTorch's FSDP requires a non-CPU accelerator at runtime
-   (see ``torch.distributed.fsdp._init_utils:387-390``), so these tests are
-   gated behind ``@pytest.mark.gpu`` and skipped automatically when CUDA is
-   unavailable. They are intended for Linux CI with at least 2 GPUs.
+1. **Structural** (run anywhere): factory returns the right class, helpers
+   detect block classes, callback containers are found.
+2. **Wrap+forward+backward** (CPU/gloo or CUDA): a real ``run_distributed``
+   group calls ``default_parallelize_fn`` on a model and verifies the result —
+   per-block units, root unit, callback containers detached and reattached
+   without becoming DTensors, and one forward/backward/step is finite.
 """
-
-from __future__ import annotations
 
 import pytest
 import torch
@@ -21,15 +16,7 @@ import torch.nn as nn
 
 from stable_pretraining.tests.distributed.conftest import (
     run_distributed,
-    seeded_batch,
     tiny_backbone,
-    tiny_projector,
-)
-from stable_pretraining.utils.fsdp import (
-    CallbackAwareFSDPStrategy,
-    default_auto_wrap_policy,
-    find_callback_containers,
-    make_fsdp_strategy,
 )
 
 
@@ -37,227 +24,211 @@ pytestmark = pytest.mark.distributed
 
 
 # ---------------------------------------------------------------------------
-# Strategy construction (no subprocess required).
+# 1. Structural — no process group required.
 # ---------------------------------------------------------------------------
 
 
-def test_make_fsdp_strategy_constructs():
+def test_make_fsdp_strategy_returns_model_parallel_strategy():
+    from lightning.pytorch.strategies import ModelParallelStrategy
+
+    from stable_pretraining.utils.fsdp import make_fsdp_strategy
+
+    strat = make_fsdp_strategy(data_parallel_size=1, tensor_parallel_size=1)
+    assert isinstance(strat, ModelParallelStrategy)
+
+
+def test_make_fsdp_strategy_stashes_mp_policy():
+    from torch.distributed.fsdp import MixedPrecisionPolicy
+
+    from stable_pretraining.utils.fsdp import make_fsdp_strategy
+
+    policy = MixedPrecisionPolicy(param_dtype=torch.bfloat16)
     strat = make_fsdp_strategy(
-        auto_wrap_policy=None,
-        sharding_strategy="FULL_SHARD",
-        cpu_offload=False,
-        state_dict_type="sharded",
+        data_parallel_size=1, tensor_parallel_size=1, mp_policy=policy
     )
-    assert isinstance(strat, CallbackAwareFSDPStrategy)
+    assert strat._spt_mp_policy is policy
 
 
-def test_make_fsdp_strategy_without_callback_exclusion():
-    from lightning.pytorch.strategies import FSDPStrategy
+def test_detect_block_classes_finds_repeated_block():
+    from stable_pretraining.utils.fsdp import _detect_block_classes
 
-    strat = make_fsdp_strategy(ignore_callbacks=False)
-    # When ignore_callbacks=False, we get the vanilla FSDPStrategy.
-    assert type(strat).__name__ == "FSDPStrategy"
-    assert isinstance(strat, FSDPStrategy)
-
-
-def test_default_auto_wrap_policy_with_blocks():
-    """Auto-detect repeated *Block / *Layer classes."""
-    from torch.distributed.fsdp.wrap import ModuleWrapPolicy
-
-    class FakeBlock(nn.Module):
+    class FooBlock(nn.Module):
         def __init__(self):
             super().__init__()
-            self.l = nn.Linear(8, 8)
+            self.lin = nn.Linear(4, 4)
 
     class M(nn.Module):
         def __init__(self):
             super().__init__()
-            self.b1 = FakeBlock()
-            self.b2 = FakeBlock()
+            self.b = nn.ModuleList([FooBlock(), FooBlock(), FooBlock()])
 
-    policy = default_auto_wrap_policy(M())
-    assert isinstance(policy, ModuleWrapPolicy)
+    assert _detect_block_classes(M()) == {FooBlock}
 
 
-def test_default_auto_wrap_policy_falls_back_to_size():
-    """No repeated blocks -> size-based fallback."""
-    from functools import partial
+def test_detect_block_classes_ignores_singleton():
+    """A single ``*Block`` instance isn't a stack and shouldn't be auto-wrapped."""
+    from stable_pretraining.utils.fsdp import _detect_block_classes
 
-    m = nn.Sequential(nn.Linear(4, 4))
-    policy = default_auto_wrap_policy(m, min_num_params=1000)
-    # functools.partial wrapping size_based_auto_wrap_policy.
-    assert isinstance(policy, partial)
+    class OnceBlock(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(4, 4)
 
-
-def test_find_callback_containers():
     class M(nn.Module):
         def __init__(self):
             super().__init__()
-            self.callbacks_modules = nn.ModuleDict({"probe": nn.Linear(8, 4)})
-            self.callbacks_metrics = nn.ModuleDict()
-            self.backbone = nn.Linear(16, 8)
+            self.b = OnceBlock()
 
-    found = find_callback_containers(M())
-    assert len(found) == 2
-    classes = {type(c) for c in found}
-    assert classes == {nn.ModuleDict}
+    assert _detect_block_classes(M()) == set()
+
+
+def test_find_callback_containers_locates_module_dicts():
+    import stable_pretraining as spt
+    from stable_pretraining.utils.fsdp import find_callback_containers
+
+    module = spt.Module(model=tiny_backbone(), forward=lambda self, b, s: {"loss": 0})
+    containers = find_callback_containers(module)
+    names = sorted(
+        n for n, sub in module.named_modules() if any(sub is c for c in containers)
+    )
+    assert names == ["callbacks_metrics", "callbacks_modules"]
 
 
 # ---------------------------------------------------------------------------
-# Multi-process FSDP wrap + forward + backward + step.
+# 2. Wrap + forward + backward — real distributed group.
 # ---------------------------------------------------------------------------
 
 
-class _SmokeModel(nn.Module):
-    """Tiny model with backbone + projector. Returns a scalar loss."""
+def _smoke_wrap_and_step(rank: int, world_size: int) -> None:
+    """Build a tiny module, parallelize it, run one fwd/bwd/step.
 
-    def __init__(self):
-        super().__init__()
-        self.backbone = tiny_backbone()
-        self.projector = tiny_projector()
+    Asserts:
+    - per-block ``fully_shard`` is applied to repeated ``Block`` modules,
+    - the root is sharded,
+    - callback containers are reattached after the root sweep AND their
+      params are NOT DTensors (the detach/reattach contract),
+    - one forward+backward+optimizer step runs and produces a finite loss.
+    """
+    from torch.distributed.tensor import DTensor, init_device_mesh
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.projector(self.backbone(x))
-
-
-def _supervised_one_step(rank: int, world_size: int) -> None:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-    torch.cuda.set_device(rank)
-    device = torch.device(f"cuda:{rank}")
-    torch.manual_seed(42)
-    model = _SmokeModel().to(device)
-    fsdp_model = FSDP(
-        model,
-        auto_wrap_policy=default_auto_wrap_policy(model, min_num_params=10),
-        device_id=rank,
+    import stable_pretraining as spt
+    from stable_pretraining.utils.fsdp import (
+        default_parallelize_fn,
+        find_callback_containers,
     )
 
-    optimizer = torch.optim.SGD(fsdp_model.parameters(), lr=1e-3)
-    batch = seeded_batch(seed=rank, batch_size=4)
-    out = fsdp_model(batch["image"].to(device))
-    target = torch.zeros_like(out)
-    loss = ((out - target) ** 2).mean()
-    assert torch.isfinite(loss), f"loss is not finite: {loss}"
+    torch.manual_seed(7 + rank)
 
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin1 = nn.Linear(8, 8)
+            self.lin2 = nn.Linear(8, 8)
+
+        def forward(self, x):
+            return self.lin2(self.lin1(x).relu())
+
+    class TinyViT(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList([Block() for _ in range(3)])
+
+        def forward(self, x):
+            for blk in self.blocks:
+                x = blk(x)
+            return x
+
+    def fwd(self, batch, stage):
+        out = self.model(batch["image"])
+        return {"loss": (out * out).mean(), "embedding": out}
+
+    module = spt.Module(model=TinyViT(), forward=fwd)
+    module.callbacks_modules["probe"] = nn.Linear(8, 4)
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    default_parallelize_fn(module, mesh)
+
+    # 1) Callback container is back in the tree (reattached).
+    containers = find_callback_containers(module)
+    assert any(c is module.callbacks_modules for c in containers), (
+        "callbacks_modules was not reattached after default_parallelize_fn"
+    )
+
+    # 2) Callback params are NOT DTensors (root sweep did not claim them).
+    for name, p in module.callbacks_modules.named_parameters():
+        assert not isinstance(p, DTensor), (
+            f"callback param '{name}' was sharded into a DTensor — "
+            f"detach/reattach failed to keep it un-sharded"
+        )
+
+    # 3) Backbone Block params ARE DTensors.
+    backbone_params = list(module.model.blocks[0].parameters())
+    assert backbone_params, "expected the first Block to have parameters"
+    assert any(isinstance(p, DTensor) for p in backbone_params), (
+        "expected at least one backbone Block param to be a DTensor after wrap"
+    )
+
+    # 4) One fwd/bwd/step is finite.
+    optim = torch.optim.SGD(
+        [p for p in module.parameters() if p.requires_grad], lr=1e-3
+    )
+    out = module(batch={"image": torch.randn(4, 8)}, stage="fit")
+    loss = out["loss"]
     loss.backward()
-    # Check that gradients exist on at least some parameters
-    grad_count = sum(1 for p in fsdp_model.parameters() if p.grad is not None)
-    assert grad_count > 0, "no parameter received a gradient"
-
-    optimizer.step()
-    optimizer.zero_grad()
+    optim.step()
+    if rank == 0:
+        assert torch.isfinite(loss).item(), f"loss not finite: {loss.item()}"
 
 
-@pytest.mark.gpu
-def test_fsdp_one_step_supervised():
-    """A FSDP-wrapped tiny model trains one step without crashing.
-
-    CUDA-only: PyTorch FSDP requires a non-CPU accelerator at forward time.
-    """
-    run_distributed(_supervised_one_step, world_size=2, backend="nccl")
+def test_wrap_and_step_cpu_world_size_2():
+    """End-to-end: wrap, forward, backward, step on CPU/gloo, world_size=2."""
+    run_distributed(_smoke_wrap_and_step, world_size=2, backend="gloo")
 
 
 # ---------------------------------------------------------------------------
-# Callbacks-modules exclusion test.
+# 3. Root-only fallback (no repeated blocks) still trains.
 # ---------------------------------------------------------------------------
 
 
-class _ModelWithCallbacks(nn.Module):
-    """Mimics ``stable_pretraining.Module``'s callback container layout."""
+def _root_only_path(rank: int, world_size: int) -> None:
+    """Models with no repeated ``*Block`` fall back to root-only sharding."""
+    from torch.distributed.tensor import DTensor, init_device_mesh
 
-    def __init__(self):
-        super().__init__()
-        self.backbone = tiny_backbone()
-        self.callbacks_modules = nn.ModuleDict({"probe": nn.Linear(16, 4)})
-        self.callbacks_metrics = nn.ModuleDict()
+    import stable_pretraining as spt
+    from stable_pretraining.utils.fsdp import default_parallelize_fn
 
+    torch.manual_seed(7 + rank)
 
-def _callbacks_not_flat_paramed(rank: int, world_size: int) -> None:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    class Plain(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(8, 8)
 
-    torch.manual_seed(0)
-    model = _ModelWithCallbacks()
-    ignored = find_callback_containers(model)
-    fsdp_model = FSDP(
-        model,
-        auto_wrap_policy=default_auto_wrap_policy(model, min_num_params=10),
-        ignored_modules=ignored,
-        device_id=None,
+        def forward(self, x):
+            return self.lin(x)
+
+    def fwd(self, batch, stage):
+        out = self.model(batch["image"])
+        return {"loss": (out * out).mean()}
+
+    module = spt.Module(model=Plain(), forward=fwd)
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    default_parallelize_fn(module, mesh)
+
+    # With no repeated block, only the root is FSDP2-managed; the plain
+    # Linear's params still become DTensors (claimed by root).
+    assert isinstance(module.model.lin.weight, DTensor)
+
+    optim = torch.optim.SGD(
+        [p for p in module.parameters() if p.requires_grad], lr=1e-3
     )
-
-    # The probe parameter must remain a regular nn.Parameter (i.e. NOT a
-    # FlatParameter owned by an FSDP unit). FSDP uses FlatParameter for
-    # sharded params; ignored modules retain their original Parameter type.
-    probe_weight = fsdp_model.callbacks_modules["probe"].weight
-    assert isinstance(probe_weight, torch.nn.Parameter)
-    # Concrete check: a sharded param has class FlatParameter
-    cls_name = type(probe_weight).__name__
-    assert cls_name != "FlatParameter", (
-        f"probe weight was sharded by FSDP (type={cls_name}); ignored_modules "
-        f"did not protect it"
-    )
-
-    # The probe param has world_size 1 numel-equivalence: same shape on all ranks.
-    expected_shape = torch.Size([4, 16])
-    assert probe_weight.shape == expected_shape, (
-        f"rank {rank}: probe weight shape {probe_weight.shape}, expected {expected_shape}"
-    )
+    loss = module(batch={"image": torch.randn(4, 8)}, stage="fit")["loss"]
+    loss.backward()
+    optim.step()
+    if rank == 0:
+        assert torch.isfinite(loss).item()
 
 
-def test_callbacks_not_sharded_under_fsdp():
-    run_distributed(_callbacks_not_flat_paramed, world_size=2)
-
-
-# ---------------------------------------------------------------------------
-# Adversarial: a deliberately bad config produces a clear error.
-# ---------------------------------------------------------------------------
-
-
-def _wrap_everything_with_zero_threshold(rank: int, world_size: int) -> None:
-    """Wrap with size_based threshold=0 and assert FSDP either succeeds with.
-
-    sensible behavior or raises a clear error rather than corrupting state.
-    """
-    from functools import partial
-
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-
-    torch.cuda.set_device(rank)
-    device = torch.device(f"cuda:{rank}")
-    torch.manual_seed(0)
-    model = _SmokeModel().to(device)
-    policy = partial(size_based_auto_wrap_policy, min_num_params=0)
-    # This forces FSDP to wrap every recursive child. It should still work
-    # (degenerate but valid), not silently corrupt training. Run a forward
-    # to confirm it doesn't blow up.
-    fsdp_model = FSDP(model, auto_wrap_policy=policy, device_id=rank)
-    out = fsdp_model(torch.randn(2, 16, device=device))
-    assert torch.isfinite(out).all(), "forward produced non-finite output"
-
-
-@pytest.mark.gpu
-def test_extreme_wrap_policy_either_works_or_errors_clearly():
-    """Adversarial: zero-size wrap threshold should not silently corrupt training.
-
-    CUDA-only: forward pass requires a non-CPU accelerator under FSDP.
-    """
-    run_distributed(_wrap_everything_with_zero_threshold, world_size=2, backend="nccl")
-
-
-# ---------------------------------------------------------------------------
-# Regex matching tolerates FSDP prefixes (covers _strip_fsdp_prefix).
-# ---------------------------------------------------------------------------
-
-
-def test_strip_fsdp_prefix_supports_user_regex():
-    """Sanity check that the prefix-stripping helper enables expected regex."""
-    import re
-
-    from stable_pretraining.module import _strip_fsdp_prefix
-
-    # User wrote a regex pattern as if FSDP didn't exist.
-    pattern = re.compile(r"backbone")
-    fsdp_name = "_fsdp_wrapped_module.backbone.layer1"
-    assert pattern.match(_strip_fsdp_prefix(fsdp_name)) is not None
+def test_root_only_path_cpu_world_size_2():
+    run_distributed(_root_only_path, world_size=2, backend="gloo")

@@ -1,434 +1,189 @@
-"""Callback compatibility under FSDP.
+r"""Callback compatibility under FSDP2.
 
 The :class:`stable_pretraining.callbacks.utils.TrainableCallback` system
-monkey-patches :meth:`Module.configure_model` and
-:meth:`Module.configure_optimizers` to register callback-owned modules into
-``pl_module.callbacks_modules`` and append a per-callback optimizer to the
-:meth:`configure_optimizers` return tuple. Each callback runs its own
-optimizer over its own parameters; sharding those parameters under the main
-FSDP unit would put them out of reach of the callback's optimizer.
+monkey-patches :meth:`Module.configure_model` (and ``configure_optimizers``)
+to register callback-owned modules into ``module.callbacks_modules``. Each
+callback runs its own optimizer over its own parameters; sharding those
+params under the main FSDP2 unit would put them out of reach of that
+optimizer.
 
-This test file verifies that:
+The :func:`stable_pretraining.utils.fsdp.default_parallelize_fn` excludes
+callback containers from sharding via **detach-around-root**: it pops the
+``callbacks_modules`` and ``callbacks_metrics`` ``ModuleDict``\\ s out of the
+module tree before ``fully_shard(model)`` and reattaches them after, so
+the root sweep doesn't claim them as DTensors. Skipping in the per-block
+loop alone is *not* sufficient — the root sweep would happily turn them
+into DTensors regardless.
 
-1. **Detection (CPU)**: ``find_callback_containers`` correctly identifies the
-   ``callbacks_modules`` and ``callbacks_metrics`` containers populated by
-   real :class:`OnlineProbe`, :class:`OnlineKNN`, and :class:`RankMe`
-   instances after :meth:`Module.configure_model` runs.
-2. **Strategy wiring (CPU)**: :class:`CallbackAwareFSDPStrategy._setup_model`
-   adds those containers to FSDP's ``ignored_modules`` before super()'s
-   wrap, with no double-add.
-3. **Wrap-time (CPU)**: a Module + OnlineProbe wrapped manually with
-   :class:`FullyShardedDataParallel` and ``ignored_modules`` keeps the probe
-   weight as a regular :class:`torch.nn.Parameter` (not a
-   :class:`FlatParameter`).
-4. **Behavioral (CUDA)**: full FSDP run with a probe — probe gradients are
-   computed independently of the backbone and probe parameters update
-   across steps.
+These tests verify the three load-bearing properties of that exclusion:
+
+1. The containers are reattached (the model tree is shape-preserved).
+2. Their parameters remain plain ``nn.Parameter``\\ s, not DTensors.
+3. A per-callback optimizer over those parameters runs end-to-end and
+   produces finite, non-zero gradients.
 """
-
-from __future__ import annotations
-
-from typing import List
 
 import pytest
 import torch
 import torch.nn as nn
 
-import stable_pretraining as spt
-from stable_pretraining.callbacks import OnlineKNN, OnlineProbe, RankMe
-from stable_pretraining.tests.distributed.conftest import (
-    run_distributed,
-    tiny_backbone,
-)
-from stable_pretraining.utils.fsdp import (
-    CallbackAwareFSDPStrategy,
-    find_callback_containers,
-)
+from stable_pretraining.tests.distributed.conftest import run_distributed
 
 
 pytestmark = pytest.mark.distributed
 
 
 # ---------------------------------------------------------------------------
-# Helpers: build a realistic spt.Module with various callbacks attached.
+# 1. Detach/reattach correctness — the keystone test.
 # ---------------------------------------------------------------------------
 
 
-def _supervised_forward(self, batch, stage):
-    """Plain supervised forward used as the spt.Module's ``forward`` arg."""
-    out = self.backbone(batch["image"])
-    return {"embedding": out, "label": batch["label"], "loss": out.sum() * 0.0}
+def _detach_reattach(rank: int, world_size: int) -> None:
+    """After parallelize_fn runs, callback containers must satisfy three checks.
 
-
-def _build_module_with_callbacks(callbacks: List) -> spt.Module:
-    """Build an :class:`spt.Module` and attach the given callbacks.
-
-    Mirrors what the :class:`Manager` does at training start: instantiates
-    the module, then constructs the callbacks (which monkey-patch the
-    module's ``configure_model``/``configure_optimizers``), then triggers
-    ``configure_model`` so the probe modules land in ``callbacks_modules``.
+    - still be reachable via ``module.callbacks_modules`` (reattached),
+    - still be in ``model.named_modules()`` output,
+    - their parameters must NOT be DTensors.
     """
-    module = spt.Module(
-        backbone=tiny_backbone(),
-        forward=_supervised_forward,
+    from torch.distributed.tensor import DTensor, init_device_mesh
+
+    import stable_pretraining as spt
+    from stable_pretraining.utils.fsdp import default_parallelize_fn
+
+    torch.manual_seed(0)
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(8, 8)
+
+        def forward(self, x):
+            return self.lin(x)
+
+    class TinyVit(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList([Block() for _ in range(2)])
+            self.embed_dim = 8
+
+        def forward(self, x):
+            for blk in self.blocks:
+                x = blk(x)
+            return x
+
+    def fwd(self, batch, stage):
+        return {"loss": self.model(batch["image"]).pow(2).mean()}
+
+    module = spt.Module(model=TinyVit(), forward=fwd)
+    # Simulate two callbacks registering modules.
+    module.callbacks_modules["probe"] = nn.Linear(8, 4)
+    module.callbacks_modules["queue"] = nn.Linear(8, 8)
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    default_parallelize_fn(module, mesh)
+
+    # 1) Reattachment.
+    assert "callbacks_modules" in module._modules, (
+        "callbacks_modules was not reattached after parallelize_fn"
     )
-    # Constructing the callback wraps configure_model.
-    for cb in callbacks:
-        # Bind by passing module — same as user code would do.
-        if isinstance(cb, dict):
-            cb["module"] = module
-            cb_inst = cb["cls"](**{k: v for k, v in cb.items() if k != "cls"})
-        else:
-            raise TypeError("expected dict spec")
-        module.__dict__.setdefault("_test_callbacks", []).append(cb_inst)
-
-    # Trigger configure_model — Lightning would do this at fit start.
-    module.configure_model()
-    return module
-
-
-# ---------------------------------------------------------------------------
-# 1. Detection: find_callback_containers walks a real Module after setup.
-# ---------------------------------------------------------------------------
-
-
-def test_find_callback_containers_with_online_probe():
-    """A Module with an OnlineProbe registers a probe in callbacks_modules.
-
-    and metrics in callbacks_metrics. Both must be detected.
-    """
-    import torchmetrics
-
-    module = _build_module_with_callbacks(
-        [
-            {
-                "cls": OnlineProbe,
-                "name": "probe1",
-                "input": "embedding",
-                "target": "label",
-                "probe": nn.Linear(16, 4),
-                "loss": nn.CrossEntropyLoss(),
-                "metrics": torchmetrics.classification.MulticlassAccuracy(4),
-            },
-        ]
+    assert "callbacks_metrics" in module._modules, (
+        "callbacks_metrics was not reattached after parallelize_fn"
     )
-    # Probe was registered.
-    assert "probe1" in module.callbacks_modules
-    assert "probe1" in module.callbacks_metrics
-
-    containers = find_callback_containers(module)
-    # Both callbacks_modules and callbacks_metrics must be in the container set.
-    assert module.callbacks_modules in containers
-    assert module.callbacks_metrics in containers
-
-
-def test_find_callback_containers_with_online_knn():
-    """OnlineKNN doesn't register a learnable module but DOES register.
-
-    metrics and uses the OnlineQueue (which itself registers in
-    callbacks_modules during setup).
-    """
-    import torchmetrics
-
-    module = spt.Module(
-        backbone=tiny_backbone(),
-        forward=_supervised_forward,
-    )
-    # OnlineKNN doesn't extend TrainableCallback; it's a regular Callback.
-    # It registers metrics during setup() — verify the container exists.
-    knn = OnlineKNN(  # noqa: F841 — constructed for its registration side effects
-        name="knn",
-        input="embedding",
-        target="label",
-        queue_length=64,
-        input_dim=16,
-        target_dim=None,
-        metrics={"acc": torchmetrics.classification.MulticlassAccuracy(4)},
-    )
-    # Even without invoking setup(), find_callback_containers always returns
-    # the two ModuleDict slots — they're created in Module.__init__.
-    containers = find_callback_containers(module)
-    assert module.callbacks_modules in containers
-    assert module.callbacks_metrics in containers
-
-
-def test_find_callback_containers_with_rankme():
-    """RankMe is a non-trainable callback; the container slots still exist."""
-    module = spt.Module(
-        backbone=tiny_backbone(),
-        forward=_supervised_forward,
-    )
-    _ = RankMe(name="rm", target="embedding", queue_length=64, target_shape=16)
-    containers = find_callback_containers(module)
-    assert module.callbacks_modules in containers
-    assert module.callbacks_metrics in containers
-
-
-# ---------------------------------------------------------------------------
-# 2. Strategy wiring: CallbackAwareFSDPStrategy injects ignored_modules.
-# ---------------------------------------------------------------------------
-
-
-def _exercise_strategy_setup(module, kwargs_in):
-    """Run ``CallbackAwareFSDPStrategy._setup_model`` with a real instance but a.
-
-    mocked super-class ``_setup_model``. Returns the kwargs the super would
-    have observed.
-    """
-    from unittest.mock import patch
-
-    from lightning.pytorch.strategies import FSDPStrategy
-
-    captured = {}
-
-    def fake_super_setup(self, model):
-        captured["ignored_modules"] = list(self.kwargs.get("ignored_modules", []))
-        return model
-
-    fake = CallbackAwareFSDPStrategy.__new__(CallbackAwareFSDPStrategy)
-    fake.kwargs = dict(kwargs_in)
-
-    with patch.object(FSDPStrategy, "_setup_model", fake_super_setup):
-        fake._setup_model(module)
-    return captured["ignored_modules"]
-
-
-def test_strategy_setup_model_injects_ignored_modules():
-    """``CallbackAwareFSDPStrategy._setup_model`` must add the discovered.
-
-    callback containers to ``self.kwargs["ignored_modules"]`` before
-    delegating to super()._setup_model.
-    """
-    import torchmetrics
-
-    module = _build_module_with_callbacks(
-        [
-            {
-                "cls": OnlineProbe,
-                "name": "p",
-                "input": "embedding",
-                "target": "label",
-                "probe": nn.Linear(16, 4),
-                "loss": nn.CrossEntropyLoss(),
-                "metrics": torchmetrics.classification.MulticlassAccuracy(4),
-            },
-        ]
+    assert module.callbacks_modules["probe"].weight.shape == torch.Size([4, 8]), (
+        "probe Linear shape changed during detach/reattach"
     )
 
-    seen_ignored = _exercise_strategy_setup(module, kwargs_in={})
-
-    expected_ids = {id(c) for c in find_callback_containers(module)}
-    seen_ids = {id(m) for m in seen_ignored}
-    assert expected_ids.issubset(seen_ids), (
-        f"expected ignored_modules to include all callback containers; "
-        f"missing {expected_ids - seen_ids}"
-    )
-
-
-def test_strategy_setup_model_preserves_user_ignored_modules():
-    """User-supplied ``ignored_modules`` must not be dropped by the strategy."""
-    module = spt.Module(backbone=tiny_backbone(), forward=_supervised_forward)
-    user_ignored_module = nn.Linear(2, 2)
-
-    seen_ignored = _exercise_strategy_setup(
-        module, kwargs_in={"ignored_modules": [user_ignored_module]}
-    )
-
-    assert user_ignored_module in seen_ignored, "user ignored_modules was dropped"
-    for c in find_callback_containers(module):
-        assert c in seen_ignored
-
-
-def test_strategy_setup_model_no_double_add():
-    """If a callback container is already in ``ignored_modules``, it shouldn't.
-
-    be added a second time.
-    """
-    import torchmetrics
-
-    module = _build_module_with_callbacks(
-        [
-            {
-                "cls": OnlineProbe,
-                "name": "p",
-                "input": "embedding",
-                "target": "label",
-                "probe": nn.Linear(16, 4),
-                "loss": nn.CrossEntropyLoss(),
-                "metrics": torchmetrics.classification.MulticlassAccuracy(4),
-            },
-        ]
-    )
-
-    # Pre-populate with one of the containers we expect the override to add.
-    seen_ignored = _exercise_strategy_setup(
-        module, kwargs_in={"ignored_modules": [module.callbacks_modules]}
-    )
-
-    # callbacks_modules appears exactly once.
-    assert sum(1 for m in seen_ignored if m is module.callbacks_modules) == 1
-
-
-# ---------------------------------------------------------------------------
-# 3. Wrap-time test: probe weight is NOT a FlatParameter after FSDP wrap.
-# ---------------------------------------------------------------------------
-
-
-def _probe_weight_unsharded(rank: int, world_size: int) -> None:
-    import torchmetrics
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-    from stable_pretraining.utils.fsdp import default_auto_wrap_policy
-
-    module = _build_module_with_callbacks(
-        [
-            {
-                "cls": OnlineProbe,
-                "name": "p",
-                "input": "embedding",
-                "target": "label",
-                "probe": nn.Linear(16, 4),
-                "loss": nn.CrossEntropyLoss(),
-                "metrics": torchmetrics.classification.MulticlassAccuracy(4),
-            },
-        ]
-    )
-
-    ignored = find_callback_containers(module)
-    fsdp_module = FSDP(  # noqa: F841
-        module,
-        auto_wrap_policy=default_auto_wrap_policy(module, min_num_params=10),
-        ignored_modules=ignored,
-        device_id=None,
-    )
-
-    # The probe weight (originally created via nn.Linear(16, 4)) lives in
-    # callbacks_modules["p"]. It must remain a vanilla Parameter, not a
-    # FSDP FlatParameter.
-    probe = module.callbacks_modules["p"]
-    weight = probe.weight
-    cls_name = type(weight).__name__
-    assert isinstance(weight, torch.nn.Parameter), f"probe weight type: {cls_name}"
-    assert cls_name != "FlatParameter", (
-        f"probe weight was sharded (type={cls_name}); ignored_modules failed"
-    )
-    # Shape unchanged.
-    assert tuple(weight.shape) == (4, 16), f"shape changed: {tuple(weight.shape)}"
-
-
-def test_probe_weight_remains_unsharded_after_fsdp_wrap():
-    run_distributed(_probe_weight_unsharded, world_size=2)
-
-
-# ---------------------------------------------------------------------------
-# 4. CUDA-only: full FSDP run with a probe; verify gradient flow.
-# ---------------------------------------------------------------------------
-
-
-def _probe_receives_independent_gradients(rank: int, world_size: int) -> None:
-    """Under FSDP, the probe's parameters must receive gradients from the.
-
-    probe's own loss — not from the backbone's gradients, and the probe's
-    optimizer must be able to step.
-    """
-    import torchmetrics
-    from functools import partial
-
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA test executed without CUDA")
-
-    device = torch.device(f"cuda:{rank}")
-    torch.cuda.set_device(rank)
-
-    module = _build_module_with_callbacks(
-        [
-            {
-                "cls": OnlineProbe,
-                "name": "p",
-                "input": "embedding",
-                "target": "label",
-                "probe": nn.Linear(16, 4),
-                "loss": nn.CrossEntropyLoss(),
-                "metrics": torchmetrics.classification.MulticlassAccuracy(4),
-            },
-        ]
-    )
-
-    ignored = find_callback_containers(module)
-    policy = partial(size_based_auto_wrap_policy, min_num_params=100)
-    module = module.to(device)
-    fsdp_module = FSDP(
-        module,
-        auto_wrap_policy=policy,
-        ignored_modules=ignored,
-        device_id=device.index,
-        use_orig_params=True,
-    )
-
-    probe = module.callbacks_modules["p"]
-    probe_initial_weight = probe.weight.detach().clone()
-
-    # Construct probe-specific loss. Detach the embedding to mirror the
-    # OnlineProbe wiring (which detaches before passing into the probe).
-    optim_probe = torch.optim.SGD(probe.parameters(), lr=1e-2)
-    x = torch.randn(8, 16, device=device)
-    y = torch.randint(0, 4, (8,), device=device)
-    emb = fsdp_module.backbone(x).detach()
-    logits = probe(emb)
-    loss = nn.CrossEntropyLoss()(logits, y)
-    loss.backward()
-    # Probe weight must have a non-None, finite gradient.
-    assert probe.weight.grad is not None
-    assert torch.isfinite(probe.weight.grad).all()
-    optim_probe.step()
-    # Probe weight must have changed.
-    assert not torch.equal(probe.weight, probe_initial_weight), (
-        "probe weight did not update after step"
-    )
-
-
-@pytest.mark.gpu
-def test_online_probe_gradient_flow_under_fsdp():
-    run_distributed(_probe_receives_independent_gradients, world_size=2, backend="nccl")
-
-
-# ---------------------------------------------------------------------------
-# 5. CUDA-only: OnlineQueue.gather_distributed under FSDP.
-# ---------------------------------------------------------------------------
-
-
-def _queue_gathers_under_fsdp(rank: int, world_size: int) -> None:
-    """Verify the gather path used by ``OnlineQueue`` works under NCCL.
-
-    ``OnlineQueue.on_validation_epoch_start`` calls
-    ``pl_module.all_gather(tensor)``, which under the hood is
-    ``torch.distributed.all_gather`` over the active backend. Verify the
-    underlying gather works correctly under NCCL with rank-distinguishable
-    tensors — that's the only mechanism FSDP could break for the queue.
-    """
-    import torch.distributed as dist
-
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA test executed without CUDA")
-
-    device = torch.device(f"cuda:{rank}")
-    torch.cuda.set_device(rank)
-
-    local_tensor = torch.full((4, 8), float(rank), device=device)
-    gathered_list = [torch.empty_like(local_tensor) for _ in range(world_size)]
-    dist.all_gather(gathered_list, local_tensor)
-
-    # Each rank's slice should match its rank value.
-    for r in range(world_size):
-        expected = torch.full((4, 8), float(r), device=device)
-        assert torch.allclose(gathered_list[r], expected), (
-            f"rank {r} slice mismatch: {gathered_list[r]}"
+    # 2) Callback params are NOT DTensors.
+    for name, p in module.callbacks_modules.named_parameters():
+        assert not isinstance(p, DTensor), (
+            f"callback param '{name}' was claimed by root fully_shard "
+            f"(became a DTensor) — detach/reattach is broken"
         )
 
+    # 3) Backbone params ARE DTensors (per-block + root claim them).
+    backbone_params = list(module.model.blocks[0].parameters())
+    assert backbone_params
+    assert any(isinstance(p, DTensor) for p in backbone_params), (
+        "expected at least one backbone Block param to be a DTensor"
+    )
 
-@pytest.mark.gpu
-def test_online_queue_all_gather_under_fsdp():
-    run_distributed(_queue_gathers_under_fsdp, world_size=2, backend="nccl")
+
+def test_detach_reattach_cpu_world_size_2():
+    run_distributed(_detach_reattach, world_size=2, backend="gloo")
+
+
+# ---------------------------------------------------------------------------
+# 2. Per-callback optimizer steps cleanly under FSDP2.
+# ---------------------------------------------------------------------------
+
+
+def _per_callback_optimizer_steps(rank: int, world_size: int) -> None:
+    """Per-callback optimizers must run cleanly under FSDP2.
+
+    - construct without raising,
+    - receive non-zero gradients on backward,
+    - step the param without raising (no DTensor / Tensor mixing).
+    """
+    from torch.distributed.tensor import init_device_mesh
+
+    import stable_pretraining as spt
+    from stable_pretraining.utils.fsdp import default_parallelize_fn
+
+    torch.manual_seed(0)
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lin = nn.Linear(8, 8)
+
+        def forward(self, x):
+            return self.lin(x)
+
+    class TinyVit(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList([Block() for _ in range(2)])
+
+        def forward(self, x):
+            for blk in self.blocks:
+                x = blk(x)
+            return x
+
+    def fwd(self, batch, stage):
+        emb = self.model(batch["image"])
+        # Probe head sees a regular tensor (FSDP2 unsharded the backbone).
+        probe_logits = self.callbacks_modules["probe"](emb)
+        probe_loss = nn.functional.cross_entropy(probe_logits, batch["label"])
+        ssl_loss = emb.pow(2).mean()
+        return {"loss": ssl_loss + probe_loss, "embedding": emb}
+
+    module = spt.Module(model=TinyVit(), forward=fwd)
+    module.callbacks_modules["probe"] = nn.Linear(8, 4)
+
+    mesh = init_device_mesh("cpu", (world_size,))
+    default_parallelize_fn(module, mesh)
+
+    # Build the per-callback optimizer the way TrainableCallback does.
+    probe_params = list(module.callbacks_modules.parameters())
+    probe_optim = torch.optim.SGD(probe_params, lr=1e-2)
+
+    batch = {
+        "image": torch.randn(4, 8),
+        "label": torch.randint(0, 4, (4,)),
+    }
+    out = module(batch=batch, stage="fit")
+    out["loss"].backward()
+
+    # Probe params received gradients.
+    for name, p in module.callbacks_modules.named_parameters():
+        assert p.grad is not None, f"probe param '{name}' got no gradient"
+        assert torch.isfinite(p.grad).all(), f"probe param '{name}' has non-finite grad"
+        # And the gradient is non-trivial.
+        assert p.grad.abs().sum() > 0, f"probe param '{name}' has zero gradient"
+
+    probe_optim.step()
+    probe_optim.zero_grad()
+
+
+def test_per_callback_optimizer_cpu_world_size_2():
+    run_distributed(_per_callback_optimizer_steps, world_size=2, backend="gloo")
