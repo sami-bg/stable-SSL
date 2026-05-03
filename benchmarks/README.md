@@ -32,19 +32,19 @@ Each dataset will be stored in its own subdirectory (e.g., `cifar10/`, `imagenet
 
 ```bash
 # SimCLR
-python benchmarks/cifar10/simclr-resnet18.py
+python benchmarks/cifar10/simclr_resnet18.py
 
 # BYOL
-python benchmarks/cifar10/byol-resnet18.py
+python benchmarks/cifar10/byol_resnet18.py
 
 # VICReg
-python benchmarks/cifar10/vicreg-resnet18.py
+python benchmarks/cifar10/vicreg_resnet18.py
 
 # Barlow Twins
-python benchmarks/cifar10/barlow-resnet18.py
+python benchmarks/cifar10/barlow_resnet18.py
 
 # NNCLR
-python benchmarks/cifar10/nnclr-resnet18.py
+python benchmarks/cifar10/nnclr_resnet18.py
 ```
 
 ## Notes

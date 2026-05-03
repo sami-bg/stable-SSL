@@ -181,8 +181,54 @@ class Module(pl.LightningModule):
     def forward(self, *args, **kwargs):
         raise NotImplementedError("The forward() method must be implemented.")
 
+    def configure_model(self) -> None:
+        """Apply FSDP2 sharding when running under :class:`ModelParallelStrategy`.
+
+        :class:`~lightning.pytorch.strategies.ModelParallelStrategy` sets
+        ``self._device_mesh`` before invoking ``configure_model``. When
+        present, this dispatches to
+        :func:`stable_pretraining.utils.fsdp.default_parallelize_fn` which
+        applies ``fully_shard`` per detected transformer / residual block
+        class and once at the root, skipping ``callbacks_modules`` /
+        ``callbacks_metrics`` containers.
+
+        When ``self._device_mesh`` is absent (any non-FSDP2 strategy:
+        single GPU, DDP, etc.), this is a no-op — but the surrounding
+        ``configure_model`` shim still needs to exist so
+        :class:`TrainableCallback` has something to wrap when it registers
+        callback-owned modules.
+
+        Subclasses can override this method to use a custom parallelize
+        policy (e.g. tensor parallelism, custom block selection, hybrid
+        sharding) without having to touch the Lightning-named hook.
+        """
+        device_mesh = getattr(self, "_device_mesh", None)
+        if device_mesh is None:
+            return
+
+        # Lazy import: ``module.py`` is loaded very early in package init
+        # (it's ``spt.Module``); a top-level import of
+        # ``stable_pretraining.utils.fsdp`` would risk a cycle through the
+        # other helpers it transitively pulls in. Same pattern that
+        # ``callbacks/cpu_offload.py`` uses for the same reason.
+        from stable_pretraining.utils.fsdp import default_parallelize_fn
+
+        # Read mp_policy off the strategy if ``make_fsdp_strategy`` stashed
+        # one. The trainer attribute is set by Lightning before
+        # configure_model is invoked, so this lookup is always live here.
+        mp_policy = None
+        trainer = getattr(self, "trainer", None)
+        if trainer is not None:
+            mp_policy = getattr(trainer.strategy, "_spt_mp_policy", None)
+
+        default_parallelize_fn(self, device_mesh, mp_policy=mp_policy)
+
     def named_parameters(
-        self, with_callbacks=True, prefix: str = "", recurse: bool = True
+        self,
+        with_callbacks=True,
+        prefix: str = "",
+        recurse: bool = True,
+        remove_duplicate: bool = True,
     ):
         """Override to globally exclude callback-related parameters.
 
@@ -195,6 +241,9 @@ class Module(pl.LightningModule):
             prefix (str, optional): Prefix to prepend to parameter names. Defaults to "".
             recurse (bool, optional): If True, yields parameters of this module and all submodules.
                 If False, yields only direct parameters. Defaults to True.
+            remove_duplicate (bool, optional): If True (default), deduplicates parameters that are
+                aliased across submodules. PyTorch's FSDP wrap path passes ``remove_duplicate=False``
+                to inspect the raw parameter graph; the override must accept and forward it.
 
         Yields:
             tuple[str, torch.nn.Parameter]: Name and parameter pairs.
@@ -205,7 +254,9 @@ class Module(pl.LightningModule):
                 "! You are calling self.parameters which also gives callbacks "
                 "parameters, to remove them, pass `with_callbacks=False`"
             )
-        for name, param in super().named_parameters(prefix=prefix, recurse=recurse):
+        for name, param in super().named_parameters(
+            prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate
+        ):
             is_callback = name.startswith("callbacks_")
             if is_callback and not with_callbacks:
                 continue
@@ -381,15 +432,23 @@ class Module(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         batch["batch_idx"] = batch_idx
-        return self.forward(batch, stage="validate")
+        # ``self(batch, ...)`` (i.e. ``__call__``) — NOT ``self.forward(...)``.
+        # PyTorch's forward pre/post hooks (which is how
+        # :func:`torch.distributed.fsdp.fully_shard` triggers all-gather of
+        # the sharded DTensor params before forward and re-shard after) fire
+        # only on ``__call__``. Calling ``.forward()`` directly bypasses
+        # them, leaving DTensors in place during the forward — the very next
+        # op (e.g. patch-embed conv) then raises
+        # ``aten.convolution.default: got mixed torch.Tensor and DTensor``.
+        return self(batch, stage="validate")
 
     def test_step(self, batch, batch_idx):
         batch["batch_idx"] = batch_idx
-        return self.forward(batch, stage="test")
+        return self(batch, stage="test")
 
     def predict_step(self, batch, batch_idx):
         batch["batch_idx"] = batch_idx
-        return self.forward(batch, stage="predict")
+        return self(batch, stage="predict")
 
     def _get_scheduler_name(self, scheduler_config, scheduler_instance=None):
         """Extract scheduler name from various config formats.

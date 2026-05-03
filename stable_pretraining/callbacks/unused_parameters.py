@@ -5,6 +5,8 @@ from torch import nn
 from lightning.pytorch.callbacks import Callback
 from loguru import logger
 
+from stable_pretraining.utils.fsdp import is_fsdp_strategy
+
 from .utils import log_header
 
 
@@ -93,6 +95,25 @@ class LogUnusedParametersOnce(Callback):
     def on_train_batch_start(self, trainer, pl_module, batch, batch_idx):
         """Register hooks right before the first training batch starts."""
         if not self._enabled:
+            return
+
+        # Self-disable under FSDP2: ``fully_shard`` replaces every managed
+        # ``nn.Parameter`` with a ``DTensor``, and gradient computation flows
+        # through the unsharded gathered tensor that FSDP2 produces inside
+        # the forward all-gather (then reduce-scatters back to a DTensor
+        # handle FSDP2 manages internally). The ``Tensor.register_hook`` we
+        # install on the DTensor never fires because that's not the tensor
+        # in the autograd graph, so every parameter would falsely report as
+        # "unused", flooding the log with hundreds of entries while training
+        # is working.
+        if is_fsdp_strategy(trainer):
+            logger.info(
+                "LogUnusedParametersOnce: self-disabling under FSDP2 — DTensor "
+                "params don't fire standard backward hooks, so the unused-param "
+                "check would be a false positive (gradients flow correctly via "
+                "FSDP2's own machinery)."
+            )
+            self._enabled = False
             return
 
         if trainer.global_step == 0 and batch_idx == 0:

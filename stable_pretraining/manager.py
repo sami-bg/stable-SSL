@@ -35,6 +35,10 @@ from .loggers.swanlab import find_swanlab_logger
 from .utils import get_required_fn_parameters
 from stable_pretraining.callbacks.utils import log_header
 from stable_pretraining.utils.error_handling import catch_errors_class
+from stable_pretraining.utils.fsdp import (
+    describe_fsdp_strategy,
+    is_fsdp_strategy,
+)
 
 
 def print_logger_info(logger):
@@ -1224,34 +1228,33 @@ class Manager(submitit.helpers.Checkpointable):
         self._dump_wandb_data()
 
     def _log_fsdp_info(self, *, needs_teacher_student: bool) -> None:
-        """Log FSDP strategy details and warn about TeacherStudentWrapper alignment.
+        """Log FSDP2 strategy details and warn about TeacherStudentWrapper alignment.
 
-        No-op when the trainer is not using FSDP. When FSDP is detected, logs
-        the strategy subclass, sharding strategy, state-dict type, the count
-        of ``ignored_modules``, and the configured auto-wrap policy.
+        No-op when the trainer is not using FSDP. When the FSDP2-backed
+        :class:`ModelParallelStrategy` is detected, logs the strategy
+        subclass, the data/tensor parallel sizes, the checkpoint mode, and
+        the parallelize_fn name.
         """
-        from stable_pretraining.utils.fsdp import (
-            describe_fsdp_strategy,
-            is_fsdp_strategy,
-        )
-
         if not is_fsdp_strategy(self._trainer):
             return
 
         info = describe_fsdp_strategy(self._trainer)
-        logging.info("\t● 🪡🪡🪡 FSDP STRATEGY DETECTED 🪡🪡🪡")
+        logging.info("\tFSDP2 STRATEGY DETECTED")
         logging.info(f"\t\t- subclass: {info['subclass']}")
-        logging.info(f"\t\t- sharding_strategy: {info['sharding_strategy']}")
-        logging.info(f"\t\t- state_dict_type: {info['state_dict_type']}")
-        logging.info(f"\t\t- n_ignored_modules: {info['n_ignored_modules']}")
-        logging.info(f"\t\t- auto_wrap_policy: {info['auto_wrap_policy']}")
+        logging.info(f"\t\t- data_parallel_size: {info['data_parallel_size']}")
+        logging.info(f"\t\t- tensor_parallel_size: {info['tensor_parallel_size']}")
+        logging.info(
+            f"\t\t- save_distributed_checkpoint: {info['save_distributed_checkpoint']}"
+        )
+        logging.info(f"\t\t- mp_policy: {info['mp_policy']}")
 
         if needs_teacher_student:
             logging.warning(
-                "\t\t- TeacherStudentWrapper present under FSDP: student and "
-                "teacher must wrap with identical policies for the in-place EMA "
-                "update to be correct. assert_aligned_wrapping() is the safety "
-                "net but plan ahead — see docs/fsdp.md."
+                "\t\t- TeacherStudentWrapper present under FSDP2: student and "
+                "teacher must be sharded on the same device mesh with the same "
+                "parallelize_fn for the in-place EMA update to be correct. "
+                "assert_aligned_wrapping() is the safety net but plan ahead — "
+                "see docs/fsdp.md."
             )
 
     def validate(self):
