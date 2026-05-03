@@ -2,7 +2,7 @@ Distributed Training with FSDP
 ==============================
 
 ``stable-pretraining`` supports `PyTorch's FSDP
-<https://pytorch.org/docs/stable/fsdp.html>`_ as a first-class training
+<https://docs.pytorch.org/docs/2.11/distributed.fsdp.fully_shard.html>`_ as a first-class training
 strategy alongside DDP. This page covers when to reach for FSDP, how to
 opt in, and the known limitations.
 
