@@ -92,6 +92,17 @@ class Module(pl.LightningModule):
       ``gradient_clip_algorithm`` before each step.
     - Returns the ``state`` dict from ``forward`` unchanged for
       logging/inspection.
+
+    **FSDP2 sharding** (``parallelize_fn``)
+
+    - Under ``Trainer(strategy="fsdp2")``, ``configure_model`` calls
+      ``parallelize_fn(self, device_mesh)``. The default handles only
+      timm ``Block``, HuggingFace ``ViTLayer``, and torchvision
+      ``BasicBlock`` / ``Bottleneck``; anything else raises
+      ``UnsupportedModelError``.
+    - For other architectures, supply your own ``parallelize_fn``. Wrong
+      block boundaries can silently degrade throughput or break gradient
+      flow.
     """
 
     _warned_named_parameters = False

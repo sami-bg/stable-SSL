@@ -337,6 +337,15 @@ class StablePretrainingFSDP2(ModelParallelStrategy):  # type: ignore[misc]
                 f"StablePretrainingFSDP2: data_parallel_size="
                 f"{self._data_parallel_size} (inferred from {source})"
             )
+        # Default to pure-FSDP (no tensor parallelism). Lightning resolves
+        # ``"auto"`` for ``tensor_parallel_size`` to ``num_processes``, which
+        # combined with our DP=num_processes default would multiply to
+        # ``num_processes ** 2`` and trip the
+        # ``data_parallel_size * tensor_parallel_size == world_size`` check.
+        # Users wanting TP must subclass and override this method (or
+        # instantiate the class directly with ``tensor_parallel_size=N``).
+        if self._tensor_parallel_size == "auto":
+            self._tensor_parallel_size = 1
         super().setup_environment()
 
 

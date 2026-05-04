@@ -11,9 +11,7 @@ import torch.nn as nn
 import torchmetrics
 
 import stable_pretraining as spt
-
-# Importing fsdp registers ``"fsdp2"`` with Lightning's StrategyRegistry.
-import stable_pretraining.utils.fsdp  # noqa: F401
+from stable_pretraining.callbacks.earlystop import EpochMilestones
 from stable_pretraining.data import transforms
 
 from lejepa_vit_small import (
@@ -24,30 +22,20 @@ from lejepa_vit_small import (
 )
 
 
-class StopAfterNEpochs(pl.pytorch.callbacks.Callback):
-    """Hard-stop training after ``n`` completed epochs without compressing the schedule."""
-
-    def __init__(self, n: int):
-        super().__init__()
-        self.n = n
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        if trainer.current_epoch + 1 >= self.n:
-            trainer.should_stop = True
-
-
 def main():
     import sys
 
     sys.path.append(str(Path(__file__).parent.parent))
     from utils import get_data_dir
 
+    def _stop_after_n_epochs(n: int) -> dict[int, float]:
+        return {n - 1: float("-inf")}
+
     num_gpus = 2
     effective_batch_size = 128
     batch_size = effective_batch_size // num_gpus
     num_workers = 16
     max_epochs = 600
-    stop_after_epochs = float("inf")
     global_views = 2
     all_views = 8
 
@@ -173,12 +161,17 @@ def main():
                 save_last=True,
             ),
             pl.pytorch.callbacks.LearningRateMonitor(logging_interval="step"),
-            StopAfterNEpochs(stop_after_epochs),
+            EpochMilestones(
+                monitor="fit/loss",
+                milestones=_stop_after_n_epochs(3),
+                direction="min",
+                after_validation=False,
+            ),
         ],
         logger=pl.pytorch.loggers.WandbLogger(
             entity="stable-ssl",
             project="imagenet10-methods",
-            name=f"lejepa-vits-fsdp-inet10-{stop_after_epochs}ep",
+            name="lejepa-vits-fsdp-inet10",
             log_model=False,
         ),
         # FSDP2 / ``ModelParallelStrategy`` does not accept ``"16-mixed"``
