@@ -156,6 +156,23 @@ trials.
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="Reproduce the two iconic DINO pictures — the patch-token feature PCA and the CLS self-attention maps — on a pretrained DINO ViT, using the PCATokenVisualizer and AttentionVisualizer callbacks.">
+
+.. only:: html
+
+  .. image:: /auto_examples/images/thumb/sphx_glr_dino_visualization_thumb.png
+    :alt:
+
+  :doc:`/auto_examples/dino_visualization`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">DINO feature PCA & CLS-attention visualisation</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="Design choice (see the JAX backend docs): augmentation stays on CPU using the existing torchvision pipeline and we feed NHWC numpy arrays into the JAX trainer. Nothing in data/transforms.py is reimplemented — the array boundary is the clean seam between the two backends.">
 
 .. only:: html
@@ -188,6 +205,23 @@ trials.
     </div>
 
 
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="A reference recipe for from-scratch supervised ViT classification that targets the &quot;typical&quot; ~82%+ top-1 (ViT-L; ViT-e is a scale stress-test, see note below), built to run efficiently and shard cleanly:">
+
+.. only:: html
+
+  .. image:: /auto_examples/images/thumb/sphx_glr_imagenet1k_supervised_vit_fsdp2_thumb.png
+    :alt:
+
+  :doc:`/auto_examples/imagenet1k_supervised_vit_fsdp2`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Supervised ImageNet-1k ViT training — SOTA (DeiT/AugReg) recipe, FSDP2, GPU-fast.</div>
+    </div>
+
+
 .. thumbnail-parent-div-close
 
 .. raw:: html
@@ -203,8 +237,56 @@ trials.
    /auto_examples/imbalance_supervised_learning
    /auto_examples/wandb_figures
    /auto_examples/supervised_learning
+   /auto_examples/dino_visualization
    /auto_examples/jax_simclr_imagenette
    /auto_examples/multi_layer_probe
+   /auto_examples/imagenet1k_supervised_vit_fsdp2
+
+# An editable SSL experiment
+
+Install the current stable-pretraining source checkout first; the packaged
+quickstart is unreleased. Copy this directory into your own project, then extract
+the runnable example from that installed package:
+
+```bash
+python -c "from importlib.resources import files; from pathlib import Path; Path('train.py').write_text(files('stable_pretraining').joinpath('quickstart.py').read_text())"
+python train.py --cache-dir ./runs-cache
+```
+
+This gives you a standalone, editable script rather than a new training engine.
+It delegates training, online probing, checkpoints, and registry logging to
+stable-pretraining. Modify its backbone or forward callable for your research.
+
+```bash
+python train.py --data ./images --epochs 2 --cache-dir ./runs-cache
+spt web ./runs-cache/runs
+```
+
+The image directory needs `train/<class>/*` and `val/<class>/*`. The script's
+16x16 crops and tiny encoder are for onboarding. Select an appropriate research
+configuration before treating results as a benchmark. Save the installed
+package version/source revision with your experiment.
+
+The accompanying `AGENTS.md` is opt-in project guidance. Remove or adapt it if
+this project does not use stable-pretraining.
+
+
+.. raw:: html
+
+  <div id='sg-tag-list' class='sphx-glr-tag-list'></div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
 
 
 .. only:: html
